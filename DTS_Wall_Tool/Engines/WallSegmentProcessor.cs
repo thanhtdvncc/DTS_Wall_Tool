@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using DTS_Wall_Tool.Core;
 using DTS_Wall_Tool.Models;
-using static DTS_Wall_Tool.Core.Geometry;
 
 namespace DTS_Wall_Tool.Engines
 {
@@ -733,23 +732,23 @@ namespace DTS_Wall_Tool.Engines
             int brokenCount = 0;
             var newCenterlines = new List<CenterLine>();
 
-            foreach (var cl in _centerlines.Where(c => c.IsActive).ToList())
+            foreach (var cl in _centerlines. Where(c => c.IsActive). ToList())
             {
                 var breakPoints = new List<double>();
 
                 foreach (var axis in _axes)
                 {
                     // Check if perpendicular
-                    if (!GeoAlgo.IsPerpendicular(cl.Angle, axis.Angle, AngleTolerance * GeoAlgo.DEG_TO_RAD))
+                    if (! GeoAlgo. IsPerpendicular(cl.Angle, axis.Angle, AngleTolerance * GeoAlgo.DEG_TO_RAD))
                         continue;
 
                     // Find intersection
                     Point2D intersection;
-                    if (GeoAlgo.GetSegmentIntersection(cl.AsSegment, axis.AsSegment, out intersection, 10))
+                    if (GeoAlgo. GetSegmentIntersection(cl.AsSegment, axis.AsSegment, out intersection, 10))
                     {
                         // Calculate t parameter (position along centerline)
                         double t = GeoAlgo.ProjectPointOnSegment(intersection, cl.AsSegment, out _);
-                        if (t > 0. 05 && t < 0.95) // Only break if not at endpoints
+                        if (t > 0.05 && t < 0.95) // Only break if not at endpoints
                         {
                             breakPoints.Add(t);
                         }
@@ -759,12 +758,12 @@ namespace DTS_Wall_Tool.Engines
                 if (breakPoints.Count > 0)
                 {
                     // Sort break points
-                    breakPoints = breakPoints.OrderBy(t => t).Distinct().ToList();
+                    breakPoints = breakPoints.OrderBy(t => t). Distinct().ToList();
 
                     // Create segments
                     double prevT = 0;
-                    double cosA = Math.Cos(cl.Angle);
-                    double sinA = Math.Sin(cl.Angle);
+                    double cosA = Math. Cos(cl. Angle);
+                    double sinA = Math.Sin(cl. Angle);
                     double length = cl.Length;
 
                     foreach (var t in breakPoints)
@@ -781,11 +780,11 @@ namespace DTS_Wall_Tool.Engines
                             StartPt = segStart,
                             EndPt = segEnd,
                             Thickness = cl.Thickness,
-                            WallType = cl.WallType,
+                            WallType = cl. WallType,
                             StoryZ = cl.StoryZ,
                             IsActive = true
                         };
-                        newCL.SourceHandles.AddRange(cl.SourceHandles);
+                        newCL. SourceHandles. AddRange(cl. SourceHandles);
                         newCL.UpdateUniqueID();
                         newCenterlines.Add(newCL);
 
@@ -795,8 +794,8 @@ namespace DTS_Wall_Tool.Engines
 
                     // Last segment
                     var lastStart = new Point2D(
-                        cl.StartPt.X + prevT * length * cosA,
-                        cl.StartPt.Y + prevT * length * sinA);
+                        cl.StartPt. X + prevT * length * cosA,
+                        cl. StartPt.Y + prevT * length * sinA);
                     var lastCL = new CenterLine
                     {
                         StartPt = lastStart,
@@ -807,7 +806,7 @@ namespace DTS_Wall_Tool.Engines
                         IsActive = true
                     };
                     lastCL.SourceHandles.AddRange(cl.SourceHandles);
-                    lastCL.UpdateUniqueID();
+                    lastCL. UpdateUniqueID();
                     newCenterlines.Add(lastCL);
 
                     // Deactivate original
@@ -815,7 +814,7 @@ namespace DTS_Wall_Tool.Engines
                 }
             }
 
-            _centerlines.AddRange(newCenterlines);
+            _centerlines. AddRange(newCenterlines);
             return brokenCount;
         }
 

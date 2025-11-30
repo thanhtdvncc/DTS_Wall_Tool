@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using static DTS_Wall_Tool.Core.Geometry;
 
 namespace DTS_Wall_Tool.DataStructures
 {
@@ -15,7 +14,7 @@ namespace DTS_Wall_Tool.DataStructures
         private readonly double _cellSize;
         private readonly Dictionary<long, List<SpatialEntry<T>>> _grid;
         private readonly Func<T, Point2D> _getPosition;
-        private readonly Func<T, GeoAlgo.BoundingBox> _getBounds;
+        private readonly Func<T, BoundingBox> _getBounds;
 
         public int Count { get; private set; }
 
@@ -27,7 +26,7 @@ namespace DTS_Wall_Tool.DataStructures
         /// <param name="getBounds">Function to get bounding box (for line segments)</param>
         public SpatialHash(double cellSize,
             Func<T, Point2D> getPosition = null,
-            Func<T, GeoAlgo.BoundingBox> getBounds = null)
+            Func<T, BoundingBox> getBounds = null)
         {
             _cellSize = cellSize > 0 ? cellSize : 1000;
             _grid = new Dictionary<long, List<SpatialEntry<T>>>();
@@ -53,7 +52,7 @@ namespace DTS_Wall_Tool.DataStructures
         /// <summary>
         /// Insert item with bounding box (for line segments)
         /// </summary>
-        public void InsertWithBounds(T item, GeoAlgo.BoundingBox bounds)
+        public void InsertWithBounds(T item, BoundingBox bounds)
         {
             // Get all cells that the bounds overlaps
             int minCellX = (int)Math.Floor(bounds.MinX / _cellSize);
@@ -126,7 +125,7 @@ namespace DTS_Wall_Tool.DataStructures
         /// <summary>
         /// Query all items whose bounds intersect with given bounds
         /// </summary>
-        public List<T> QueryBounds(GeoAlgo.BoundingBox queryBounds)
+        public List<T> QueryBounds(BoundingBox queryBounds)
         {
             var result = new List<T>();
             var visited = new HashSet<T>();
@@ -196,6 +195,6 @@ namespace DTS_Wall_Tool.DataStructures
     {
         public T Item;
         public Point2D Position;
-        public GeoAlgo.BoundingBox Bounds;
+        public BoundingBox Bounds;
     }
 }

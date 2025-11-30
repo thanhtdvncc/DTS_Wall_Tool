@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using static DTS_Wall_Tool.Core.Geometry;
+using DTS_Wall_Tool.Core;
 
 namespace DTS_Wall_Tool.Core
 {
@@ -27,7 +27,7 @@ namespace DTS_Wall_Tool.Core
         /// <summary>
         /// True if wall is fully covered
         /// </summary>
-        public bool IsFullyCovered => CoveragePercent >= 99. 0;
+        public bool IsFullyCovered => CoveragePercent >= 99.0;
 
         /// <summary>
         /// Generate composite label text
@@ -48,23 +48,8 @@ namespace DTS_Wall_Tool.Core
         }
     }
 
-    /// <summary>
-    /// Record of a single wall-to-frame mapping
-    /// </summary>
-    public class MappingRecord
-    {
-        public string TargetFrame { get; set; }
-        public string MapType { get; set; } = "PARTIAL"; // FULL, PARTIAL, NEW
-        public double DistI { get; set; } = 0; // Distance from wall start to frame start
-        public double DistJ { get; set; } = 0; // Distance from wall end to frame end
-        public double FrameLength { get; set; } = 0;
-        public double CoveredLength { get; set; } = 0; // Length of wall covered by this frame
-
-        public override string ToString()
-        {
-            return $"{TargetFrame}({MapType}, I={DistI:0}, J={DistJ:0})";
-        }
-    }
+    // LƯU Ý: MappingRecord đã được định nghĩa trong WallData.cs
+    // Nếu cần thêm thuộc tính, hãy sửa trong WallData.cs
 
     /// <summary>
     /// Core mapping engine - finds SAP2000 frames that support a wall
@@ -135,8 +120,8 @@ namespace DTS_Wall_Tool.Core
                 result.Mappings.Add(new MappingRecord
                 {
                     TargetFrame = "New",
-                    MapType = "NEW",
-                    CoveredLength = result.WallLength
+                    MatchType = "NEW",
+                    CoveredLength = (int)result.WallLength
                 });
                 return result;
             }
@@ -181,8 +166,8 @@ namespace DTS_Wall_Tool.Core
                 result.Mappings.Add(new MappingRecord
                 {
                     TargetFrame = "New",
-                    MapType = "NEW",
-                    CoveredLength = result.WallLength
+                    MatchType = "NEW",
+                    CoveredLength = (int)result.WallLength
                 });
                 return result;
             }
@@ -241,19 +226,15 @@ namespace DTS_Wall_Tool.Core
             double fStartProj = (frame.StartPt.X - basePoint.X) * cosA + (frame.StartPt.Y - basePoint.Y) * sinA;
             double fEndProj = (frame.EndPt.X - basePoint.X) * cosA + (frame.EndPt.Y - basePoint.Y) * sinA;
 
-            // Normalize projections
+            // Normalize projections - swap if needed
             if (wStartProj > wEndProj)
             {
-                var temp = wStartProj;
-                wStartProj = wEndProj;
-                wEndProj = temp;
+                (wStartProj, wEndProj) = (wEndProj, wStartProj);
             }
 
             if (fStartProj > fEndProj)
             {
-                var temp = fStartProj;
-                fStartProj = fEndProj;
-                fEndProj = temp;
+                (fStartProj, fEndProj) = (fEndProj, fStartProj);
             }
 
             // Calculate DistI and DistJ
@@ -272,11 +253,10 @@ namespace DTS_Wall_Tool.Core
             return new MappingRecord
             {
                 TargetFrame = frame.Name,
-                MapType = mapType,
+                MatchType = mapType,
                 DistI = distI,
                 DistJ = distJ,
-                FrameLength = frame.Length2D,
-                CoveredLength = overlapLength
+                CoveredLength = (int)overlapLength
             };
         }
 
@@ -295,7 +275,7 @@ namespace DTS_Wall_Tool.Core
                 .ToList();
 
             // Check if we have full coverage with one frame
-            var fullCoverage = unique.FirstOrDefault(m => m.MapType == "FULL");
+            var fullCoverage = unique.FirstOrDefault(m => m.MatchType == "FULL");
             if (fullCoverage != null && fullCoverage.CoveredLength >= wallLength * 0.95)
             {
                 return new List<MappingRecord> { fullCoverage };

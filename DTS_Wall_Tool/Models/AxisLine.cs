@@ -1,6 +1,5 @@
 ﻿using System;
 using DTS_Wall_Tool.Core;
-using static DTS_Wall_Tool.Core.Geometry;
 
 namespace DTS_Wall_Tool.Models
 {

@@ -9,6 +9,7 @@ namespace DTS_Wall_Tool.Core
         public string MatchType { get; set; } = "";
         public double DistI { get; set; } = 0;
         public double DistJ { get; set; } = 0;
+        public int CoveredLength { get; internal set; }
 
         public override string ToString()
         {
