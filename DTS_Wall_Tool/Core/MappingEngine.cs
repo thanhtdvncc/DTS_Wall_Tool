@@ -1,125 +1,320 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using static DTS_Wall_Tool.Core.Geometry; // Để dùng hàm sắp xếp, lọc
+using static DTS_Wall_Tool.Core.Geometry;
 
 namespace DTS_Wall_Tool.Core
 {
-    // Class chứa kết quả mapping
+    /// <summary>
+    /// Class containing mapping results for a single wall
+    /// </summary>
     public class MappingResult
     {
-        public SapFrame TargetFrame { get; set; } // Dầm được chọn
-        public double OverlapLength { get; set; } // Chiều dài chồng lấn
-        public double DistFromI { get; set; }     // Điểm bắt đầu tải (tính từ đầu dầm)
-        public double DistToJ { get; set; }       // Điểm kết thúc tải
-        public string MatchType { get; set; }     // "EXACT" (khít), "PARTIAL" (một phần)
+        public string WallHandle { get; set; }
+        public double WallLength { get; set; }
+        public List<MappingRecord> Mappings { get; set; } = new List<MappingRecord>();
 
-        public override string ToString()
+        /// <summary>
+        /// Total covered length by all mappings
+        /// </summary>
+        public double CoveredLength => Mappings.Sum(m => m.CoveredLength);
+
+        /// <summary>
+        /// Coverage percentage (0-100)
+        /// </summary>
+        public double CoveragePercent => WallLength > 0 ? (CoveredLength / WallLength) * 100 : 0;
+
+        /// <summary>
+        /// True if wall is fully covered
+        /// </summary>
+        public bool IsFullyCovered => CoveragePercent >= 99. 0;
+
+        /// <summary>
+        /// Generate composite label text
+        /// </summary>
+        public string GetLabelText(string wallType, string loadPattern, double loadValue)
         {
-            return $"{MatchType} -> {TargetFrame.Name} (L={OverlapLength:0.0}, Từ {DistFromI:0.0} đến {DistToJ:0.0})";
+            string loadStr = $"{wallType} {loadPattern}={loadValue:0.00}";
+
+            if (Mappings.Count == 0)
+                return loadStr + " to New";
+
+            if (Mappings.Count == 1)
+                return loadStr + " to " + Mappings[0].TargetFrame;
+
+            // Multiple mappings
+            var frameNames = Mappings.Select(m => m.TargetFrame).Distinct();
+            return loadStr + " to " + string.Join(",", frameNames);
         }
     }
 
+    /// <summary>
+    /// Record of a single wall-to-frame mapping
+    /// </summary>
+    public class MappingRecord
+    {
+        public string TargetFrame { get; set; }
+        public string MapType { get; set; } = "PARTIAL"; // FULL, PARTIAL, NEW
+        public double DistI { get; set; } = 0; // Distance from wall start to frame start
+        public double DistJ { get; set; } = 0; // Distance from wall end to frame end
+        public double FrameLength { get; set; } = 0;
+        public double CoveredLength { get; set; } = 0; // Length of wall covered by this frame
+
+        public override string ToString()
+        {
+            return $"{TargetFrame}({MapType}, I={DistI:0}, J={DistJ:0})";
+        }
+    }
+
+    /// <summary>
+    /// Core mapping engine - finds SAP2000 frames that support a wall
+    /// </summary>
     public static class MappingEngine
     {
-        // Dung sai (Tùy chỉnh được)
-        private const double TOLERANCE_Z = 200.0;    // Lệch cao độ tối đa 200mm
-        private const double TOLERANCE_DIST = 300.0; // Lệch tim trục tối đa 300mm
-        private const double MIN_OVERLAP = 100.0;    // Phải chồng lên nhau ít nhất 100mm
+        #region Constants (Tunable)
 
         /// <summary>
-        /// Hàm chính: Tìm các dầm đỡ một bức tường
+        /// Maximum Z elevation difference (mm)
         /// </summary>
-        /// <param name="wStart">Điểm đầu tường</param>
-        /// <param name="wEnd">Điểm cuối tường</param>
-        /// <param name="wallZ">Cao độ tường</param>
-        /// <param name="allFrames">Danh sách tất cả frame trong SAP</param>
-        public static List<MappingResult> FindSupportingFrames(Point2D wStart, Point2D wEnd, double wallZ, List<SapFrame> allFrames)
+        public static double TOLERANCE_Z = 200.0;
+
+        /// <summary>
+        /// Maximum perpendicular distance from wall centerline to frame (mm)
+        /// </summary>
+        public static double TOLERANCE_DIST = 300.0;
+
+        /// <summary>
+        /// Minimum overlap length to consider mapping (mm)
+        /// </summary>
+        public static double MIN_OVERLAP = 100.0;
+
+        /// <summary>
+        /// Angle tolerance for parallelism (radians)
+        /// </summary>
+        public static double TOLERANCE_ANGLE = 5 * GeoAlgo.DEG_TO_RAD;
+
+        #endregion
+
+        #region Main Mapping Function
+
+        /// <summary>
+        /// Find all frames that support a wall segment
+        /// </summary>
+        /// <param name="wallStart">Wall start point (2D)</param>
+        /// <param name="wallEnd">Wall end point (2D)</param>
+        /// <param name="wallZ">Wall elevation</param>
+        /// <param name="frames">List of SAP2000 frames to search</param>
+        /// <param name="insertionOffset">Offset from CAD origin to SAP2000 origin</param>
+        /// <returns>Mapping result with all matched frames</returns>
+        public static MappingResult FindMappings(
+            Point2D wallStart,
+            Point2D wallEnd,
+            double wallZ,
+            IEnumerable<SapFrame> frames,
+            Point2D insertionOffset = default)
         {
-            var results = new List<MappingResult>();
-            double wallLen = wStart.DistanceTo(wEnd);
-            if (wallLen < 1.0) return results;
-
-            // 1. Duyệt qua tất cả các Frame
-            foreach (var frame in allFrames)
+            var result = new MappingResult
             {
-                // --- BỘ LỌC 1: Loại bỏ Cột và Dầm sai cao độ ---
-                if (frame.IsVertical) continue; // Bỏ cột
+                WallLength = wallStart.DistanceTo(wallEnd)
+            };
 
-                // Lấy cao độ trung bình của dầm (thường dầm nằm ngang thì Z1=Z2)
-                double frameZ = (frame.Z1 + frame.Z2) / 2.0;
+            if (result.WallLength < GeoAlgo.EPSILON)
+                return result;
 
-                // Nếu cao độ lệch quá nhiều -> Bỏ qua
-                if (Math.Abs(frameZ - wallZ) > TOLERANCE_Z) continue;
+            // Apply offset if provided
+            var wStart = new Point2D(wallStart.X - insertionOffset.X, wallStart.Y - insertionOffset.Y);
+            var wEnd = new Point2D(wallEnd.X - insertionOffset.X, wallEnd.Y - insertionOffset.Y);
+            var wallSeg = new LineSegment2D(wStart, wEnd);
 
-                // --- BỘ LỌC 2: Kiểm tra song song ---
-                // Tính góc tường và góc dầm
-                double wallAng = GeoAlgo.Angle2D(wStart, wEnd);
-                double frameAng = GeoAlgo.Angle2D(frame.StartPt, frame.EndPt);
+            // Step 1: Filter candidates by Z elevation
+            var zFiltered = frames.Where(f => IsElevationMatch(f, wallZ)).ToList();
 
-                // Dùng hàm kiểm tra song song trong Geometry.cs (dung sai 10 độ ~ 0.17 rad)
-                if (!GeoAlgo.IsParallel(wallAng, frameAng, 0.17)) continue;
-
-                // --- BỘ LỌC 3: Khoảng cách tim (Offset) ---
-                // Tính khoảng cách từ trung điểm tường đến đường thẳng dầm
-                Point2D wallMid = new Point2D((wStart.X + wEnd.X) / 2, (wStart.Y + wEnd.Y) / 2);
-                double dist = GeoAlgo.DistPointToLine(wallMid, frame.StartPt, frame.EndPt, true); // true = đường thẳng vô tận
-
-                if (dist > TOLERANCE_DIST) continue;
-
-                // --- TÍNH TOÁN CHỒNG LẤN (OVERLAP) ---
-                // Chiếu tường lên dầm để xem nó nằm ở đâu trên dầm
-                // (Giả sử dầm là trục số từ 0 đến L_Frame)
-                double t1 = GetProjectionT(wStart, frame);
-                double t2 = GetProjectionT(wEnd, frame);
-
-                // Sắp xếp t1 < t2
-                double startT = Math.Min(t1, t2);
-                double endT = Math.Max(t1, t2);
-
-                // Giao của đoạn [startT, endT] (tường) và đoạn [0, 1] (dầm)
-                double overlapStart = Math.Max(startT, 0.0);
-                double overlapEnd = Math.Min(endT, 1.0);
-
-                if (overlapEnd > overlapStart)
+            if (zFiltered.Count == 0)
+            {
+                // No frames at this elevation - mark as NEW
+                result.Mappings.Add(new MappingRecord
                 {
-                    double overlapLen = (overlapEnd - overlapStart) * frame.Length2D;
+                    TargetFrame = "New",
+                    MapType = "NEW",
+                    CoveredLength = result.WallLength
+                });
+                return result;
+            }
 
-                    // Nếu phần chồng lấn đủ lớn -> CHẤP NHẬN
-                    if (overlapLen >= MIN_OVERLAP)
-                    {
-                        MappingResult res = new MappingResult();
-                        res.TargetFrame = frame;
-                        res.OverlapLength = overlapLen;
+            // Step 2: Filter by parallelism and proximity
+            var candidates = new List<FrameCandidate>();
 
-                        // Quy đổi từ tỉ lệ [0..1] ra mm thực tế trên dầm
-                        res.DistFromI = overlapStart * frame.Length2D;
-                        res.DistToJ = overlapEnd * frame.Length2D;
+            foreach (var frame in zFiltered)
+            {
+                // Skip columns (vertical elements)
+                if (frame.IsVertical)
+                    continue;
 
-                        // Phân loại khớp
-                        if (overlapLen >= wallLen * 0.95) res.MatchType = "EXACT"; // Khớp > 95%
-                        else res.MatchType = "PARTIAL";
+                var frameSeg = new LineSegment2D(frame.StartPt, frame.EndPt);
 
-                        results.Add(res);
-                    }
+                // Check parallel
+                if (!GeoAlgo.IsParallel(wallSeg.Angle, frameSeg.Angle, TOLERANCE_ANGLE))
+                    continue;
+
+                // Check proximity (perpendicular distance)
+                double perpDist = GeoAlgo.DistBetweenParallelSegments(wallSeg, frameSeg);
+                if (perpDist > TOLERANCE_DIST)
+                    continue;
+
+                // Calculate overlap
+                var overlap = GeoAlgo.CalculateOverlap(wallSeg, frameSeg);
+                if (!overlap.HasOverlap || overlap.OverlapLength < MIN_OVERLAP)
+                    continue;
+
+                // This is a valid candidate
+                candidates.Add(new FrameCandidate
+                {
+                    Frame = frame,
+                    OverlapLength = overlap.OverlapLength,
+                    PerpDist = perpDist
+                });
+            }
+
+            if (candidates.Count == 0)
+            {
+                // No matching frames - mark as NEW
+                result.Mappings.Add(new MappingRecord
+                {
+                    TargetFrame = "New",
+                    MapType = "NEW",
+                    CoveredLength = result.WallLength
+                });
+                return result;
+            }
+
+            // Step 3: Sort candidates by proximity (closer = better)
+            candidates = candidates.OrderBy(c => c.PerpDist).ThenByDescending(c => c.OverlapLength).ToList();
+
+            // Step 4: Calculate mapping details for each candidate
+            foreach (var candidate in candidates)
+            {
+                var mapping = CalculateMappingDetails(wallSeg, candidate.Frame, candidate.OverlapLength);
+                if (mapping != null)
+                {
+                    result.Mappings.Add(mapping);
                 }
             }
 
-            // Sắp xếp kết quả ưu tiên dầm nào đỡ nhiều nhất
-            return results.OrderByDescending(x => x.OverlapLength).ToList();
+            // Step 5: Remove duplicates and optimize
+            result.Mappings = OptimizeMappings(result.Mappings, result.WallLength);
+
+            return result;
         }
 
-        // Hàm phụ: Tính vị trí hình chiếu của điểm P lên dầm (trả về t từ 0 đến 1)
-        private static double GetProjectionT(Point2D P, SapFrame frame)
+        #endregion
+
+        #region Helper Functions
+
+        /// <summary>
+        /// Check if frame elevation matches wall elevation
+        /// </summary>
+        private static bool IsElevationMatch(SapFrame frame, double wallZ)
         {
-            double dx = frame.EndPt.X - frame.StartPt.X;
-            double dy = frame.EndPt.Y - frame.StartPt.Y;
-            double len2 = dx * dx + dy * dy;
-
-            if (len2 < GeoAlgo.EPSILON) return 0;
-
-            // Công thức vector projection
-            return ((P.X - frame.StartPt.X) * dx + (P.Y - frame.StartPt.Y) * dy) / len2;
+            // Frame's Z should be at or below wall Z (beam supports wall from below)
+            double frameZ = Math.Min(frame.Z1, frame.Z2);
+            return Math.Abs(frameZ - wallZ) <= TOLERANCE_Z;
         }
+
+        /// <summary>
+        /// Calculate detailed mapping information
+        /// </summary>
+        private static MappingRecord CalculateMappingDetails(LineSegment2D wallSeg, SapFrame frame, double overlapLength)
+        {
+            var frameSeg = new LineSegment2D(frame.StartPt, frame.EndPt);
+
+            // Project wall endpoints onto frame direction
+            double wallAngle = wallSeg.Angle;
+            double cosA = Math.Cos(wallAngle);
+            double sinA = Math.Sin(wallAngle);
+
+            // Project all 4 points onto wall direction
+            var basePoint = wallSeg.Start;
+
+            double wStartProj = 0;
+            double wEndProj = (wallSeg.End.X - basePoint.X) * cosA + (wallSeg.End.Y - basePoint.Y) * sinA;
+
+            double fStartProj = (frame.StartPt.X - basePoint.X) * cosA + (frame.StartPt.Y - basePoint.Y) * sinA;
+            double fEndProj = (frame.EndPt.X - basePoint.X) * cosA + (frame.EndPt.Y - basePoint.Y) * sinA;
+
+            // Normalize projections
+            if (wStartProj > wEndProj)
+            {
+                var temp = wStartProj;
+                wStartProj = wEndProj;
+                wEndProj = temp;
+            }
+
+            if (fStartProj > fEndProj)
+            {
+                var temp = fStartProj;
+                fStartProj = fEndProj;
+                fEndProj = temp;
+            }
+
+            // Calculate DistI and DistJ
+            // DistI = distance from wall start to where frame starts (on wall)
+            // DistJ = distance from where frame ends to wall end
+            double distI = Math.Max(0, fStartProj - wStartProj);
+            double distJ = Math.Max(0, wEndProj - fEndProj);
+
+            // Determine map type
+            string mapType = "PARTIAL";
+            if (distI < 1 && distJ < 1)
+                mapType = "FULL";
+            else if (overlapLength >= wallSeg.Length * 0.95)
+                mapType = "FULL";
+
+            return new MappingRecord
+            {
+                TargetFrame = frame.Name,
+                MapType = mapType,
+                DistI = distI,
+                DistJ = distJ,
+                FrameLength = frame.Length2D,
+                CoveredLength = overlapLength
+            };
+        }
+
+        /// <summary>
+        /// Optimize mapping list (remove duplicates, merge overlaps)
+        /// </summary>
+        private static List<MappingRecord> OptimizeMappings(List<MappingRecord> mappings, double wallLength)
+        {
+            if (mappings.Count <= 1)
+                return mappings;
+
+            // Remove exact duplicates
+            var unique = mappings
+                .GroupBy(m => m.TargetFrame)
+                .Select(g => g.First())
+                .ToList();
+
+            // Check if we have full coverage with one frame
+            var fullCoverage = unique.FirstOrDefault(m => m.MapType == "FULL");
+            if (fullCoverage != null && fullCoverage.CoveredLength >= wallLength * 0.95)
+            {
+                return new List<MappingRecord> { fullCoverage };
+            }
+
+            return unique;
+        }
+
+        #endregion
+
+        #region Helper Types
+
+        private class FrameCandidate
+        {
+            public SapFrame Frame { get; set; }
+            public double OverlapLength { get; set; }
+            public double PerpDist { get; set; }
+        }
+
+        #endregion
     }
 }

@@ -86,6 +86,12 @@
     <Compile Include="Core\StoryData.cs" />
     <Compile Include="Core\WallData.cs" />
     <Compile Include="Core\XDataUtils.cs" />
+    <Compile Include="Engines\LoadCalculator.cs" />
+    <Compile Include="Engines\SpatialHash.cs" />
+    <Compile Include="Engines\WallSegmentProcessor.cs" />
+    <Compile Include="Models\AxisLine.cs" />
+    <Compile Include="Models\CenterLine.cs" />
+    <Compile Include="Models\WallSegment.cs" />
     <Compile Include="MyCommands.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
