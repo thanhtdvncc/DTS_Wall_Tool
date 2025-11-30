@@ -52,12 +52,12 @@ namespace DTS_Wall_Tool.Core.Data
         /// <summary>
         /// Cao độ trung bình
         /// </summary>
-        public double AverageZ => (Z1 + Z2) / 2. 0;
+        public double AverageZ => (Z1 + Z2) / 2.0;
 
         /// <summary>
         /// Nhận diện cột: chiều dài 2D ~ 0
         /// </summary>
-        public bool IsVertical => Length2D < 1. 0;
+        public bool IsVertical => Length2D < 1.0;
 
         /// <summary>
         /// Nhận diện dầm

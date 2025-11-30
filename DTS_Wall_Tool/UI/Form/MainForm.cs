@@ -47,7 +47,7 @@ namespace DTS_Wall_Tool.UI.Forms
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.Sizable;
             this.MaximizeBox = false;
-            this.Font = new Font("Segoe UI", 9F);
+            this.Font = new System.Drawing.Font("Segoe UI", 9F);
             this.Icon = SystemIcons.Application;
 
             // Cho phép resize
@@ -161,7 +161,7 @@ namespace DTS_Wall_Tool.UI.Forms
                 _loadAssignmentTab.LoadSettings();
                 _autoLoadTab.LoadSettings();
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Load settings error: {ex.Message}");
             }
@@ -175,7 +175,7 @@ namespace DTS_Wall_Tool.UI.Forms
                 _loadAssignmentTab.SaveSettings();
                 _autoLoadTab.SaveSettings();
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Save settings error: {ex.Message}");
             }

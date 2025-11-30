@@ -67,7 +67,7 @@ namespace DTS_Wall_Tool.Core.Primitives
         /// <summary>
         /// Tính trung điểm với điểm khác
         /// </summary>
-        public Point2D MidpointTo(Point2D other) => new Point2D((X + other.X) / 2. 0, (Y + other.Y) / 2.0);
+        public Point2D MidpointTo(Point2D other) => new Point2D((X + other.X) / 2.0, (Y + other.Y) / 2.0);
 
         /// <summary>
         /// Tích vô hướng (Dot product): a. Dot(b) = |a|*|b|*cos(θ)

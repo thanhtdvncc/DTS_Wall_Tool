@@ -163,7 +163,7 @@ namespace DTS_Wall_Tool.Core.Utils
             if (ent is Line line)
             {
                 return new Point2D(
-                    (line.StartPoint.X + line.EndPoint.X) / 2. 0,
+                    (line.StartPoint.X + line.EndPoint.X) / 2.0,
                     (line.StartPoint.Y + line.EndPoint.Y) / 2.0
                 );
             }

@@ -80,7 +80,7 @@ namespace DTS_Wall_Tool.Core.Engines
         public double CalculateLineLoad(double thickness, double height, IEnumerable<string> modifierNames = null)
         {
             // Chuyển mm sang m
-            double thickM = thickness / 1000. 0;
+            double thickM = thickness / 1000.0;
             double heightM = height / 1000.0;
             double plasterM = PlasterThickness / 1000.0;
 

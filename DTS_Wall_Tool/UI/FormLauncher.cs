@@ -35,7 +35,7 @@ namespace DTS_Wall_Tool.UI
                     _mainForm.BringToFront();
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 MessageBox.Show($"Error opening form: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -55,7 +55,7 @@ namespace DTS_Wall_Tool.UI
                     Autodesk.AutoCAD.ApplicationServices.Application.ShowModalDialog(form);
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 MessageBox.Show($"Error opening form: {ex.Message}", "Error",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);

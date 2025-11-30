@@ -128,7 +128,7 @@ namespace DTS_Wall_Tool.Models
             if (Thickness > 0 && other.Thickness > 0)
             {
                 double thickDiff = Math.Abs(Thickness - other.Thickness);
-                if (thickDiff > Thickness * 0. 2)
+                if (thickDiff > Thickness * 0.2)
                     return false;
             }
 

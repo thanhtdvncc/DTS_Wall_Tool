@@ -45,12 +45,13 @@ namespace DTS_Wall_Tool.UI.Forms
         private Button _btnClearSapLoad;
         private Button _btnAssignLoads;
         private Button _btnCancel;
+        private static readonly List<WallLoadItem> wallLoadItems = new List<WallLoadItem>();
 
         #endregion
 
         #region Data
 
-        private List<WallLoadItem> _wallLoadItems = new List<WallLoadItem>();
+        private List<WallLoadItem> _wallLoadItems = wallLoadItems;
 
         #endregion
 

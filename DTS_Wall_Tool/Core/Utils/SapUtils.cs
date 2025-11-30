@@ -21,8 +21,6 @@ namespace DTS_Wall_Tool.Core.Utils
         /// </summary>
         public static bool Connect(out string message)
         {
-            message = "";
-
             try
             {
                 if (_sapModel != null)
@@ -49,7 +47,7 @@ namespace DTS_Wall_Tool.Core.Utils
                 }
 
                 string modelPath = "";
-                _sapModel.GetModelFilename(ref modelPath);
+                modelPath = _sapModel.GetModelFilename();
                 message = $"Kết nối SAP2000 thành công: {System.IO.Path.GetFileName(modelPath)}";
                 return true;
             }
@@ -149,10 +147,10 @@ namespace DTS_Wall_Tool.Core.Utils
             int ret = model.FrameObj.GetPoints(frameName, ref point1, ref point2);
             if (ret != 0) return null;
 
-            double x1 = 0, y1 = 0, z1 = 0;
+            double x1 = 0, y1 = 0;
             double x2 = 0, y2 = 0, z2 = 0;
 
-            ret = model.PointObj.GetCoordCartesian(point1, ref x1, ref y1, ref z1);
+            ret = model.PointObj.GetCoordCartesian(point1, ref x1, ref y1, ref z2);
             if (ret != 0) return null;
 
             ret = model.PointObj.GetCoordCartesian(point2, ref x2, ref y2, ref z2);
@@ -163,7 +161,7 @@ namespace DTS_Wall_Tool.Core.Utils
                 Name = frameName,
                 StartPt = new Point2D(x1, y1),
                 EndPt = new Point2D(x2, y2),
-                Z1 = z1,
+                Z1 = z2,
                 Z2 = z2
             };
         }
@@ -348,29 +346,44 @@ namespace DTS_Wall_Tool.Core.Utils
             var model = GetModel();
             if (model == null) return stories;
 
-            int count = 0;
-            string[] names = null;
-            double[] elevations = null;
-            double[] heights = null;
-            bool[] isMaster = null;
-            string[] similar = null;
-            bool[] splice = null;
-            double[] spliceH = null;
-            int[] colors = null;
+            // SAP2000 stores story data in a database table called "Story Definitions"
+            int tableVersion = 0;
+            string[] fieldNames = null;
+            string[] tableData = null;
+            int numberRecords = 0;
+            string[] fieldsKeysIncluded = null;
 
-            int ret = model.Story.GetStories(ref count, ref names, ref elevations, ref heights,
-                ref isMaster, ref similar, ref splice, ref spliceH, ref colors);
+            // Use GetTableForDisplayArray instead of GetTableForDisplay
+            int ret = model.DatabaseTables.GetTableForDisplayArray(
+                "Story Definitions",
+                ref fieldNames,
+                "",
+                ref tableVersion,
+                ref fieldsKeysIncluded,
+                ref numberRecords,
+                ref tableData
+            );
 
-            if (ret == 0 && names != null)
+            if (ret == 0 && tableData != null && fieldNames != null)
             {
-                for (int i = 0; i < count; i++)
+                int colCount = fieldNames.Length;
+
+                // Find column indices for StoryName, Elevation, and StoryHeight
+                int storyNameIdx = Array.IndexOf(fieldNames, "Story");
+                int elevationIdx = Array.IndexOf(fieldNames, "Elevation");
+                int heightIdx = Array.IndexOf(fieldNames, "Height");
+
+                for (int i = 0; i < numberRecords; i++)
                 {
-                    stories.Add(new StoryData
-                    {
-                        StoryName = names[i],
-                        Elevation = elevations[i],
-                        StoryHeight = heights[i]
-                    });
+                    var storyData = new StoryData();
+                    if (storyNameIdx >= 0)
+                        storyData.StoryName = tableData[i * colCount + storyNameIdx];
+                    if (elevationIdx >= 0 && double.TryParse(tableData[i * colCount + elevationIdx], out double elev))
+                        storyData.Elevation = elev;
+                    if (heightIdx >= 0 && double.TryParse(tableData[i * colCount + heightIdx], out double h))
+                        storyData.StoryHeight = h;
+
+                    stories.Add(storyData);
                 }
             }
 
@@ -398,9 +411,12 @@ namespace DTS_Wall_Tool.Core.Utils
             var model = GetModel();
             if (model == null) return "";
 
-            string path = "";
-            model.GetModelFilename(ref path);
-            return path;
+            // string path = "";
+            // model.GetModelFilename(ref path);
+            // return path;
+
+            // Fix: Call GetModelFilename without 'ref'
+            return model.GetModelFilename();
         }
 
         #endregion

@@ -18,7 +18,7 @@ namespace DTS_Wall_Tool.Core.Engines
 
         public double CoveredLength => Mappings.Sum(m => m.CoveredLength);
         public double CoveragePercent => WallLength > 0 ? (CoveredLength / WallLength) * 100 : 0;
-        public bool IsFullyCovered => CoveragePercent >= 99. 0;
+        public bool IsFullyCovered => CoveragePercent >= 99.0;
         public bool HasMapping => Mappings.Count > 0 && Mappings[0].TargetFrame != "New";
 
         public string GetLabelText(string wallType, string loadPattern, double loadValue)
@@ -43,7 +43,7 @@ namespace DTS_Wall_Tool.Core.Engines
     {
         #region Configuration
 
-        public static double TOLERANCE_Z = 200. 0;
+        public static double TOLERANCE_Z = 200.0;
         public static double TOLERANCE_DIST = 300.0;
         public static double MIN_OVERLAP = 100.0;
         public static double TOLERANCE_ANGLE = 5 * GeometryConstants.DEG_TO_RAD;

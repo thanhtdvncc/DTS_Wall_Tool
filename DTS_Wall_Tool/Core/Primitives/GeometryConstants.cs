@@ -20,7 +20,7 @@ namespace DTS_Wall_Tool.Core.Primitives
         /// <summary>
         /// Nửa PI (90 độ)
         /// </summary>
-        public const double HALF_PI = Math.PI / 2. 0;
+        public const double HALF_PI = Math.PI / 2.0;
 
         /// <summary>
         /// 2 PI (360 độ)

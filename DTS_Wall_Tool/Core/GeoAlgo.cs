@@ -38,7 +38,7 @@ namespace DTS_Wall_Tool.Core
             return result.T;
         }
 
-        public static ProjectionResult ProjectSegmentOnVector(LineSegment2D segment, Point2D refPoint, double refAngle)
+        public static GeometryResults ProjectSegmentOnVector(LineSegment2D segment, Point2D refPoint, double refAngle)
             => ProjectionAlgorithms.SegmentOnVector(segment, refPoint, refAngle);
 
         #endregion

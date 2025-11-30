@@ -66,7 +66,7 @@ namespace DTS_Wall_Tool.Core.Algorithms
         /// <summary>
         /// Chiếu đoạn thẳng lên trục định bởi điểm và góc
         /// </summary>
-        public static ProjectionResult SegmentOnVector(LineSegment2D segment, Point2D refPoint, double refAngle)
+            public static GeometryResults SegmentOnVector(LineSegment2D segment, Point2D refPoint, double refAngle)
         {
             double cosA = Math.Cos(refAngle);
             double sinA = Math.Sin(refAngle);
@@ -79,13 +79,13 @@ namespace DTS_Wall_Tool.Core.Algorithms
             double dy2 = segment.End.Y - refPoint.Y;
             double endProj = dx2 * cosA + dy2 * sinA;
 
-            return new ProjectionResult(startProj, endProj);
+            return new GeometryResults(startProj, endProj);
         }
 
         /// <summary>
         /// Chiếu đoạn thẳng lên đoạn thẳng khác (dùng đoạn tham chiếu làm trục)
         /// </summary>
-        public static ProjectionResult SegmentOnSegment(LineSegment2D segment, LineSegment2D reference)
+        public static GeometryResults SegmentOnSegment(LineSegment2D segment, LineSegment2D reference)
         {
             return SegmentOnVector(segment, reference.Start, reference.Angle);
         }

@@ -54,6 +54,12 @@ namespace DTS_Wall_Tool.UI.Forms
         #region Data
 
         private LoadCalculator _calculator;
+
+        public AutoLoadTab(LoadCalculator calculator)
+        {
+            _calculator = calculator;
+        }
+
         private List<StoryLoadItem> _storyLoadItems = new List<StoryLoadItem>();
 
         #endregion
@@ -125,7 +131,7 @@ namespace DTS_Wall_Tool.UI.Forms
             _nudLoadFactor = new NumericUpDown
             {
                 Width = 60,
-                Minimum = 0. 1M,
+                Minimum = 0.1M,
                 Maximum = 10M,
                 DecimalPlaces = 2,
                 Value = 1M,
