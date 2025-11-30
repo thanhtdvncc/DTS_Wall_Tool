@@ -67,7 +67,9 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -116,6 +118,21 @@
     <Compile Include="Models\CenterLine.cs" />
     <Compile Include="Models\WallSegment.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="UI\FormLauncher.cs" />
+    <Compile Include="UI\Form\AutoLoadTab.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="UI\Form\LoadAssignmentTab.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="UI\Form\MainForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="UI\Form\WallLineGenTab.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="UI\SettingsManager.cs" />
+    <Compile Include="UI\UIStyles.cs" />
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
