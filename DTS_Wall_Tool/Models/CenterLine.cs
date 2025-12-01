@@ -1,8 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using DTS_Wall_Tool.Core.Algorithms;
+﻿using DTS_Wall_Tool.Core.Algorithms;
 using DTS_Wall_Tool.Core.Primitives;
 using DTS_Wall_Tool.Models.Base;
+using System;
+using System.Collections.Generic;
 
 namespace DTS_Wall_Tool.Models
 {

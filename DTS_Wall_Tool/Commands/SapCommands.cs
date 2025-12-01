@@ -1,12 +1,12 @@
-﻿using System.Collections.Generic;
-using System.Linq;
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using DTS_Wall_Tool.Core.Data;
 using DTS_Wall_Tool.Core.Engines;
 using DTS_Wall_Tool.Core.Primitives;
 using DTS_Wall_Tool.Core.Utils;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DTS_Wall_Tool.Commands
 {

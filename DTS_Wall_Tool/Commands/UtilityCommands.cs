@@ -55,7 +55,7 @@ namespace DTS_Wall_Tool.Commands
             WriteMessage("║  ISO/IEC 25010 Compliant                                     ║");
             WriteMessage("╚══════════════════════════════════════════════════════════════╝");
         }
-    
+
 
         /// <summary>
         /// Hiển thị/Cập nhật nhãn cho các phần tử đã có dữ liệu
@@ -156,11 +156,11 @@ namespace DTS_Wall_Tool.Commands
             WriteMessage("=== DỌN DẸP LAYER TẠM ===");
 
             // Thêm "dts_frame_label" vào danh sách
-            string[] tempLayers = { 
-                "dts_linkmap", 
-                "dts_highlight", 
-                "dts_mapping", 
-                "dts_labels", 
+            string[] tempLayers = {
+                "dts_linkmap",
+                "dts_highlight",
+                "dts_mapping",
+                "dts_labels",
                 "dts_temp",
                 "dts_frame_label" // Quan trọng: Layer chứa text
             };

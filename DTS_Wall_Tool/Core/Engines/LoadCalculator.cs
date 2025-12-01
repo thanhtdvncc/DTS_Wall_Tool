@@ -1,7 +1,7 @@
-﻿using System;
+﻿using DTS_Wall_Tool.Core.Data;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using DTS_Wall_Tool.Core.Data;
 
 namespace DTS_Wall_Tool.Core.Engines
 {

@@ -1,7 +1,7 @@
-﻿using System;
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
 using DTS_Wall_Tool.Core.Primitives;
+using System;
 
 namespace DTS_Wall_Tool.Core.Utils
 {

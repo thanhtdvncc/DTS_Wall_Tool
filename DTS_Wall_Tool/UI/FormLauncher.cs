@@ -1,7 +1,6 @@
-﻿using System;
-using System.Windows.Forms;
-using Autodesk.AutoCAD.Runtime;
+﻿using Autodesk.AutoCAD.Runtime;
 using DTS_Wall_Tool.UI.Forms;
+using System.Windows.Forms;
 
 namespace DTS_Wall_Tool.UI
 {

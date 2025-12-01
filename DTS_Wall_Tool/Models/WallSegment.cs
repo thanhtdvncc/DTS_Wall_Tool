@@ -1,5 +1,4 @@
-﻿using System;
-using DTS_Wall_Tool.Core.Primitives;
+﻿using DTS_Wall_Tool.Core.Primitives;
 using DTS_Wall_Tool.Models.Base;
 
 namespace DTS_Wall_Tool.Models

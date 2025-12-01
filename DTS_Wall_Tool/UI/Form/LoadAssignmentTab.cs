@@ -1,11 +1,8 @@
-﻿using System;
+﻿using DTS_Wall_Tool.Core.Utils;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
-using DTS_Wall_Tool.Core.Data;
-using DTS_Wall_Tool.Core.Engines;
-using DTS_Wall_Tool.Core.Primitives;
-using DTS_Wall_Tool.Core.Utils;
 
 namespace DTS_Wall_Tool.UI.Forms
 {

@@ -1,10 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using DTS_Wall_Tool.Core.Data;
 using DTS_Wall_Tool.Core.Primitives;
 using DTS_Wall_Tool.Core.Utils;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DTS_Wall_Tool.Core.Engines
 {

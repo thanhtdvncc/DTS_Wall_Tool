@@ -1,5 +1,5 @@
-﻿using System;
-using DTS_Wall_Tool.Core.Primitives;
+﻿using DTS_Wall_Tool.Core.Primitives;
+using System;
 
 namespace DTS_Wall_Tool.Core.Algorithms
 {

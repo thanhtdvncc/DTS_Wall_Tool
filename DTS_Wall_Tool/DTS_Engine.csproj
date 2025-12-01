@@ -7,8 +7,8 @@
     <ProjectGuid>{88CE1D01-E208-4210-B0C7-A7003AD0D7C3}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>DTS_Wall_Tool</RootNamespace>
-    <AssemblyName>DTS_Wall_Tool</AssemblyName>
+    <RootNamespace>DTS_Engine</RootNamespace>
+    <AssemblyName>DTS_Engine</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <Deterministic>true</Deterministic>

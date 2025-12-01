@@ -1,5 +1,5 @@
-﻿using System;
-using DTS_Wall_Tool.Core.Primitives;
+﻿using DTS_Wall_Tool.Core.Primitives;
+using System;
 
 namespace DTS_Wall_Tool.Core.Algorithms
 {
@@ -66,7 +66,7 @@ namespace DTS_Wall_Tool.Core.Algorithms
         /// <summary>
         /// Chiếu đoạn thẳng lên trục định bởi điểm và góc
         /// </summary>
-            public static GeometryResults SegmentOnVector(LineSegment2D segment, Point2D refPoint, double refAngle)
+        public static GeometryResults SegmentOnVector(LineSegment2D segment, Point2D refPoint, double refAngle)
         {
             double cosA = Math.Cos(refAngle);
             double sinA = Math.Sin(refAngle);

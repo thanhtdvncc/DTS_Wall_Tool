@@ -1,9 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using DTS_Wall_Tool.Core.Algorithms;
+﻿using DTS_Wall_Tool.Core.Algorithms;
 using DTS_Wall_Tool.Core.Data;
 using DTS_Wall_Tool.Core.Primitives;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DTS_Wall_Tool.Core.Engines
 {
@@ -36,7 +36,7 @@ namespace DTS_Wall_Tool.Core.Engines
             if (IsFullyCovered) return 3; // Green - Full
             return 2; // Yellow - Partial
         }
-    
+
 
         /// <summary>
         /// Tạo label text cho dòng trên (thông tin mapping)

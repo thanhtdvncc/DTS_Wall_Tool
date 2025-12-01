@@ -1,6 +1,6 @@
-﻿using System;
+﻿using DTS_Wall_Tool.Core.Primitives;
+using System;
 using System.Collections.Generic;
-using DTS_Wall_Tool.Core.Primitives;
 
 namespace DTS_Wall_Tool.DataStructures
 {

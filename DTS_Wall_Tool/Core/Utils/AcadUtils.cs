@@ -2,9 +2,9 @@
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
+using DTS_Wall_Tool.Core.Primitives;
 using System;
 using System.Collections.Generic;
-using DTS_Wall_Tool.Core.Primitives;
 
 namespace DTS_Wall_Tool.Core.Utils
 {

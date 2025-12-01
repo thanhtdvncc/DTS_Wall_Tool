@@ -1,9 +1,9 @@
-﻿using System;
+﻿using DTS_Wall_Tool.Core.Data;
+using DTS_Wall_Tool.Core.Primitives;
+using SAP2000v1;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using SAP2000v1;
-using DTS_Wall_Tool.Core.Data;
-using DTS_Wall_Tool.Core.Primitives;
 
 namespace DTS_Wall_Tool.Core.Utils
 {

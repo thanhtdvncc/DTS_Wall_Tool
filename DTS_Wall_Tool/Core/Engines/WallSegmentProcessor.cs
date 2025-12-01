@@ -1,9 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using DTS_Wall_Tool.Core.Algorithms;
+﻿using DTS_Wall_Tool.Core.Algorithms;
 using DTS_Wall_Tool.Core.Primitives;
 using DTS_Wall_Tool.Models;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DTS_Wall_Tool.Core.Engines
 {
