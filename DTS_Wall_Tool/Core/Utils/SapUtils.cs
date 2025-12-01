@@ -23,8 +23,6 @@ namespace DTS_Wall_Tool.Core.Utils
         {
             _sapObject = null;
             _sapModel = null;
-            message = "";
-
             try
             {
                 // 1. Dùng Helper - Cách duy nhất ổn định cho SAP v26+
@@ -88,8 +86,7 @@ namespace DTS_Wall_Tool.Core.Utils
         {
             if (_sapModel == null)
             {
-                string msg;
-                Connect(out msg);
+                Connect(message: out string msg);
             }
             return _sapModel;
         }

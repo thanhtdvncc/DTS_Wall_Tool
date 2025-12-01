@@ -55,77 +55,103 @@ namespace DTS_Wall_Tool.Commands
         }
 
         /// <summary>
-        /// Set thông tin tường cho các line được chọn
+        /// Gán thuộc tính Tường (An toàn)
         /// </summary>
-        [CommandMethod("DTS_SET")]
-        public void DTS_SET()
+        [CommandMethod("DTS_SET_WALL")]
+        public void DTS_SET_WALL()
         {
-            WriteMessage("=== GÁN THÔNG TIN TƯỜNG ===");
+            WriteMessage("\n=== THIẾT LẬP THUỘC TÍNH TƯỜNG (SET WALL) ===");
 
+            // 1. Chọn đối tượng (Line)
             var lineIds = AcadUtils.SelectObjectsOnScreen("LINE");
-            if (lineIds.Count == 0)
+            if (lineIds.Count == 0) return;
+
+            // 2. Nhập Độ dày (Cho phép Null)
+            double? inputThickness = null;
+            PromptDoubleOptions thickOpt = new PromptDoubleOptions("\nNhập độ dày tường (Enter để bỏ qua/giữ nguyên): ");
+            thickOpt.AllowNegative = false;
+            thickOpt.AllowZero = false;
+            thickOpt.AllowNone = true; // Cho phép Enter ra None
+
+            PromptDoubleResult thickRes = Ed.GetDouble(thickOpt);
+            if (thickRes.Status == PromptStatus.OK)
             {
-                WriteMessage("Không có đối tượng nào được chọn.");
+                inputThickness = thickRes.Value;
+            }
+            else if (thickRes.Status != PromptStatus.None) // Nếu Cancel hoặc Error
+            {
                 return;
             }
 
-            // Nhập độ dày
-            PromptDoubleOptions thicknessOpt = new PromptDoubleOptions("\nNhập độ dày tường (mm): ");
-            thicknessOpt.DefaultValue = 220;
-            thicknessOpt.AllowNegative = false;
-            thicknessOpt.AllowZero = false;
-
-            PromptDoubleResult thicknessRes = Ed.GetDouble(thicknessOpt);
-            if (thicknessRes.Status != PromptStatus.OK)
-            {
-                WriteMessage("Đã hủy.");
-                return;
-            }
-            double thickness = thicknessRes.Value;
-
-            // Nhập loại tường
-            PromptStringOptions typeOpt = new PromptStringOptions("\nNhập loại tường (Enter để tự động): ");
+            // 3. Nhập Loại tường (Cho phép Null/Rỗng)
+            string inputType = null;
+            PromptStringOptions typeOpt = new PromptStringOptions("\nNhập tên loại tường (Enter để bỏ qua/giữ nguyên): ");
             typeOpt.AllowSpaces = false;
-            typeOpt.DefaultValue = "";
 
             PromptResult typeRes = Ed.GetString(typeOpt);
-            string wallType = typeRes.StringResult;
-
-            if (string.IsNullOrEmpty(wallType))
+            if (typeRes.Status == PromptStatus.OK && !string.IsNullOrEmpty(typeRes.StringResult))
             {
-                wallType = "W" + ((int)thickness).ToString();
+                inputType = typeRes.StringResult;
             }
 
-            // Gán dữ liệu
-            int count = 0;
+            // 4. Thực hiện Gán (Batch Processing)
+            int successCount = 0;
+            int skipCount = 0; // Đếm số đối tượng bị bỏ qua do sai loại
+
             UsingTransaction(tr =>
             {
                 foreach (ObjectId id in lineIds)
                 {
                     DBObject obj = tr.GetObject(id, OpenMode.ForWrite);
 
-                    WallData wData = new WallData
+                    // Tạo object chứa data muốn update
+                    // Các trường null sẽ không được gửi vào hàm Save
+                    WallData newData = new WallData
                     {
-                        Thickness = thickness,
-                        WallType = wallType,
-                        LoadPattern = "DL"
+                        Thickness = inputThickness,
+                        WallType = inputType,
+                        // KHÔNG gán LoadPattern mặc định ở đây nữa để tránh rác
                     };
 
-                    XDataUtils.SaveWallData(obj, wData, tr);
-                    count++;
+                    // Gọi hàm Save an toàn
+                    bool success = XDataUtils.SaveWallData(obj, newData, tr);
+
+                    if (success)
+                    {
+                        successCount++;
+                    }
+                    else
+                    {
+                        skipCount++;
+                        // Có thể log handle ra để user biết
+                        // WriteMessage($"\n[Cảnh báo] Bỏ qua đối tượng {id.Handle} vì nó không phải là Tường (hoặc chưa Clear).");
+                    }
                 }
             });
 
-            WriteSuccess($"Đã gán thông tin cho {count} tường: {wallType} (T={thickness}mm)");
+            // 5. Báo cáo kết quả
+            if (inputThickness == null && inputType == null)
+            {
+                WriteMessage("\nKhông có thông tin nào được nhập. Không có thay đổi.");
+            }
+            else
+            {
+                WriteSuccess($"Đã cập nhật {successCount} tường.");
+                if (skipCount > 0)
+                {
+                    WriteError($"{skipCount} đối tượng bị bỏ qua vì đang là loại khác (Dầm/Cột...). Hãy dùng DTS_CLEAR_XDATA trước nếu muốn chuyển đổi.");
+                }
+            }
         }
 
+
         /// <summary>
-        /// Xóa thông tin tường
+        /// Xóa thông Element Data của các đối tượng đã chọn
         /// </summary>
-        [CommandMethod("DTS_CLEAR")]
+        [CommandMethod("DTS_CLEAR_ELEMENT")]
         public void DTS_CLEAR()
         {
-            WriteMessage("=== XÓA THÔNG TIN TƯỜNG ===");
+            WriteMessage("=== XÓA THÔNG TIN ĐỐI TƯỢNG ===");
 
             var lineIds = AcadUtils.SelectObjectsOnScreen("LINE");
             if (lineIds.Count == 0)
@@ -140,7 +166,7 @@ namespace DTS_Wall_Tool.Commands
                 foreach (ObjectId id in lineIds)
                 {
                     DBObject obj = tr.GetObject(id, OpenMode.ForWrite);
-                    XDataUtils.ClearWallData(obj, tr);
+                    XDataUtils.ClearElementData(obj, tr);
                     count++;
                 }
             });

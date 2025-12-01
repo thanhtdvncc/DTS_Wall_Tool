@@ -54,9 +54,15 @@ namespace DTS_Wall_Tool.Core.Utils
             string typeStr = dict["xType"].ToString();
 
             // Mapping chuỗi sang Enum
-            if (typeStr == "WALL") return ElementType.Wall;
-            if (typeStr == "COLUMN") return ElementType.Column;
             if (typeStr == "BEAM") return ElementType.Beam;
+            if (typeStr == "COLUMN") return ElementType.Column;
+            if (typeStr == "SLAB") return ElementType.Slab;
+            if (typeStr == "WALL") return ElementType.Wall;
+            if (typeStr == "FOUNDATION") return ElementType.Foundation;
+            if (typeStr == "STAIR") return ElementType.Stair;
+            if (typeStr == "PILE") return ElementType.Pile;
+            if (typeStr == "LINTEL") return ElementType.Lintel;
+            if (typeStr == "REBAR") return ElementType.Rebar;
             if (typeStr == "STORY_ORIGIN") return ElementType.StoryOrigin;
 
             return ElementType.Unknown;
@@ -65,11 +71,30 @@ namespace DTS_Wall_Tool.Core.Utils
 
         /// <summary>
         /// Ghi WallData vào entity (merge với dữ liệu cũ)
+        /// Trả về False nếu đối tượng đang là loại khác (vd. COLUMN, BEAM)
+        /// Chỉ cập nhật các trường có giá trị (null thì không ghi)
         /// </summary>
-        public static void SaveWallData(DBObject obj, WallData data, Transaction tr)
+        public static bool SaveWallData(DBObject obj, WallData data, Transaction tr)
         {
+            //1. Kiểm tra loại đối tượng hiện tại
+            ElementType currentType = GetElementType(obj);
+
+            // Nếu đã có dữ liệu khác loại, từ chối ghi
+            if (currentType != ElementType.Unknown && currentType != ElementType.Wall)
+            {
+                return false;
+            }
+
+            // 2. Chuẩn bị dữ liệu cập nhật
             var updates = new Dictionary<string, object>();
+
+            // Định danh loại (trường hợp mới hoàn toàn)
             updates["xType"] = "WALL";
+
+
+            // 3. Xử lý các trường dữ liệu (chỉ ghi các trường có giá trị)
+            // Nếu data.Thickess là null thì không ghi
+            // Muốn xóa trường thì dùng ClearElementData
 
             if (data.Thickness.HasValue) updates["xThickness"] = data.Thickness.Value;
             if (data.WallType != null) updates["xWallType"] = data.WallType;
@@ -88,14 +113,16 @@ namespace DTS_Wall_Tool.Core.Utils
                 updates["xMappings"] = ConvertMappingsToSerializable(data.Mappings);
             }
 
+            // 4. Cập nhật dữ liệu
             UpdateData(obj, updates, tr);
+            return true;
         }
 
         /// <summary>
-        /// Xóa WallData khỏi entity
+        /// Xóa Element Data khỏi entity
         /// </summary>
-        public static void ClearWallData(DBObject obj, Transaction tr)
-        {
+        public static void ClearElementData(DBObject obj, Transaction tr)
+        {   
             ClearEntityData(obj, tr);
         }
 

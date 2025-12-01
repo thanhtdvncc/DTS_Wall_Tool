@@ -44,7 +44,7 @@ namespace DTS_Wall_Tool.Commands
         {
             WriteMessage("=== HIỂN THỊ NHÃN PHẦN TỬ (UPDATE) ===");
 
-            var selection = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,CIRCLE,INSERT");
+            var selection = AcadUtils.SelectObjectsOnScreen("");
             if (selection.Count == 0)
             {
                 WriteMessage("\nKhông có đối tượng nào được chọn.");
@@ -152,49 +152,6 @@ namespace DTS_Wall_Tool.Commands
             WriteSuccess($"Đã dọn dẹp sạch sẽ các layer tạm.");
         }
 
-        /// <summary>
-        /// Hiển thị thống kê
-        /// </summary>
-        [CommandMethod("DTS_STATS")]
-        public void DTS_STATS()
-        {
-            WriteMessage("=== THỐNG KÊ BẢN VẼ ===");
 
-            var lineIds = AcadUtils.SelectAll("LINE");
-            var circleIds = AcadUtils.SelectAll("CIRCLE");
-
-            int totalLines = lineIds.Count;
-            int wallsWithData = 0;
-            int wallsWithMapping = 0;
-            int origins = 0;
-
-            UsingTransaction(tr =>
-            {
-                foreach (var lineId in lineIds)
-                {
-                    var obj = tr.GetObject(lineId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
-                    var wData = XDataUtils.ReadWallData(obj);
-                    if (wData != null && wData.HasValidData())
-                    {
-                        wallsWithData++;
-                        if (wData.Mappings != null && wData.Mappings.Count > 0)
-                            wallsWithMapping++;
-                    }
-                }
-
-                foreach (var circleId in circleIds)
-                {
-                    var obj = tr.GetObject(circleId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
-                    var sData = XDataUtils.ReadStoryData(obj);
-                    if (sData != null)
-                        origins++;
-                }
-            });
-
-            WriteMessage($"  Tổng số LINE: {totalLines}");
-            WriteMessage($"  Tường có data: {wallsWithData}");
-            WriteMessage($"  Tường có mapping: {wallsWithMapping}");
-            WriteMessage($"  Origins: {origins}");
-        }
     }
 }
