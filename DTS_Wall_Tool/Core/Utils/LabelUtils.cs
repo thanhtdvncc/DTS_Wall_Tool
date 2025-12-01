@@ -1,95 +1,104 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.Geometry;
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Colors;
 using DTS_Wall_Tool.Core.Data;
+using DTS_Wall_Tool.Core.Engines;
 using DTS_Wall_Tool.Core.Primitives;
 
 namespace DTS_Wall_Tool.Core.Utils
 {
-    /// <summary>
-    /// Tiện ích quản lý label trong AutoCAD
-    /// </summary>
     public static class LabelUtils
     {
-        private const string LABEL_LAYER = "dts_labels";
-        private const double DEFAULT_TEXT_HEIGHT = 200;
+        // Cấu hình hiển thị
+        private const double TEXT_HEIGHT_MAIN = 150.0;
+        private const double TEXT_HEIGHT_SUB = 120.0;
 
         /// <summary>
-        /// Tạo/cập nhật label cho tường
+        /// Cập nhật nhãn cho Tường sau khi Sync/Mapping
         /// </summary>
-        public static void UpdateWallLabel(ObjectId wallId, WallData wData, Transaction tr)
+        public static void UpdateWallLabels(ObjectId wallId, WallData wData, MappingResult mapResult, Transaction tr)
         {
-            // Nội dung label
-            string content = BuildLabelContent(wallId, wData);
-
-            // Vị trí (tâm tường)
+            // 1. Chuẩn bị dữ liệu hình học
             Entity ent = tr.GetObject(wallId, OpenMode.ForRead) as Entity;
-            Point2D center = AcadUtils.GetEntityCenter(ent);
+            if (ent == null) return;
 
-            // Đảm bảo layer tồn tại
-            AcadUtils.CreateLayer(LABEL_LAYER, 2); // Màu vàng
+            Point2D pStart, pEnd;
+            if (ent is Line line)
+            {
+                pStart = new Point2D(line.StartPoint.X, line.StartPoint.Y);
+                pEnd = new Point2D(line.EndPoint.X, line.EndPoint.Y);
+            }
+            else return;
 
-            // Vẽ MText
-            AcadUtils.CreateMText(center, content, DEFAULT_TEXT_HEIGHT, LABEL_LAYER, 2, tr);
+            // 2. Chuẩn bị nội dung Text
+            // Màu sắc cho Handle: Xanh (3) nếu map OK, Đỏ (1) nếu lỗi
+            int statusColor = mapResult.HasMapping ? 3 : 1;
+
+            // --- Dòng trên (Middle Top): Thông tin Tường ---
+            // Format: [\C3HANDLE\C7] W200 DL=10.5
+            string handleText = FormatColor($"[{wallId.Handle}]", statusColor);
+            string infoText = $"{wData.WallType} {wData.LoadPattern}={wData.LoadValue:0.##}";
+            string topContent = $"{handleText} {{\\C7{infoText}}}"; // Màu 7 (Trắng/Đen) cho phần info
+
+            // --- Dòng dưới (Middle Bottom): Thông tin Mapping ---
+            // Format: to B15 I=0.0to3.5
+            string botContent = GetMappingText(mapResult);
+
+            // 3. Vẽ (Gọi LabelPlotter)
+            BlockTableRecord btr = (BlockTableRecord)tr.GetObject(ent.Database.CurrentSpaceId, OpenMode.ForWrite);
+
+            // Vẽ dòng trên
+            LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, topContent, LabelPosition.MiddleTop, TEXT_HEIGHT_MAIN);
+
+            // Vẽ dòng dưới (Nhỏ hơn một chút cho đẹp)
+            LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, botContent, LabelPosition.MiddleBottom, TEXT_HEIGHT_SUB);
         }
 
-        /// <summary>
-        /// Tạo nội dung label từ WallData
-        /// </summary>
-        public static string BuildLabelContent(ObjectId wallId, WallData wData)
+        // --- Helpers ---
+
+        private static string FormatColor(string text, int colorIndex)
         {
-            string handleStr = wallId.Handle.ToString();
-            string wallType = wData.WallType ?? "? ";
-            string loadPattern = wData.LoadPattern ?? "DL";
-            double loadValue = wData.LoadValue ?? 0;
+            return $"{{\\C{colorIndex};{text}}}";
+        }
 
-            string content = $"[{handleStr}] {wallType} {loadPattern}={loadValue:0.00}kN/m";
+        private static string GetMappingText(MappingResult res)
+        {
+            // Nếu chưa map
+            if (!res.HasMapping) return FormatColor("to New", 1); // Màu đỏ
 
-            // Thêm thông tin mapping
-            if (wData.Mappings != null && wData.Mappings.Count > 0)
+            // Nếu map nhiều dầm
+            if (res.Mappings.Count > 1)
             {
-                foreach (var map in wData.Mappings)
-                {
-                    content += $"\n-> {map.TargetFrame}";
-                }
+                var names = res.Mappings.Select(m => m.TargetFrame).Distinct();
+                return FormatColor("to " + string.Join(",", names), 2); // Màu vàng
             }
 
-            return content;
+            // Map 1 dầm
+            var map = res.Mappings[0];
+            if (map.TargetFrame == "New") return FormatColor("to New", 1);
+
+            string result = $"to {map.TargetFrame}";
+
+            if (map.MatchType == "FULL" || map.MatchType == "EXACT")
+            {
+                result += $" (full {map.CoveredLength / 1000.0:0.#}m)";
+            }
+            else
+            {
+                double i = map.DistI / 1000.0;
+                double j = map.DistJ / 1000.0;
+                result += $" I={i:0.0}to{j:0.0}";
+            }
+
+            return FormatColor(result, 2); // Màu vàng
         }
 
-        /// <summary>
-        /// Tạo label cho mapping result
-        /// </summary>
-        public static void CreateMappingLabel(Point2D position, string frameName, string mapType, Transaction tr)
-        {
-            string content = $"{frameName} [{mapType}]";
-            AcadUtils.CreateLayer(LABEL_LAYER, 3); // Màu xanh lá
-            AcadUtils.CreateMText(position, content, DEFAULT_TEXT_HEIGHT * 0.8, LABEL_LAYER, 3, tr);
-        }
-
-        /// <summary>
-        /// Xóa tất cả labels
-        /// </summary>
-        public static void ClearAllLabels()
-        {
-            AcadUtils.ClearLayer(LABEL_LAYER);
-        }
-
-        /// <summary>
-        /// Đổi màu entity theo trạng thái mapping
-        /// </summary>
-        public static void SetEntityColorByStatus(ObjectId id, bool hasMapping, Transaction tr)
-        {
-            // 3 = Xanh lá (có mapping), 1 = Đỏ (không có mapping)
-            int colorIndex = hasMapping ? 3 : 1;
-            AcadUtils.SetEntityColor(id, colorIndex, tr);
-        }
-
-        /// <summary>
-        /// Đổi màu entity
-        /// </summary>
         public static void SetEntityColor(ObjectId id, int colorIndex, Transaction tr)
         {
-            AcadUtils.SetEntityColor(id, colorIndex, tr);
+            Entity ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+            if (ent != null) ent.ColorIndex = colorIndex;
         }
     }
 }
