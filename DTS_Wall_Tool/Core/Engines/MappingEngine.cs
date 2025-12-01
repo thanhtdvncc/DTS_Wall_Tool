@@ -118,6 +118,7 @@ namespace DTS_Wall_Tool.Core.Engines
     /// </summary>
     public static class MappingEngine
     {
+        // Cấu hình dung sai
         #region Configuration (Tunable Parameters)
 
         /// <summary>Dung sai cao độ Z (mm)</summary>
@@ -129,8 +130,11 @@ namespace DTS_Wall_Tool.Core.Engines
         /// <summary>Chiều dài overlap tối thiểu để chấp nhận (mm)</summary>
         public static double MIN_OVERLAP = 100.0;
 
-        /// <summary>Dung sai góc song song (rad) ~ 10 độ</summary>
-        public static double TOLERANCE_ANGLE = 10.0 * GeometryConstants.DEG_TO_RAD;
+        /// <summary>Khoảng cách khe hở cho phép để snap đầu dầm (mm)</summary>
+        public static double TOLERANCE_GAP = 300.0; // Khe hở cho phép snap đầu dầm
+
+        /// <summary>Dung sai góc song song (rad) ~ 5 độ</summary>
+        public static double TOLERANCE_ANGLE = 5 * GeometryConstants.DEG_TO_RAD;
 
         /// <summary>Tỷ lệ overlap tối thiểu để xem là match hợp lệ (15%)</summary>
         public static double MIN_OVERLAP_RATIO = 0.15;
@@ -146,164 +150,103 @@ namespace DTS_Wall_Tool.Core.Engines
         /// Tìm tất cả dầm đỡ một tường (Main Entry Point)
         /// </summary>
         public static MappingResult FindMappings(
-            Point2D wallStart,
-            Point2D wallEnd,
-            double wallZ,
-            IEnumerable<SapFrame> frames,
-            Point2D insertionOffset = default,
-            double wallThickness = 200.0)
+                   Point2D wallStart,
+                   Point2D wallEnd,
+                   double wallZ,
+                   IEnumerable<SapFrame> frames,
+                   Point2D insertionOffset = default,
+                   double wallThickness = 200.0)
         {
             var result = new MappingResult
             {
                 WallLength = wallStart.DistanceTo(wallEnd)
             };
 
-            if (result.WallLength < GeometryConstants.EPSILON)
-                return result;
+            if (result.WallLength < 1.0) return result;
 
-            // Apply coordinate offset (CAD -> SAP)
             var wStart = new Point2D(wallStart.X - insertionOffset.X, wallStart.Y - insertionOffset.Y);
             var wEnd = new Point2D(wallEnd.X - insertionOffset.X, wallEnd.Y - insertionOffset.Y);
             var wallSeg = new LineSegment2D(wStart, wEnd);
 
-            // Calculate dynamic distance tolerance based on wall thickness
-            double dynamicDistTol = CalculateDynamicDistanceTolerance(wallThickness);
+            double searchDistTol = Math.Max(wallThickness * 2.0, 250.0);
+            var validMappings = new List<MappingRecord>();
 
-            // ========== PHASE 1: PRE-FILTER ==========
-            var frameList = frames.ToList();
-            var candidates = new List<FrameCandidate>();
-
-            foreach (var frame in frameList)
+            foreach (var frame in frames)
             {
-                // Skip columns
+                // Lọc sơ bộ
                 if (frame.IsVertical) continue;
-
-                // Filter by Z elevation
-                if (!IsElevationMatch(frame, wallZ)) continue;
+                if (Math.Abs(frame.AverageZ - wallZ) > TOLERANCE_Z) continue;
 
                 var frameSeg = new LineSegment2D(frame.StartPt, frame.EndPt);
+                if (!AngleAlgorithms.IsParallel(wallSeg.Angle, frameSeg.Angle, TOLERANCE_ANGLE)) continue;
+                if (DistanceAlgorithms.BetweenParallelSegments(wallSeg, frameSeg) > searchDistTol) continue;
 
-                // Filter by parallel angle (allow opposite direction)
-                if (!IsParallelOrOpposite(wallSeg.Angle, frameSeg.Angle)) continue;
-
-                // Filter by perpendicular distance
-                double perpDist = DistanceAlgorithms.BetweenParallelSegments(wallSeg, frameSeg);
-                if (perpDist > dynamicDistTol) continue;
-
-                // ========== PHASE 2: LOCAL PROJECTION ==========
-                var projResult = ProjectWallOntoFrame(wallSeg, frame);
-
-                // ========== PHASE 3: OVERLAP CALCULATION ==========
+                // Tính giao cắt
                 double frameLen = frame.Length2D;
-                double t1 = projResult.WallProjStart;
-                double t2 = projResult.WallProjEnd;
+                if (frameLen < 1.0) continue;
 
-                // Ensure t1 < t2
-                if (t1 > t2) (t1, t2) = (t2, t1);
+                Point2D vecFrame = (frame.EndPt - frame.StartPt).Normalized;
+                double t_Start = (wStart - frame.StartPt).Dot(vecFrame);
+                double t_End = (wEnd - frame.StartPt).Dot(vecFrame);
 
-                // Calculate intersection with [0, frameLen]
-                double overlapStart = Math.Max(t1, 0);
-                double overlapEnd = Math.Min(t2, frameLen);
+                double tMin = Math.Min(t_Start, t_End);
+                double tMax = Math.Max(t_Start, t_End);
+
+                double overlapStart = Math.Max(0, tMin);
+                double overlapEnd = Math.Min(frameLen, tMax);
                 double overlapLen = overlapEnd - overlapStart;
 
-                // ========== PHASE 4: DECISION LOGIC ==========
-                bool isValidMatch = false;
-                double gap = 0;
-
-                // PRIORITY A: Physical Overlap
-                if (overlapLen > MIN_OVERLAP)
+                // Snap thông minh
+                bool isMatch = false;
+                if (overlapLen > 50.0) isMatch = true;
+                else // Logic GAP
                 {
-                    double overlapRatio = overlapLen / result.WallLength;
-                    if (overlapRatio >= MIN_OVERLAP_RATIO)
+                    if (tMax < 0 && tMax > -TOLERANCE_GAP) { overlapStart = 0; overlapEnd = 0; isMatch = true; }
+                    else if (tMin > frameLen && tMin < frameLen + TOLERANCE_GAP) { overlapStart = frameLen; overlapEnd = frameLen; isMatch = true; }
+                }
+
+                if (isMatch)
+                {
+                    // Snap vào đầu mút
+                    if (overlapStart < TOLERANCE_GAP) overlapStart = 0;
+                    if (frameLen - overlapEnd < TOLERANCE_GAP) overlapEnd = frameLen;
+
+                    double effectiveCover = overlapEnd - overlapStart;
+
+                    // --- [QUAN TRỌNG] LỌC BỎ ĐOẠN QUÁ NGẮN (RÁC 0-0) ---
+                    // Chỉ chấp nhận nếu đoạn phủ > 10mm (1cm)
+                    if (effectiveCover < 10.0) continue;
+
+                    string type = "PARTIAL";
+                    if (effectiveCover >= frameLen * 0.98) type = "FULL";
+
+                    validMappings.Add(new MappingRecord
                     {
-                        isValidMatch = true;
-                    }
+                        TargetFrame = frame.Name,
+                        MatchType = type,
+                        DistI = overlapStart,
+                        DistJ = overlapEnd,
+                        FrameLength = frameLen,
+                        CoveredLength = effectiveCover
+                    });
                 }
-
-                // PRIORITY B: Gap Match (only if no overlap)
-                if (!isValidMatch)
-                {
-                    if (t2 < 0)
-                        gap = -t2;
-                    else if (t1 > frameLen)
-                        gap = t1 - frameLen;
-                    else
-                        gap = 0;
-
-                    if (gap > 0 && gap <= MAX_GAP_DISTANCE)
-                    {
-                        double lenDiff = Math.Abs(frameLen - result.WallLength);
-                        double lenRatio = result.WallLength / frameLen;
-
-                        bool isSimilarLength = (lenDiff <= 1000) || (lenRatio >= 0.7 && lenRatio <= 1.3);
-
-                        if (isSimilarLength)
-                        {
-                            isValidMatch = true;
-                            if (overlapLen <= 0)
-                            {
-                                overlapLen = 100;
-                                if (t2 < 0)
-                                {
-                                    overlapStart = 0;
-                                    overlapEnd = 100;
-                                }
-                                else
-                                {
-                                    overlapStart = frameLen - 100;
-                                    overlapEnd = frameLen;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (!isValidMatch) continue;
-
-                // Calculate score
-                double distPenalty = perpDist / dynamicDistTol;
-                if (distPenalty > 1) distPenalty = 1;
-                double overlapRatioFinal = Math.Max(overlapLen / result.WallLength, 0);
-                double score = (overlapRatioFinal * 0.7) + ((1 - distPenalty) * 0.3);
-
-                candidates.Add(new FrameCandidate
-                {
-                    Frame = frame,
-                    OverlapLength = overlapLen,
-                    PerpDist = perpDist,
-                    Score = score,
-                    WallProjStart = t1,
-                    WallProjEnd = t2,
-                    OverlapStart = overlapStart,
-                    OverlapEnd = overlapEnd
-                });
             }
 
-            // No candidates found -> NEW
-            if (candidates.Count == 0)
+            // Tổng hợp kết quả
+            if (validMappings.Count == 0)
             {
-                result.Mappings.Add(CreateNewMapping(result.WallLength));
-                return result;
+                result.Mappings.Add(new MappingRecord { TargetFrame = "New", MatchType = "NEW" });
             }
-
-            // Sort by score (best first)
-            candidates = candidates.OrderByDescending(c => c.Score).ToList();
-
-            // ========== PHASE 5: GENERATE MAPPING RECORDS ==========
-            foreach (var candidate in candidates)
+            else
             {
-                var mapping = CreateMappingFromCandidate(candidate, wallSeg, result.WallLength);
-                if (mapping != null)
-                {
-                    result.Mappings.Add(mapping);
-                }
+                // Sắp xếp theo vị trí I
+                result.Mappings = validMappings.OrderBy(m => m.DistI).ToList();
             }
-
-            // Optimize mappings
-            result.Mappings = OptimizeMappings(result.Mappings, result.WallLength);
 
             return result;
         }
+
+
 
         /// <summary>
         /// Overload for LineSegment2D input

@@ -91,6 +91,7 @@
     <Compile Include="Core\Algorithms\MergeAlgorithms.cs" />
     <Compile Include="Core\Algorithms\OverlapAlgorithms.cs" />
     <Compile Include="Core\Algorithms\ProjectionAlgorithms.cs" />
+    <Compile Include="Core\Data\ElementType.cs" />
     <Compile Include="Core\Data\MappingRecord.cs" />
     <Compile Include="Core\Data\SapFrame.cs" />
     <Compile Include="Core\Data\StoryData.cs" />

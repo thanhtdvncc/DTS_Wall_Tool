@@ -10,6 +10,11 @@ namespace DTS_Wall_Tool.Core.Data
     {
         #region Basic Properties
 
+        ///<summary>
+        ///Luôn trả về Wall để định danh tường
+        ///</summary>
+        public ElementType ElementType => ElementType.Wall;
+
         /// <summary>
         /// Độ dày tường (mm)
         /// </summary>

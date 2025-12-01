@@ -153,14 +153,12 @@ namespace DTS_Wall_Tool.Core.Utils
         /// Tính toán vị trí, góc xoay và attachment point cho label
         /// </summary>
         private static LabelGeometry CalculateLabelGeometry(
-            Point2D startPt,
-            Point2D endPt,
-            LabelPosition position,
-            double textHeight)
+                    Point2D startPt, Point2D endPt,
+                    LabelPosition position, double textHeight)
         {
             var result = new LabelGeometry();
 
-            // 1. Tính vector hướng và góc
+            // 1. Vector hướng của đoạn tường
             double dx = endPt.X - startPt.X;
             double dy = endPt.Y - startPt.Y;
             double length = Math.Sqrt(dx * dx + dy * dy);
@@ -168,89 +166,81 @@ namespace DTS_Wall_Tool.Core.Utils
             if (length < GeometryConstants.EPSILON)
             {
                 result.InsertPoint = startPt;
-                result.Rotation = 0;
-                result.Attachment = AttachmentPoint.MiddleCenter;
                 return result;
             }
 
-            // Unit vector
+            // Vector đơn vị
             double ux = dx / length;
             double uy = dy / length;
 
-            // Perpendicular vector (vuông góc, hướng "trên")
-            double px = -uy;
-            double py = ux;
-
-            // 2. Tính góc và chuẩn hóa để text luôn đọc được (Bottom-Up, Left-Right)
+            // 2. Tính góc cơ sở (0 đến 2PI)
             double angle = Math.Atan2(dy, dx);
-            double readableAngle = NormalizeAngleForReadability(angle);
+            if (angle < 0) angle += 2 * Math.PI;
 
-            // 3.  Xác định điểm base theo vị trí (Start/Middle/End)
+            // 3. Logic Readability (Text luôn đọc được)
+            // AutoCAD tự lật text nếu góc > 90 và <= 270.
+            // Ta cần mô phỏng logic đó để tính toán điểm chèn.
+            bool isFlipped = (angle > Math.PI / 2 && angle <= 3 * Math.PI / 2);
+            double readableAngle = isFlipped ? angle + Math.PI : angle;
+
+            // 4. Vector vuông góc ("Hướng lên" so với text)
+            // Nếu text bị lật, vector "lên" cũng bị lật ngược lại so với hệ tọa độ
+            double perpX = -uy;
+            double perpY = ux;
+
+            // 5. Xác định điểm neo cơ sở (Base Point trên đường line)
             Point2D basePoint;
             switch (position)
             {
                 case LabelPosition.StartTop:
-                case LabelPosition.StartBottom:
-                    basePoint = startPt;
-                    break;
+                case LabelPosition.StartBottom: basePoint = startPt; break;
                 case LabelPosition.EndTop:
-                case LabelPosition.EndBottom:
-                    basePoint = endPt;
-                    break;
-                default: // Middle
-                    basePoint = new Point2D((startPt.X + endPt.X) / 2, (startPt.Y + endPt.Y) / 2);
-                    break;
+                case LabelPosition.EndBottom: basePoint = endPt; break;
+                default: basePoint = new Point2D((startPt.X + endPt.X) / 2, (startPt.Y + endPt.Y) / 2); break;
             }
 
-            // 4. Xác định hướng offset (Trên/Dưới)
-            double offsetDistance = textHeight * 0.8 + TEXT_GAP;
-            bool isTopPosition = (position == LabelPosition.StartTop ||
-                                  position == LabelPosition.MiddleTop ||
-                                  position == LabelPosition.EndTop);
+            // 6. Tính toán Offset và Attachment Point
+            // Quy ước: "Top" là phía trên dòng chữ, "Bottom" là phía dưới dòng chữ.
 
-            // Nếu góc đã được xoay 180 độ, đảo hướng offset
-            bool isFlipped = Math.Abs(readableAngle - angle) > 0.1;
-            if (isFlipped) isTopPosition = !isTopPosition;
+            bool isTopPos = (position == LabelPosition.StartTop || position == LabelPosition.MiddleTop || position == LabelPosition.EndTop);
 
-            double offsetMultiplier = isTopPosition ? 1.0 : -1.0;
+            // Khoảng cách dịch chuyển từ tim tường ra
+            double offsetDist = (textHeight / 2.0) + TEXT_GAP;
 
-            // 5.  Tính điểm chèn với offset
+            // Logic quan trọng:
+            // Nếu vị trí là Top -> Text nằm trên Line -> Attachment phải là BottomCenter -> Dịch chuyển +Perp
+            // Nếu vị trí là Bot -> Text nằm dưới Line -> Attachment phải là TopCenter -> Dịch chuyển -Perp
+
+            // Tuy nhiên, nếu Line bị Flip (vẽ ngược chiều), thì +Perp lại trở thành hướng xuống.
+            // Do đó cần kết hợp isTopPos và isFlipped.
+
+            // Hướng dịch chuyển thực tế so với vector pháp tuyến (perp)
+            // Nếu chưa flip: Top -> +Perp, Bot -> -Perp
+            // Nếu đã flip: Top -> -Perp, Bot -> +Perp (Vì hệ trục text đã xoay 180)
+            double directionMultiplier = isTopPos ? 1.0 : -1.0;
+            if (isFlipped) directionMultiplier *= -1.0;
+
             result.InsertPoint = new Point2D(
-                basePoint.X + px * offsetDistance * offsetMultiplier,
-                basePoint.Y + py * offsetDistance * offsetMultiplier
+                basePoint.X + perpX * offsetDist * directionMultiplier,
+                basePoint.Y + perpY * offsetDist * directionMultiplier
             );
 
             result.Rotation = readableAngle;
 
-            // 6.  Xác định Attachment Point
-            // - Đầu frame: căn trái (Left)
-            // - Giữa frame: căn giữa (Center)
-            // - Cuối frame: căn phải (Right)
-            // - Trên: căn đáy text (Bottom)
-            // - Dưới: căn đỉnh text (Top)
-            result.Attachment = GetAttachmentPoint(position, isFlipped);
-
-            return result;
-        }
-
-        /// <summary>
-        /// Chuẩn hóa góc để text luôn đọc được (không bị lộn ngược)
-        /// </summary>
-        private static double NormalizeAngleForReadability(double angle)
-        {
-            const double PI = Math.PI;
-
-            // Chuyển về [0, 2π]
-            double checkAngle = angle;
-            if (checkAngle < 0) checkAngle += 2 * PI;
-
-            // Nếu góc nằm trong nửa dưới (90° < angle <= 270°), xoay thêm 180°
-            if (checkAngle > (PI / 2 + 0.001) && checkAngle <= (3 * PI / 2 + 0.001))
+            // 7. Xác định Attachment Point
+            // Luôn neo vào cạnh gần đường Line nhất để Text "mọc" ra xa đường Line
+            if (isTopPos)
             {
-                return angle + PI;
+                // Vị trí trên -> Neo đáy text (Bottom)
+                result.Attachment = AttachmentPoint.BottomCenter;
+            }
+            else
+            {
+                // Vị trí dưới -> Neo đỉnh text (Top)
+                result.Attachment = AttachmentPoint.TopCenter;
             }
 
-            return angle;
+            return result;
         }
 
         /// <summary>

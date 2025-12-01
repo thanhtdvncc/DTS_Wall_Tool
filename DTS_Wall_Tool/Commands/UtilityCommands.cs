@@ -1,4 +1,5 @@
-﻿using Autodesk.AutoCAD.Runtime;
+﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Runtime;
 using DTS_Wall_Tool.Core.Engines;
 using DTS_Wall_Tool.Core.Utils;
 
@@ -34,6 +35,57 @@ namespace DTS_Wall_Tool.Commands
             WriteMessage("  DTS_ASSIGN_LOAD - Gán tải lên SAP2000");
             WriteMessage("  DTS_CALC_LOAD - Tính tải trọng tường");
         }
+
+        /// <summary>
+        /// Hiển thị/Cập nhật nhãn cho các phần tử đã có dữ liệu
+        /// </summary>
+        [CommandMethod("DTS_SHOW_LABEL", CommandFlags.UsePickSet)]
+        public void DTS_SHOW_LABEL()
+        {
+            WriteMessage("=== HIỂN THỊ NHÃN PHẦN TỬ (UPDATE) ===");
+
+            var selection = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,CIRCLE,INSERT");
+            if (selection.Count == 0)
+            {
+                WriteMessage("\nKhông có đối tượng nào được chọn.");
+                return;
+            }
+
+            AcadUtils.CreateLayer("dts_frame_label", 254);
+
+            int successCount = 0;
+            int ignoreCount = 0;
+
+            UsingTransaction(tr =>
+            {
+                // Mở BlockTableRecord để ghi (LabelPlotter cần cái này)
+                // Lưu ý: LabelUtils.UpdateWallLabels cũng gọi GetObject ForWrite, 
+                // nhưng tốt nhất là mở ở ngoài này nếu truyền vào. 
+                // Tuy nhiên theo thiết kế hiện tại LabelUtils tự mở BTR, nên ta chỉ cần Transaction.
+
+                foreach (ObjectId id in selection)
+                {
+                    // Hàm trả về true nếu vẽ thành công, false nếu object không có XData hợp lệ
+                    if (LabelUtils.RefreshEntityLabel(id, tr))
+                    {
+                        successCount++;
+                    }
+                    else
+                    {
+                        ignoreCount++;
+                    }
+                }
+            });
+
+            WriteSuccess($"Đã cập nhật nhãn: {successCount} đối tượng.");
+            if (ignoreCount > 0)
+            {
+                WriteMessage($"\nBỏ qua: {ignoreCount} đối tượng (Do chưa có dữ liệu DTS_WALL).");
+                WriteMessage("\nGợi ý: Dùng lệnh DTS_SET hoặc DTS_SCAN để gán dữ liệu trước.");
+            }
+        }
+
+
 
         /// <summary>
         /// Tính tải trọng tường
@@ -82,14 +134,22 @@ namespace DTS_Wall_Tool.Commands
         {
             WriteMessage("=== DỌN DẸP LAYER TẠM ===");
 
-            string[] tempLayers = { "dts_linkmap", "dts_highlight", "dts_mapping", "dts_labels", "dts_temp" };
+            // Thêm "dts_frame_label" vào danh sách
+            string[] tempLayers = { 
+                "dts_linkmap", 
+                "dts_highlight", 
+                "dts_mapping", 
+                "dts_labels", 
+                "dts_temp",
+                "dts_frame_label" // Quan trọng: Layer chứa text
+            };
 
             foreach (var layer in tempLayers)
             {
-                AcadUtils.ClearLayer(layer);
+                AcadUtils.ClearLayer(layer); // ClearLayer trả về void, không cộng dồn
             }
 
-            WriteSuccess("Đã xóa tất cả layer tạm.");
+            WriteSuccess($"Đã dọn dẹp sạch sẽ các layer tạm.");
         }
 
         /// <summary>

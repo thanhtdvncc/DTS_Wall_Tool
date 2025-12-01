@@ -23,31 +23,45 @@ namespace DTS_Wall_Tool.Core.Utils
         public static WallData ReadWallData(DBObject obj, Transaction tr = null)
         {
             var dict = GetEntityData(obj);
+            // Kiểm tra chặt chẽ hơn
 
             if (dict.Count == 0) return null;
-            if (dict.ContainsKey("xType") && dict["xType"].ToString() != "WALL") return null;
+            if (dict.ContainsKey("xType") || dict["xType"].ToString() != "WALL") return null;
 
             WallData data = new WallData();
 
+            if (dict.ContainsKey("xBaseZ")) data.BaseZ = ConvertToDouble(dict["xBaseZ"]);
             if (dict.ContainsKey("xThickness")) data.Thickness = ConvertToDouble(dict["xThickness"]);
             if (dict.ContainsKey("xWallType")) data.WallType = Convert.ToString(dict["xWallType"]);
             if (dict.ContainsKey("xLoadPattern")) data.LoadPattern = Convert.ToString(dict["xLoadPattern"]);
             if (dict.ContainsKey("xLoadValue")) data.LoadValue = ConvertToDouble(dict["xLoadValue"]);
             if (dict.ContainsKey("xOriginHandle")) data.OriginHandle = Convert.ToString(dict["xOriginHandle"]);
-            if (dict.ContainsKey("xBaseZ")) data.BaseZ = ConvertToDouble(dict["xBaseZ"]);
-
-            if (dict.ContainsKey("xChildHandles"))
-            {
-                data.ChildHandles = ConvertToStringList(dict["xChildHandles"]);
-            }
-
-            if (dict.ContainsKey("xMappings"))
-            {
-                data.Mappings = ConvertToMappingList(dict["xMappings"]);
-            }
+            if (dict.ContainsKey("xChildHandles")) data.ChildHandles=ConvertToStringList(dict["xChildHandles"]);
+            if (dict.ContainsKey("xMappings"))data.Mappings = ConvertToMappingList(dict["xMappings"]);
+    
 
             return data;
         }
+
+        /// <summary>
+        /// [MỚI] Hàm đọc nhanh loại đối tượng từ XData mà không cần deserialize toàn bộ
+        /// </summary>
+        public static ElementType GetElementType(DBObject obj)
+        {
+            var dict = GetEntityData(obj);
+            if (dict == null || !dict.ContainsKey("xType")) return ElementType.Unknown;
+
+            string typeStr = dict["xType"].ToString();
+
+            // Mapping chuỗi sang Enum
+            if (typeStr == "WALL") return ElementType.Wall;
+            if (typeStr == "COLUMN") return ElementType.Column;
+            if (typeStr == "BEAM") return ElementType.Beam;
+            if (typeStr == "STORY_ORIGIN") return ElementType.StoryOrigin;
+
+            return ElementType.Unknown;
+        }
+
 
         /// <summary>
         /// Ghi WallData vào entity (merge với dữ liệu cũ)
