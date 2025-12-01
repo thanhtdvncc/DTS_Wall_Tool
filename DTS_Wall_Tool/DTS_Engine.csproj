@@ -84,6 +84,7 @@
     <Compile Include="Commands\ProcessCommands.cs" />
     <Compile Include="Commands\SapCommands.cs" />
     <Compile Include="Commands\ScanCommands.cs" />
+    <Compile Include="Commands\SetTypeCommands.cs" />
     <Compile Include="Commands\UtilityCommands.cs" />
     <Compile Include="Core\Algorithms\AngleAlgorithms.cs" />
     <Compile Include="Core\Algorithms\DistanceAlgorithms.cs" />

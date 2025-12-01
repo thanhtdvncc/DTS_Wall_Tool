@@ -24,7 +24,7 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_TEST_SAP")]
         public void DTS_TEST_SAP()
         {
-            WriteMessage("=== KIỂM TRA KẾT NỐI SAP2000 ===");
+            WriteMessage("KIỂM TRA KẾT NỐI SAP2000");
 
             bool connected = SapUtils.Connect(out string message);
             WriteMessage(message);
@@ -46,7 +46,7 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_GET_FRAMES")]
         public void DTS_GET_FRAMES()
         {
-            WriteMessage("=== LẤY FRAMES TỪ SAP2000 ===");
+            WriteMessage("LẤY FRAMES TỪ SAP2000");
 
             if (!SapUtils.IsConnected)
             {
@@ -75,7 +75,7 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_SYNC_SAP")]
         public void DTS_SYNC_SAP()
         {
-            WriteMessage("=== ĐỒNG BỘ TỪ SAP2000 → CAD ===");
+            WriteMessage("ĐỒNG BỘ TỪ SAP2000 → CAD");
 
             if (!EnsureSapConnection()) return;
 
@@ -95,7 +95,7 @@ namespace DTS_Wall_Tool.Commands
                 return;
             }
 
-            WriteMessage($"Xử lý {validIds.Count} phần tử đã Link.. .");
+            WriteMessage($"Xử lý {validIds.Count} phần tử đã Link...");
 
             // Lấy tất cả frames từ SAP
             var allFrames = SapUtils.GetAllFramesGeometry();
@@ -107,35 +107,33 @@ namespace DTS_Wall_Tool.Commands
             int syncedCount = 0, modifiedCount = 0, errorCount = 0;
 
             UsingTransaction(tr =>
-            {
-                var bt = tr.GetObject(Db.BlockTableId, OpenMode.ForRead) as BlockTable;
-                var btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
+                       {
+                           var bt = tr.GetObject(Db.BlockTableId, OpenMode.ForRead) as BlockTable;
+                           var btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
 
-                foreach (ObjectId lineId in validIds)
-                {
-                    var result = SyncSingleElement(lineId, allFrames, btr, tr);
+                           foreach (ObjectId lineId in validIds)
+                           {
+                               var result = SyncSingleElement(lineId, allFrames, btr, tr);
 
-                    if (result.Success)
-                    {
-                        if (result.State == SyncState.SapModified)
-                            modifiedCount++;
-                        else
-                            syncedCount++;
+                               if (result.Success)
+                               {
+                                   if (result.State == SyncState.SapModified)
+                                       modifiedCount++;
+                                   else
+                                       syncedCount++;
+                               }
+                               else
+                               {
+                                   errorCount++;
+                                   WriteError($"  [{result.Handle}]: {result.Message}");
+                               }
+                           }
+                       });
 
-                        WriteMessage($"  [{result.Handle}]: {result.Message}");
-                    }
-                    else
-                    {
-                        errorCount++;
-                        WriteError($"  [{result.Handle}]: {result.Message}");
-                    }
-                }
-            });
-
-            WriteMessage($"\n=== KẾT QUẢ ===");
-            WriteMessage($"  Đồng bộ OK: {syncedCount}");
-            WriteMessage($"  SAP thay đổi: {modifiedCount}");
-            WriteMessage($"  Lỗi: {errorCount}");
+            WriteMessage($"\nĐồng bộ OK: {syncedCount}");
+            WriteMessage($"SAP thay đổi: {modifiedCount}");
+            if (errorCount > 0)
+                WriteMessage($"Lỗi: {errorCount}");
         }
 
         /// <summary>
@@ -144,7 +142,7 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_PUSH_LOAD")]
         public void DTS_PUSH_LOAD()
         {
-            WriteMessage("=== GÁN TẢI TỪ CAD → SAP2000 ===");
+            WriteMessage("GÁN TẢI TỪ CAD → SAP2000");
 
             if (!EnsureSapConnection()) return;
 
@@ -168,22 +166,22 @@ namespace DTS_Wall_Tool.Commands
             }
 
             UsingTransaction(tr =>
-            {
-                var results = SyncEngine.PushToSap(lineIds, loadPattern, tr);
+      {
+          var results = SyncEngine.PushToSap(lineIds, loadPattern, tr);
 
-                int success = results.Count(r => r.Success);
-                int failed = results.Count(r => !r.Success);
+          int success = results.Count(r => r.Success);
+          int failed = results.Count(r => !r.Success);
 
-                foreach (var r in results)
-                {
-                    if (r.Success)
-                        WriteMessage($"  [{r.Handle}]: {r.Message}");
-                    else
-                        WriteError($"  [{r.Handle}]: {r.Message}");
-                }
+          foreach (var r in results)
+          {
+              if (!r.Success)
+                  WriteError($"  [{r.Handle}]: {r.Message}");
+          }
 
-                WriteMessage($"\nKết quả: {success} thành công, {failed} thất bại");
-            });
+          WriteMessage($"\nThành công: {success}");
+          if (failed > 0)
+              WriteMessage($"Thất bại: {failed}");
+      });
 
             SapUtils.RefreshView();
         }
@@ -194,7 +192,7 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_CHECK_SYNC")]
         public void DTS_CHECK_SYNC()
         {
-            WriteMessage("=== KIỂM TRA TRẠNG THÁI ĐỒNG BỘ ===");
+            WriteMessage("KIỂM TRA TRẠNG THÁI ĐỒNG BỘ");
 
             if (!EnsureSapConnection()) return;
 
@@ -208,21 +206,21 @@ namespace DTS_Wall_Tool.Commands
             var stats = new Dictionary<SyncState, int>();
 
             UsingTransaction(tr =>
-            {
-                var changes = SyncEngine.DetectAllChanges(lineIds, tr);
+                  {
+                      var changes = SyncEngine.DetectAllChanges(lineIds, tr);
 
-                foreach (var kvp in changes)
-                {
-                    var state = kvp.Value;
-                    if (!stats.ContainsKey(state)) stats[state] = 0;
-                    stats[state]++;
+                      foreach (var kvp in changes)
+                      {
+                          var state = kvp.Value;
+                          if (!stats.ContainsKey(state)) stats[state] = 0;
+                          stats[state]++;
 
-                    // Cập nhật màu theo trạng thái
-                    int color = SyncEngine.GetSyncStateColor(state);
-                    Entity ent = tr.GetObject(kvp.Key, OpenMode.ForWrite) as Entity;
-                    if (ent != null) ent.ColorIndex = color;
-                }
-            });
+                          // Cập nhật màu theo trạng thái
+                          int color = SyncEngine.GetSyncStateColor(state);
+                          Entity ent = tr.GetObject(kvp.Key, OpenMode.ForWrite) as Entity;
+                          if (ent != null) ent.ColorIndex = color;
+                      }
+                  });
 
             // Dictionary<TKey,TValue>.GetValueOrDefault is not available on .NET Framework 4.8,
             // use TryGetValue to remain compatible.
@@ -233,60 +231,13 @@ namespace DTS_Wall_Tool.Commands
             int sapDeleted = stats.TryGetValue(SyncState.SapDeleted, out tmp) ? tmp : 0;
             int newElement = stats.TryGetValue(SyncState.NewElement, out tmp) ? tmp : 0;
 
-            WriteMessage("\n=== THỐNG KÊ ===");
-            WriteMessage($"  Đã đồng bộ (Xanh lá):     {synced}");
-            WriteMessage($"  CAD thay đổi (Vàng):      {cadModified}");
-            WriteMessage($"  SAP thay đổi (Xanh):      {sapModified}");
-            WriteMessage($"  Xung đột (Magenta):       {conflict}");
-            WriteMessage($"  Frame bị xóa (Đỏ):        {sapDeleted}");
-            WriteMessage($"  Phần tử mới (Cyan):       {newElement}");
-        }
-
-        #endregion
-
-        #region Load Calculation
-
-        /// <summary>
-        /// Tính tải trọng tường
-        /// </summary>
-        [CommandMethod("DTS_CALC_LOAD")]
-        public void DTS_CALC_LOAD()
-        {
-            WriteMessage("=== TÍNH TẢI TRỌNG TƯỜNG ===");
-
-            var lineIds = AcadUtils.SelectObjectsOnScreen("LINE");
-            if (lineIds.Count == 0)
-            {
-                WriteMessage("Không có phần tử nào được chọn.");
-                return;
-            }
-
-            int calculatedCount = 0;
-
-            UsingTransaction(tr =>
-            {
-                foreach (ObjectId lineId in lineIds)
-                {
-                    Entity ent = tr.GetObject(lineId, OpenMode.ForWrite) as Entity;
-                    if (ent == null) continue;
-
-                    var wallData = XDataUtils.ReadWallData(ent);
-                    if (wallData == null) continue;
-
-                    // Tính tải
-                    wallData.CalculateLoad();
-
-                    if (wallData.LoadValue.HasValue)
-                    {
-                        XDataUtils.WriteElementData(ent, wallData, tr);
-                        calculatedCount++;
-
-                        WriteMessage($"  [{lineId.Handle}]: {wallData.WallType} -> {wallData.LoadValue:0.00} kN/m");
-                    }
-                }
-            });
-
-            WriteMessage($"\nĐã tính: {calculatedCount} tường");
+            WriteMessage("\nThống kê:");
+            if (synced > 0) WriteMessage($"  Đã đồng bộ (Xanh lá): {synced}");
+            if (cadModified > 0) WriteMessage($"  CAD thay đổi (Vàng): {cadModified}");
+            if (sapModified > 0) WriteMessage($"  SAP thay đổi (Xanh): {sapModified}");
+            if (conflict > 0) WriteMessage($"  Xung đột (Magenta): {conflict}");
+            if (sapDeleted > 0) WriteMessage($"  Frame bị xóa (Đỏ): {sapDeleted}");
+            if (newElement > 0) WriteMessage($"  Phần tử mới (Cyan): {newElement}");
         }
 
         #endregion
@@ -311,158 +262,158 @@ namespace DTS_Wall_Tool.Commands
             var result = new List<ObjectId>();
 
             UsingTransaction(tr =>
+        {
+            foreach (var id in ids)
             {
-                foreach (var id in ids)
-                {
                     DBObject obj = tr.GetObject(id, OpenMode.ForRead);
-                    var elemData = XDataUtils.ReadElementData(obj);
+       var elemData = XDataUtils.ReadElementData(obj);
 
-                    if (elemData != null && elemData.IsLinked)
-                    {
-                        result.Add(id);
-                    }
-                }
+               if (elemData != null && elemData.IsLinked)
+ {
+   result.Add(id);
+     }
+  }
             });
 
             return result;
         }
 
         private SyncResult SyncSingleElement(ObjectId lineId, List<SapFrame> allFrames,
-            BlockTableRecord btr, Transaction tr)
-        {
-            var result = new SyncResult
+     BlockTableRecord btr, Transaction tr)
+  {
+         var result = new SyncResult
             {
-                Handle = lineId.Handle.ToString(),
-                Success = true
+         Handle = lineId.Handle.ToString(),
+            Success = true
             };
 
-            Line lineEnt = tr.GetObject(lineId, OpenMode.ForWrite) as Line;
-            if (lineEnt == null)
+         Line lineEnt = tr.GetObject(lineId, OpenMode.ForWrite) as Line;
+       if (lineEnt == null)
             {
                 result.Success = false;
-                result.Message = "Không phải Line";
-                return result;
-            }
+result.Message = "Không phải Line";
+    return result;
+      }
 
             // Đọc WallData
-            var wallData = XDataUtils.ReadWallData(lineEnt);
+   var wallData = XDataUtils.ReadWallData(lineEnt);
             if (wallData == null)
             {
-                result.Success = false;
-                result.Message = "Không có dữ liệu WallData";
-                return result;
-            }
+         result.Success = false;
+  result.Message = "Không có dữ liệu WallData";
+ return result;
+      }
 
-            // Lấy thông tin từ Origin
-            if (!wallData.IsLinked)
+   // Lấy thông tin từ Origin
+ if (!wallData.IsLinked)
             {
-                result.Success = false;
-                result.Message = "Chưa Link với Origin";
+     result.Success = false;
+     result.Message = "Chưa Link với Origin";
                 return result;
-            }
+     }
 
-            ObjectId originId = AcadUtils.GetObjectIdFromHandle(wallData.OriginHandle);
-            if (originId == ObjectId.Null)
+ ObjectId originId = AcadUtils.GetObjectIdFromHandle(wallData.OriginHandle);
+     if (originId == ObjectId.Null)
             {
-                result.Success = false;
-                result.Message = "Origin không tồn tại";
-                return result;
-            }
+   result.Success = false;
+ result.Message = "Origin không tồn tại";
+    return result;
+    }
 
-            DBObject originObj = tr.GetObject(originId, OpenMode.ForRead);
-            StoryData storyData = XDataUtils.ReadStoryData(originObj);
+          DBObject originObj = tr.GetObject(originId, OpenMode.ForRead);
+  StoryData storyData = XDataUtils.ReadStoryData(originObj);
             if (storyData == null)
-            {
-                result.Success = false;
-                result.Message = "Origin không có StoryData";
+   {
+     result.Success = false;
+              result.Message = "Origin không có StoryData";
                 return result;
-            }
+      }
 
-            // Lấy thông tin geometry
+        // Lấy thông tin geometry
             double wallZ = storyData.Elevation;
-            Point2D insertOffset = new Point2D(storyData.OffsetX, storyData.OffsetY);
+          Point2D insertOffset = new Point2D(storyData.OffsetX, storyData.OffsetY);
 
-            // Nếu Origin là Circle, lấy tâm làm offset
+ // Nếu Origin là Circle, lấy tâm làm offset
             if (originObj is Circle circle)
-            {
-                insertOffset = new Point2D(circle.Center.X, circle.Center.Y);
-            }
+      {
+    insertOffset = new Point2D(circle.Center.X, circle.Center.Y);
+       }
 
-            Point2D startPt = new Point2D(lineEnt.StartPoint.X, lineEnt.StartPoint.Y);
+       Point2D startPt = new Point2D(lineEnt.StartPoint.X, lineEnt.StartPoint.Y);
             Point2D endPt = new Point2D(lineEnt.EndPoint.X, lineEnt.EndPoint.Y);
 
-            // Lọc dầm theo cao độ
+ // Lọc dầm theo cao độ
             var beamsAtZ = allFrames
-                .Where(f => f.IsBeam && System.Math.Abs(f.AverageZ - wallZ) <= MappingEngine.TOLERANCE_Z)
-                .ToList();
+        .Where(f => f.IsBeam && System.Math.Abs(f.AverageZ - wallZ) <= MappingEngine.TOLERANCE_Z)
+.ToList();
 
-            // Thực hiện mapping
+     // Thực hiện mapping
             double wallThickness = wallData.Thickness ?? 200.0;
             var mapResult = MappingEngine.FindMappings(
-                startPt, endPt, wallZ, beamsAtZ,
+  startPt, endPt, wallZ, beamsAtZ,
                 insertOffset, wallThickness);
 
-            mapResult.WallHandle = lineId.Handle.ToString();
+     mapResult.WallHandle = lineId.Handle.ToString();
 
-            // Kiểm tra thay đổi từ SAP
-            bool sapChanged = false;
-            foreach (var mapping in mapResult.Mappings)
-            {
-                if (mapping.TargetFrame == "New") continue;
+    // Kiểm tra thay đổi từ SAP
+         bool sapChanged = false;
+ foreach (var mapping in mapResult.Mappings)
+          {
+         if (mapping.TargetFrame == "New") continue;
 
-                // Đọc tải trọng hiện có trong SAP
-                var sapLoads = SapUtils.GetFrameDistributedLoads(mapping.TargetFrame, wallData.LoadPattern ?? "DL");
-                if (sapLoads.Count > 0)
-                {
-                    double sapLoadValue = sapLoads.Sum(l => l.LoadValue);
+    // Đọc tải trọng hiện có trong SAP
+   var sapLoads = SapUtils.GetFrameDistributedLoads(mapping.TargetFrame, wallData.LoadPattern ?? "DL");
+ if (sapLoads.Count > 0)
+              {
+         double sapLoadValue = sapLoads.Sum(l => l.LoadValue);
 
-                    // So sánh với CAD
-                    if (wallData.LoadValue.HasValue &&
-                        System.Math.Abs(wallData.LoadValue.Value - sapLoadValue) > 0.01)
-                    {
-                        sapChanged = true;
-                        result.OldLoadValue = wallData.LoadValue;
-                        result.NewLoadValue = sapLoadValue;
-                    }
-                }
+            // So sánh với CAD
+         if (wallData.LoadValue.HasValue &&
+     System.Math.Abs(wallData.LoadValue.Value - sapLoadValue) > 0.01)
+              {
+      sapChanged = true;
+      result.OldLoadValue = wallData.LoadValue;
+            result.NewLoadValue = sapLoadValue;
+          }
+}
             }
 
-            // Cập nhật WallData
+       // Cập nhật WallData
             wallData.Mappings = mapResult.Mappings;
-            wallData.BaseZ = wallZ;
-            wallData.Height = storyData.StoryHeight;
-            XDataUtils.WriteElementData(lineEnt, wallData, tr);
+    wallData.BaseZ = wallZ;
+      wallData.Height = storyData.StoryHeight;
+XDataUtils.WriteElementData(lineEnt, wallData, tr);
 
-            // Cập nhật màu line
-            int colorIndex = mapResult.GetColorIndex();
-            if (sapChanged)
+     // Cập nhật màu line
+  int colorIndex = mapResult.GetColorIndex();
+  if (sapChanged)
             {
-                colorIndex = SyncEngine.GetSyncStateColor(SyncState.SapModified);
-                result.State = SyncState.SapModified;
-            }
-            else
+       colorIndex = SyncEngine.GetSyncStateColor(SyncState.SapModified);
+    result.State = SyncState.SapModified;
+   }
+ else
             {
-                result.State = mapResult.HasMapping ? SyncState.Synced : SyncState.NewElement;
-            }
-            lineEnt.ColorIndex = colorIndex;
+    result.State = mapResult.HasMapping ? SyncState.Synced : SyncState.NewElement;
+       }
+ lineEnt.ColorIndex = colorIndex;
 
-            // Vẽ Label
-            LabelUtils.UpdateWallLabels(lineId, wallData, mapResult, tr);
+      // Vẽ Label
+      LabelUtils.UpdateWallLabels(lineId, wallData, mapResult, tr);
 
-            // Tạo message
-            if (mapResult.HasMapping)
+     // Tạo message
+         if (mapResult.HasMapping)
             {
                 var firstMap = mapResult.Mappings.First();
                 if (sapChanged)
-                {
-                    result.Message = $"-> {firstMap.TargetFrame} (SAP load: {result.NewLoadValue:0.00} kN/m)";
-                }
-                else
-                {
-                    result.Message = $"-> {firstMap.TargetFrame} ({firstMap.MatchType})";
+      {
+        result.Message = $"-> {firstMap.TargetFrame} (SAP load: {result.NewLoadValue:0.00} kN/m)";
+       }
+      else
+            {
+             result.Message = $"-> {firstMap.TargetFrame} ({firstMap.MatchType})";
                 }
             }
-            else
+ else
             {
                 result.Message = "-> NEW";
             }

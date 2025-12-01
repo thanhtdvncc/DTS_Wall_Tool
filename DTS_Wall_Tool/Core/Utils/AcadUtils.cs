@@ -76,19 +76,36 @@ namespace DTS_Wall_Tool.Core.Utils
         {
             List<ObjectId> resultIds = new List<ObjectId>();
 
-            TypedValue[] filterList = new TypedValue[]
+            var filterValues = new List<TypedValue>();
+
+            if (!string.IsNullOrWhiteSpace(types))
             {
-                new TypedValue((int)DxfCode.Start, types),
-                new TypedValue((int)DxfCode. Operator, "<NOT"),
-                new TypedValue((int)DxfCode.LayerName, "dts_linkmap,dts_highlight,dts_temp"),
-                new TypedValue((int)DxfCode. Operator, "NOT>")
-            };
-            SelectionFilter filter = new SelectionFilter(filterList);
+                filterValues.Add(new TypedValue((int)DxfCode.Start, types));
+            }
+
+            // Exclude DTS temporary layers
+            filterValues.Add(new TypedValue((int)DxfCode.Operator, "<NOT"));
+            filterValues.Add(new TypedValue((int)DxfCode.LayerName, "dts_linkmap,dts_highlight,dts_temp,dts_frame_label,dts_labels"));
+            filterValues.Add(new TypedValue((int)DxfCode.Operator, "NOT>"));
+
+            SelectionFilter filter = new SelectionFilter(filterValues.ToArray());
 
             PromptSelectionOptions opts = new PromptSelectionOptions();
-            opts.MessageForAdding = string.Format("\nChọn đối tượng ({0}): ", types);
+            // Use a short, generic prompt. Commands should print their own action-specific hint before calling this.
+            opts.MessageForAdding = "\nChọn đối tượng: ";
 
-            PromptSelectionResult selRes = Ed.GetSelection(opts, filter);
+            PromptSelectionResult selRes;
+
+            // If no start filter was provided, allow selection without restricting by entity type
+            if (filterValues.Count > 0 && !string.IsNullOrWhiteSpace(types))
+            {
+                selRes = Ed.GetSelection(opts, filter);
+            }
+            else
+            {
+                // Only layer exclusion filter should still be applied
+                selRes = Ed.GetSelection(opts, filter);
+            }
 
             if (selRes.Status == PromptStatus.OK)
             {
@@ -163,8 +180,8 @@ namespace DTS_Wall_Tool.Core.Utils
             if (ent is Line line)
             {
                 return new Point2D(
-                    (line.StartPoint.X + line.EndPoint.X) / 2.0,
-                    (line.StartPoint.Y + line.EndPoint.Y) / 2.0
+                    (line.StartPoint.X + line.EndPoint.X) /2.0,
+                    (line.StartPoint.Y + line.EndPoint.Y) /2.0
                 );
             }
             else if (ent is Circle circle)
@@ -175,8 +192,8 @@ namespace DTS_Wall_Tool.Core.Utils
             {
                 var ext = pline.GeometricExtents;
                 return new Point2D(
-                    (ext.MinPoint.X + ext.MaxPoint.X) / 2.0,
-                    (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0
+                    (ext.MinPoint.X + ext.MaxPoint.X) /2.0,
+                    (ext.MinPoint.Y + ext.MaxPoint.Y) /2.0
                 );
             }
             return Point2D.Origin;
@@ -185,7 +202,7 @@ namespace DTS_Wall_Tool.Core.Utils
         /// <summary>
         /// Chuyển Point2D sang Point3d
         /// </summary>
-        public static Point3d ToPoint3d(Point2D pt, double z = 0)
+        public static Point3d ToPoint3d(Point2D pt, double z =0)
         {
             return new Point3d(pt.X, pt.Y, z);
         }
@@ -211,9 +228,9 @@ namespace DTS_Wall_Tool.Core.Utils
 
             try
             {
-                long ln = Convert.ToInt64(handleString, 16);
+                long ln = Convert.ToInt64(handleString,16);
                 Handle hn = new Handle(ln);
-                return Db.GetObjectId(false, hn, 0);
+                return Db.GetObjectId(false, hn,0);
             }
             catch
             {
@@ -390,7 +407,7 @@ namespace DTS_Wall_Tool.Core.Utils
         public static double GetLineLength(ObjectId lineId, Transaction tr)
         {
             Line line = tr.GetObject(lineId, OpenMode.ForRead) as Line;
-            return line?.Length ?? 0;
+            return line?.Length ??0;
         }
 
         #endregion
@@ -405,30 +422,30 @@ namespace DTS_Wall_Tool.Core.Utils
                 var doc = Application.DocumentManager.MdiActiveDocument;
                 if (doc == null) return null;
 
-                using (var tr = doc.TransactionManager.StartTransaction())
-                {
-                    var bt = tr.GetObject(doc.Database.BlockTableId, OpenMode.ForRead) as BlockTable;
-                    var btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead) as BlockTableRecord;
+                	using (var tr = doc.TransactionManager.StartTransaction())
+ 				{
+ var bt = tr.GetObject(doc.Database.BlockTableId, OpenMode.ForRead) as BlockTable;
+ var btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead) as BlockTableRecord;
 
-                    foreach (ObjectId objId in btr)
-                    {
-                        var ent = tr.GetObject(objId, OpenMode.ForRead) as Entity;
-                        if (ent == null) continue;
+ foreach (ObjectId objId in btr)
+ {
+ var ent = tr.GetObject(objId, OpenMode.ForRead) as Entity;
+ if (ent == null) continue;
 
-                        // Check if circle on dts_origin layer
-                        if (ent is Circle circle &&
-                            circle.Layer.Equals("dts_origin", System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            return new Point2D(circle.Center.X, circle.Center.Y);
-                        }
-                    }
-                    tr.Commit();
-                }
-            }
-            catch { }
+ // Check if circle on dts_origin layer
+ if (ent is Circle circle &&
+ circle.Layer.Equals("dts_origin", System.StringComparison.OrdinalIgnoreCase))
+ {
+ return new Point2D(circle.Center.X, circle.Center.Y);
+ }
+ }
+ tr.Commit();
+ }
+ }
+ catch { }
 
-            return null;
-        }
+ return null;
+ }
 
 
 

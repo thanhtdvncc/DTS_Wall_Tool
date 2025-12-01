@@ -22,29 +22,49 @@ namespace DTS_Wall_Tool.Core.Utils
 
         /// <summary>
         /// Làm mới nhãn cho bất kỳ phần tử nào (Wall, Column, Beam, Slab...)
-        /// Tự động nhận diện loại phần tử và gọi hàm update tương ứng
+        /// Chỉ xử lý các phần tử đã được đăng ký (có XData DTS_APP). Tránh vẽ nhãn cho đối tượng 'rác'.
+        /// Trả về true nếu đã vẽ/refresh thành công; false nếu đối tượng không có XData hoặc không được hỗ trợ.
         /// </summary>
         /// <param name="entityId">ObjectId của entity</param>
         /// <param name="tr">Transaction đang hoạt động</param>
-        /// <returns>true nếu cập nhật thành công, false nếu không có dữ liệu hoặc không hỗ trợ</returns>
+        /// <returns>true nếu cập nhật thành công, false nếu không thể vẽ</returns>
         public static bool RefreshEntityLabel(ObjectId entityId, Transaction tr)
         {
+            // NOTE: Do NOT attempt to plot labels for non-DTS entities here. Selection commands must
+            // filter out unregistered objects. This prevents accidental labelling of random geometry.
+
             Entity ent = tr.GetObject(entityId, OpenMode.ForRead) as Entity;
             if (ent == null) return false;
 
-            // Đọc ElementData chung
+            // Read ElementData - must exist to proceed
             var elementData = XDataUtils.ReadElementData(ent);
-            if (elementData == null || !elementData.HasValidData())
+            if (elementData == null)
+            {
+                // No DTS data on this entity -> do not plot default labels to avoid noise
                 return false;
+            }
 
-            // Phân loại theo ElementType và gọi hàm update tương ứng
+            // If ElementData exists but ElementType is Unknown, warn user and skip.
+            // This prevents treating untyped objects as Wall (fallback) and encourages user to run DTS_SET_TYPE.
+            if (elementData.ElementType == ElementType.Unknown)
+            {
+                try
+                {
+                    AcadUtils.Ed.WriteMessage($"\n[WARN] Đối tượng {entityId.Handle} có dữ liệu DTS nhưng không xác định loại. Vui lòng chạy DTS_SET_TYPE để phân loại.\n");
+                }
+                catch { }
+                return false;
+            }
+
+            // Call type-specific label updater. We intentionally call updater even if HasValidData is false
+            // because some operations (e.g. mapping results written by sync) may populate mapping lists
+            // but not other properties; UpdateWallLabels can still render mapping information.
             switch (elementData.ElementType)
             {
                 case ElementType.Wall:
                     var wallData = elementData as WallData;
                     if (wallData != null)
                     {
-                        // Tạo MappingResult từ dữ liệu có sẵn
                         var mapResult = CreateMappingResultFromWallData(wallData, entityId);
                         UpdateWallLabels(entityId, wallData, mapResult, tr);
                         return true;
@@ -79,11 +99,33 @@ namespace DTS_Wall_Tool.Core.Utils
                     break;
 
                 default:
-                    // Loại phần tử chưa được hỗ trợ
+                    // Unsupported DTS type - do not plot
                     return false;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Create a minimal ElementData instance based on entity layer/type (does not write XData)
+        /// </summary>
+        private static ElementData CreateElementDataFromEntity(Entity ent)
+        {
+            string layer = (ent.Layer ?? string.Empty).ToUpperInvariant();
+
+            if (layer.Contains("WALL") || layer.Contains("TUONG"))
+                return new WallData();
+            if (layer.Contains("COL") || layer.Contains("COT"))
+                return new ColumnData();
+            if (layer.Contains("BEAM") || layer.Contains("DAM"))
+                return new BeamData();
+            if (layer.Contains("SLAB") || layer.Contains("SAN"))
+                return new SlabData();
+
+            if (ent is Line)
+                return new WallData();
+
+            return null;
         }
 
         /// <summary>
@@ -97,22 +139,60 @@ namespace DTS_Wall_Tool.Core.Utils
                 Mappings = wData.Mappings ?? new List<MappingRecord>()
             };
 
-            // Tính toán WallLength từ Line entity nếu cần
-            // CoveredLength được tính tự động từ property trong MappingResult
             if (mapResult.Mappings.Count > 0)
             {
-                // WallLength cần được set từ geometry thực tế
-                // Tạm thời tính từ tổng covered length cho các trường hợp đơn giản
                 double totalCovered = mapResult.Mappings
-                          .Where(m => m.TargetFrame != "New")
-               .Sum(m => m.CoveredLength);
+                    .Where(m => m.TargetFrame != "New")
+                    .Sum(m => m.CoveredLength);
 
-                // Nếu có partial mapping, wall length sẽ lớn hơn covered length
-                // Với full mapping, chúng xấp xỉ bằng nhau
-                mapResult.WallLength = totalCovered > 0 ? totalCovered : 1000; // fallback value
+                mapResult.WallLength = totalCovered > 0 ? totalCovered : 1000;
             }
 
             return mapResult;
+        }
+
+        #endregion
+
+        #region Default Label Plotting
+
+        private static void PlotDefaultLabel(ObjectId entityId, Entity ent, string xType, Transaction tr)
+        {
+            // Prepare simple content: [Handle] Type
+            string handleText = $"[{entityId.Handle}]";
+            string typeText = string.IsNullOrEmpty(xType) ? "Unknown" : xType;
+
+            string content = FormatColor(handleText, 3) + " " + FormatColor(typeText, 7);
+
+            // Ensure layer exists
+            AcadUtils.CreateLayer(LABEL_LAYER, LabelPlotter.DEFAULT_COLOR);
+
+            // Choose plotting method based on entity geometry
+            BlockTableRecord btr = (BlockTableRecord)tr.GetObject(ent.Database.CurrentSpaceId, OpenMode.ForWrite);
+
+            if (ent is Line line)
+            {
+                var pStart = new Point2D(line.StartPoint.X, line.StartPoint.Y);
+                var pEnd = new Point2D(line.EndPoint.X, line.EndPoint.Y);
+                LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, content, LabelPosition.MiddleTop, TEXT_HEIGHT_MAIN, LABEL_LAYER);
+            }
+            else if (ent is Circle circle)
+            {
+                var center = new Point2D(circle.Center.X, circle.Center.Y);
+                LabelPlotter.PlotPointLabel(btr, tr, center, content, TEXT_HEIGHT_MAIN, LABEL_LAYER);
+            }
+            else if (ent is Polyline pline)
+            {
+                // for polyline, show at centroid (approx)
+                var ext = pline.GeometricExtents;
+                var center = new Point2D((ext.MinPoint.X + ext.MaxPoint.X) / 2.0, (ext.MinPoint.Y + ext.MaxPoint.Y) / 2.0);
+                LabelPlotter.PlotPointLabel(btr, tr, center, content, TEXT_HEIGHT_MAIN, LABEL_LAYER);
+            }
+            else
+            {
+                // fallback: entity center
+                var centerPt = AcadUtils.GetEntityCenter(ent);
+                LabelPlotter.PlotPointLabel(btr, tr, centerPt, content, TEXT_HEIGHT_MAIN, LABEL_LAYER);
+            }
         }
 
         #endregion
@@ -229,12 +309,27 @@ namespace DTS_Wall_Tool.Core.Utils
             int statusColor = bData.HasMapping ? 3 : 1;
 
             string handleText = FormatColor($"[{beamId.Handle}]", statusColor);
-            string beamType = bData.BeamType ?? $"B{bData.Width ?? 300:0}x{bData.Height ?? 500:0}";
+
+            // Sử dụng SectionName hoặc tính từ Width x Depth
+            string beamType;
+            if (!string.IsNullOrEmpty(bData.SectionName))
+            {
+                beamType = bData.SectionName;
+            }
+            else if (bData.Width.HasValue && bData.Depth.HasValue)
+            {
+                beamType = $"B{bData.Width:0}x{bData.Depth:0}";
+            }
+            else
+            {
+                beamType = "Beam";
+            }
+
             string content = $"{handleText} {{\\C7;{beamType}}}";
 
             // Lấy BlockTableRecord để vẽ
             BlockTableRecord btr = (BlockTableRecord)tr.GetObject(
-            ent.Database.CurrentSpaceId, OpenMode.ForWrite);
+                 ent.Database.CurrentSpaceId, OpenMode.ForWrite);
 
             // Vẽ label
             LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, content,
@@ -393,31 +488,31 @@ namespace DTS_Wall_Tool.Core.Utils
             switch (state)
             {
                 case SyncState.Synced:
-                    statusText = "✓ Synced";
+                    statusText = "Synced";
                     color = 3;
                     break;
                 case SyncState.CadModified:
-                    statusText = "↑ CAD Changed";
+                    statusText = "CAD Changed";
                     color = 2;
                     break;
                 case SyncState.SapModified:
-                    statusText = "↓ SAP Changed";
+                    statusText = "SAP Changed";
                     color = 5;
                     break;
                 case SyncState.Conflict:
-                    statusText = "⚠ Conflict";
+                    statusText = "Conflict";
                     color = 6;
                     break;
                 case SyncState.SapDeleted:
-                    statusText = "✗ SAP Deleted";
+                    statusText = "SAP Deleted";
                     color = 1;
                     break;
                 case SyncState.NewElement:
-                    statusText = "● New";
+                    statusText = "New";
                     color = 4;
                     break;
                 default:
-                    statusText = "?  Unknown";
+                    statusText = "?Unknown";
                     color = 7;
                     break;
             }

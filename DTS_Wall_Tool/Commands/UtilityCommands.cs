@@ -21,12 +21,12 @@ namespace DTS_Wall_Tool.Commands
             WriteMessage("╠══════════════════════════════════════════════════════════════╣");
             WriteMessage("║ THIẾT LẬP:                                                   ║");
             WriteMessage("║   DTS_SET_ORIGIN  - Thiết lập Origin cho tầng                ║");
-            WriteMessage("║   DTS_LINK        - Liên kết phần tử với Origin              ║");
-            WriteMessage("║   DTS_UNLINK      - Xóa liên kết phần tử                     ║");
+            WriteMessage("║   DTS_LINK      - Liên kết phần tử với Origin                ║");
+            WriteMessage("║   DTS_UNLINK - Xóa liên kết phần tử                          ║");
             WriteMessage("║   DTS_SHOW_LINK   - Hiển thị thông tin liên kết              ║");
             WriteMessage("╠══════════════════════════════════════════════════════════════╣");
             WriteMessage("║ SAP2000:                                                     ║");
-            WriteMessage("║   DTS_TEST_SAP    - Kiểm tra kết nối SAP2000                 ║");
+            WriteMessage("║   DTS_TEST_SAP - Kiểm tra kết nối SAP2000                    ║");
             WriteMessage("║   DTS_GET_FRAMES  - Lấy danh sách frames từ SAP              ║");
             WriteMessage("║   DTS_SYNC_SAP    - Đồng bộ SAP → CAD (PULL)                 ║");
             WriteMessage("║   DTS_PUSH_LOAD   - Gán tải CAD → SAP (PUSH)                 ║");
@@ -36,12 +36,17 @@ namespace DTS_Wall_Tool.Commands
             WriteMessage("║   DTS_CALC_LOAD   - Tính tải trọng tường                     ║");
             WriteMessage("║   DTS_SCAN_WALL   - Quét và nhận diện tường                  ║");
             WriteMessage("╠══════════════════════════════════════════════════════════════╣");
+            WriteMessage("║ HIỂN THỊ & DỌN DẸP:                                          ║");
+            WriteMessage("║   DTS_SHOW_LABEL  - Hiển thị/Cập nhật nhãn phần tử           ║");
+            WriteMessage("║   DTS_CLEAR_LABEL - Xóa tất cả nhãn                          ║");
+            WriteMessage("║   DTS_CLEANUP     - Dọn dẹp tất cả layer tạm                 ║");
+            WriteMessage("╠══════════════════════════════════════════════════════════════╣");
             WriteMessage("║ MÀU SẮC TRẠNG THÁI:                                          ║");
             WriteMessage("║   Xanh lá (3)  - Đã đồng bộ / Full match                     ║");
             WriteMessage("║   Vàng (2)     - CAD thay đổi / Partial match                ║");
             WriteMessage("║   Xanh dương(5)- SAP thay đổi                                ║");
             WriteMessage("║   Đỏ (1)       - Không map / SAP đã xóa                      ║");
-            WriteMessage("║   Magenta (6)  - Xung đột                                    ║");
+            WriteMessage("║ Magenta (6)  - Xung đột                                      ║");
             WriteMessage("║   Cyan (4)     - Phần tử mới                                 ║");
             WriteMessage("╚══════════════════════════════════════════════════════════════╝");
         }
@@ -63,12 +68,12 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_SHOW_LABEL", CommandFlags.UsePickSet)]
         public void DTS_SHOW_LABEL()
         {
-            WriteMessage("=== HIỂN THỊ NHÃN PHẦN TỬ (UPDATE) ===");
+            WriteMessage("HIỂN THỊ NHÃN PHẦN TỬ");
 
             var selection = AcadUtils.SelectObjectsOnScreen("");
             if (selection.Count == 0)
             {
-                WriteMessage("\nKhông có đối tượng nào được chọn.");
+                WriteMessage("Không có đối tượng nào được chọn.");
                 return;
             }
 
@@ -79,14 +84,8 @@ namespace DTS_Wall_Tool.Commands
 
             UsingTransaction(tr =>
             {
-                // Mở BlockTableRecord để ghi (LabelPlotter cần cái này)
-                // Lưu ý: LabelUtils.UpdateWallLabels cũng gọi GetObject ForWrite, 
-                // nhưng tốt nhất là mở ở ngoài này nếu truyền vào. 
-                // Tuy nhiên theo thiết kế hiện tại LabelUtils tự mở BTR, nên ta chỉ cần Transaction.
-
                 foreach (ObjectId id in selection)
                 {
-                    // Hàm trả về true nếu vẽ thành công, false nếu object không có XData hợp lệ
                     if (LabelUtils.RefreshEntityLabel(id, tr))
                     {
                         successCount++;
@@ -98,11 +97,11 @@ namespace DTS_Wall_Tool.Commands
                 }
             });
 
-            WriteSuccess($"Đã cập nhật nhãn: {successCount} đối tượng.");
+            WriteMessage($"Đã cập nhật nhãn: {successCount} phần tử");
             if (ignoreCount > 0)
             {
-                WriteMessage($"\nBỏ qua: {ignoreCount} đối tượng (Do chưa có dữ liệu DTS_WALL).");
-                WriteMessage("\nGợi ý: Dùng lệnh DTS_SET hoặc DTS_SCAN để gán dữ liệu trước.");
+                WriteMessage($"Bỏ qua: {ignoreCount} phần tử (chưa có dữ liệu DTS)");
+                WriteMessage("Gợi ý: Dùng lệnh DTS_SET hoặc DTS_SCAN để gán dữ liệu trước.");
             }
         }
 
@@ -114,7 +113,7 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_CALC_LOAD")]
         public void DTS_CALC_LOAD()
         {
-            WriteMessage("=== TÍNH TẢI TRỌNG TƯỜNG ===");
+            WriteMessage("TÍNH TẢI TRỌNG TƯỜNG");
 
             // Hiển thị bảng tra nhanh
             var loadTable = LoadCalculator.GetQuickLoadTable();
@@ -143,8 +142,22 @@ namespace DTS_Wall_Tool.Commands
             {
                 var calc = new LoadCalculator();
                 double load = calc.CalculateLineLoadWithDeduction(thicknessRes.Value);
-                WriteMessage($"\nTường {thicknessRes.Value}mm: {load:0. 00} kN/m");
+                WriteMessage($"Tường {thicknessRes.Value}mm: {load:0.00} kN/m");
             }
+        }
+
+        /// <summary>
+        /// Xóa tất cả nhãn trên layer dts_frame_label
+        /// </summary>
+        [CommandMethod("DTS_CLEAR_LABEL")]
+        public void DTS_CLEAR_LABEL()
+        {
+            WriteMessage("XÓA TẤT CẢ NHÃN");
+
+            AcadUtils.ClearLayer("dts_frame_label");
+            AcadUtils.ClearLayer("dts_labels");
+
+            WriteSuccess("Đã xóa tất cả nhãn");
         }
 
         /// <summary>
@@ -153,26 +166,25 @@ namespace DTS_Wall_Tool.Commands
         [CommandMethod("DTS_CLEANUP")]
         public void DTS_CLEANUP()
         {
-            WriteMessage("=== DỌN DẸP LAYER TẠM ===");
+            WriteMessage("DỌN DẸP LAYER TẠM");
 
-            // Thêm "dts_frame_label" vào danh sách
             string[] tempLayers = {
-                "dts_linkmap",
-                "dts_highlight",
-                "dts_mapping",
+        "dts_linkmap",
+     "dts_highlight",
+ "dts_mapping",
                 "dts_labels",
-                "dts_temp",
-                "dts_frame_label" // Quan trọng: Layer chứa text
-            };
+ "dts_temp",
+          "dts_frame_label"
+       };
 
+            int totalCleared = 0;
             foreach (var layer in tempLayers)
             {
-                AcadUtils.ClearLayer(layer); // ClearLayer trả về void, không cộng dồn
+                AcadUtils.ClearLayer(layer);
+                totalCleared++;
             }
 
-            WriteSuccess($"Đã dọn dẹp sạch sẽ các layer tạm.");
+            WriteSuccess($"Đã dọn dẹp {totalCleared} layer tạm");
         }
-
-
     }
 }

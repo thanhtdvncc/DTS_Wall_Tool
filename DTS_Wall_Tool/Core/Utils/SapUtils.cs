@@ -18,6 +18,15 @@ namespace DTS_Wall_Tool.Core.Utils
         private static cOAPI _sapObject = null;
         private static cSapModel _sapModel = null;
 
+        /// <summary>
+        /// Kết nối đến SAP2000 đang chạy (Sử dụng Helper chuẩn)
+        /// 
+        /// ⚠️ QUAN TRỌNG - KHÔNG SỬA HÀM NÀY:
+        /// - PHẢI dùng cHelper.GetObject() - Cách DUY NHẤT ổn định cho SAP v26+
+        /// - KHÔNG dùng Marshal.GetActiveObject() - Sẽ KHÔNG hoạt động với v26
+        /// - KHÔNG thay đổi chuỗi "CSI.SAP2000.API.SapObject" (không có dấu cách)
+        /// - Đơn vị chuẩn: eUnits.kN_mm_C (enum = 5) để đồng bộ với CAD
+        /// </summary>
         public static bool Connect(out string message)
         {
             _sapObject = null;
@@ -26,14 +35,21 @@ namespace DTS_Wall_Tool.Core.Utils
 
             try
             {
+                // 1. Dùng Helper - Cách duy nhất ổn định cho SAP v26+
                 cHelper myHelper = new Helper();
-                _sapObject = myHelper.GetObject("CSI. SAP2000. API. SapObject");
+
+                // 2. Lấy object đang chạy (KHÔNG có dấu cách trong chuỗi)
+                _sapObject = myHelper.GetObject("CSI.SAP2000.API.SapObject");
 
                 if (_sapObject != null)
                 {
+                    // 3. Lấy Model
                     _sapModel = _sapObject.SapModel;
+
+                    // 4. Thiết lập đơn vị chuẩn (kN, mm, C) để đồng bộ với CAD
                     _sapModel.SetPresentUnits(eUnits.kN_mm_C);
 
+                    // Lấy tên file để confirm
                     string modelName = "Unknown";
                     try { modelName = System.IO.Path.GetFileName(_sapModel.GetModelFilename()); } catch { }
 
@@ -42,13 +58,20 @@ namespace DTS_Wall_Tool.Core.Utils
                 }
                 else
                 {
-                    message = "Không tìm thấy SAP2000 đang chạy.";
+                    message = "Không tìm thấy SAP2000 đang chạy. Hãy mở SAP2000 trước.";
                     return false;
                 }
             }
             catch (Exception ex)
             {
                 message = $"Lỗi kết nối SAP: {ex.Message}";
+
+                // Gợi ý fix lỗi COM phổ biến
+                if (ex.Message.Contains("cast") || ex.Message.Contains("COM"))
+                {
+                    message += "\n(Gợi ý: Chạy RegisterSAP2000.exe trong thư mục cài đặt SAP bằng quyền Admin)";
+                }
+
                 return false;
             }
         }
