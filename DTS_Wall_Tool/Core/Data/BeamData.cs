@@ -26,6 +26,15 @@ namespace DTS_Wall_Tool.Core.Data
         public double? Depth { get; set; } = null;
 
         /// <summary>
+        /// Alias cho Depth (chiều cao dầm) để tương thích với LabelUtils
+        /// </summary>
+        public new double? Height
+        {
+            get => Depth;
+            set => Depth = value;
+        }
+
+        /// <summary>
         /// Tên tiết diện (VD: "B200x400", "B300x600")
         /// </summary>
         public string SectionName { get; set; } = null;

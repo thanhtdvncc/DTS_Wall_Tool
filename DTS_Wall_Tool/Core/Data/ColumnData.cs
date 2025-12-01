@@ -31,6 +31,15 @@ namespace DTS_Wall_Tool.Core.Data
         public string SectionName { get; set; } = null;
 
         /// <summary>
+        /// Alias cho SectionName để tương thích với LabelUtils
+        /// </summary>
+        public string ColumnType
+        {
+            get => SectionName;
+            set => SectionName = value;
+        }
+
+        /// <summary>
         /// Loại tiết diện (Rectangular, Circular, L-Shape...)
         /// </summary>
         public string SectionType { get; set; } = "Rectangular";

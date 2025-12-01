@@ -135,6 +135,44 @@ namespace DTS_Wall_Tool.Core.Utils
             mtext.Attachment = geo.Attachment;
         }
 
+        /// <summary>
+        /// Vẽ MText Label tại một điểm cụ thể (cho Column, Point objects)
+        /// </summary>
+        /// <param name="btr">BlockTableRecord để thêm entity</param>
+        /// <param name="tr">Transaction hiện tại</param>
+        /// <param name="center">Điểm trung tâm để đặt label</param>
+        /// <param name="content">Nội dung MText</param>
+        /// <param name="textHeight">Chiều cao text (mm)</param>
+        /// <param name="layer">Tên layer</param>
+        /// <returns>ObjectId của MText đã tạo</returns>
+        public static ObjectId PlotPointLabel(
+            BlockTableRecord btr,
+            Transaction tr,
+            Point2D center,
+            string content,
+            double textHeight = DEFAULT_TEXT_HEIGHT,
+            string layer = DEFAULT_LAYER)
+        {
+            if (btr == null || tr == null) return ObjectId.Null;
+            if (string.IsNullOrWhiteSpace(content)) return ObjectId.Null;
+
+            // Tạo MText
+            MText mtext = new MText();
+            mtext.Contents = content;
+            mtext.Location = new Point3d(center.X, center.Y + TEXT_GAP, 0);
+            mtext.TextHeight = textHeight;
+            mtext.Rotation = 0;
+            mtext.Attachment = AttachmentPoint.BottomCenter; // Text nằm trên điểm
+            mtext.Layer = layer;
+            mtext.ColorIndex = DEFAULT_COLOR;
+
+            // Thêm vào drawing
+            ObjectId id = btr.AppendEntity(mtext);
+            tr.AddNewlyCreatedDBObject(mtext, true);
+
+            return id;
+        }
+
         #endregion
 
         #region Geometry Calculation
@@ -287,7 +325,7 @@ namespace DTS_Wall_Tool.Core.Utils
 
         /// <summary>
         /// Tạo chuỗi MText với màu chỉ định
-        /// Ví dụ: FormatWithColor("Hello", 1) => "{\C1;Hello}"
+        /// Ví dụ: FormatWithColor("Hello", 1) => "{\C1;text}"
         /// </summary>
         public static string FormatWithColor(string text, int colorIndex)
         {
