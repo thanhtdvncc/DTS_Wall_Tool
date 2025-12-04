@@ -102,14 +102,106 @@ namespace DTS_Wall_Tool.Core.Utils
             // CASE2: Vertical (column)
             else if (length2d < 10.0)
             {
-                textNormal = new Vector3d(1, 0, 0);
-                textDir = new Vector3d(0, 0, 1);
+                // Derive orientation from axis so text baseline aligns with column axis without extra rotation
+                Vector3d axisDir = delta.GetNormal();
+                Vector3d upVec = new Vector3d(0, 0, 1);
+
+                // Compute a horizontal normal perpendicular to the column axis projection on XY
+                var proj = new Vector3d(axisDir.X, axisDir.Y, 0);
+                if (proj.Length < 1e-6)
+                {
+                    textNormal = new Vector3d(1, 0, 0);
+                }
+                else
+                {
+                    textNormal = new Vector3d(-proj.Y, proj.X, 0).GetNormal();
+                }
+
+                // Text up direction follows the column axis
+                Vector3d textUp = axisDir.GetNormal();
+
+                // Baseline (Direction) must satisfy: textUp = textNormal.Cross(textDir)
+                // => textDir = textUp.Cross(textNormal)
+                textDir = textUp.CrossProduct(textNormal).GetNormal();
+
+                // FORCE rotate baseline by90 degrees in-plane (some CAD views require this)
+                try
+                {
+                    textDir = textDir.RotateBy(Math.PI / 2.0, textNormal).GetNormal();
+                }
+                catch { /* fallback: ignore if rotate fails */ }
+
+                // Use current view to determine screen-right vector so text reads left-to-right on screen
+                try
+                {
+                    var view = AcadUtils.Ed.GetCurrentView();
+                    Vector3d viewDir = view.ViewDirection.GetNormal();
+                    // screenRight = viewDir cross worldUp (approx)
+                    Vector3d screenRight = viewDir.CrossProduct(new Vector3d(0, 0, 1));
+                    if (screenRight.Length < 1e-6)
+                    {
+                        // fallback: use world X
+                        screenRight = new Vector3d(1, 0, 0);
+                    }
+                    screenRight = screenRight.GetNormal();
+
+                    if (textDir.DotProduct(screenRight) < 0)
+                    {
+                        textDir = (-textDir).GetNormal();
+                        // Flip horizontal attachments: Left <-> Right
+                        switch (attachment)
+                        {
+                            case AttachmentPoint.BottomLeft: attachment = AttachmentPoint.BottomRight; break;
+                            case AttachmentPoint.BottomRight: attachment = AttachmentPoint.BottomLeft; break;
+                            case AttachmentPoint.TopLeft: attachment = AttachmentPoint.TopRight; break;
+                            case AttachmentPoint.TopRight: attachment = AttachmentPoint.TopLeft; break;
+                            case AttachmentPoint.MiddleLeft: attachment = AttachmentPoint.MiddleRight; break;
+                            case AttachmentPoint.MiddleRight: attachment = AttachmentPoint.MiddleLeft; break;
+                        }
+
+                        // Additionally consider flipping along the short-edge (textNormal) vs screenUp
+                        // so text flips vertically when the short side faces away from camera.
+                        Vector3d screenUp = screenRight.CrossProduct(viewDir).GetNormal();
+                        if (textNormal.DotProduct(screenUp) < 0)
+                        {
+                            // Flip vertical attachments: Top <-> Bottom
+                            switch (attachment)
+                            {
+                                case AttachmentPoint.BottomLeft: attachment = AttachmentPoint.TopLeft; break;
+                                case AttachmentPoint.BottomRight: attachment = AttachmentPoint.TopRight; break;
+                                case AttachmentPoint.TopLeft: attachment = AttachmentPoint.BottomLeft; break;
+                                case AttachmentPoint.TopRight: attachment = AttachmentPoint.BottomRight; break;
+                                case AttachmentPoint.BottomCenter: attachment = AttachmentPoint.TopCenter; break;
+                                case AttachmentPoint.TopCenter: attachment = AttachmentPoint.BottomCenter; break;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // view unavail -> fallback to world X/Y as before
+                    Vector3d refAxis = Math.Abs(textDir.X) >= Math.Abs(textDir.Y) ? new Vector3d(1, 0, 0) : new Vector3d(0, 1, 0);
+                    if (textDir.DotProduct(refAxis) < 0)
+                    {
+                        textDir = (-textDir).GetNormal();
+                        switch (attachment)
+                        {
+                            case AttachmentPoint.BottomLeft: attachment = AttachmentPoint.BottomRight; break;
+                            case AttachmentPoint.BottomRight: attachment = AttachmentPoint.BottomLeft; break;
+                            case AttachmentPoint.TopLeft: attachment = AttachmentPoint.TopRight; break;
+                            case AttachmentPoint.TopRight: attachment = AttachmentPoint.TopLeft; break;
+                            case AttachmentPoint.MiddleLeft: attachment = AttachmentPoint.MiddleRight; break;
+                            case AttachmentPoint.MiddleRight: attachment = AttachmentPoint.MiddleLeft; break;
+                        }
+                    }
+                }
 
                 Point3d midPt = new Point3d(startPt.X, startPt.Y, (startPt.Z + endPt.Z) / 2.0);
-                double offset = (textHeight / 2.0) + TEXT_GAP + 100.0; // +100 for big columns
-                insertPoint = new Point3d(midPt.X + textNormal.X * offset, midPt.Y + textNormal.Y * offset, midPt.Z + textNormal.Z * offset);
+                double offset = (textHeight / 2.0) + TEXT_GAP + 100.0; // extra gap for columns
+                insertPoint = midPt + textNormal * offset;
 
-                rotation = 0;
+                // Ensure MText.Rotation is90 degrees on text plane so visual matches baseline orientation
+                rotation = Math.PI / 2.0;
                 attachment = AttachmentPoint.MiddleLeft;
             }
             // CASE3: Slanted/Inclined beam -> text stands upright (normal perpendicular to beam and Z)

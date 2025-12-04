@@ -480,13 +480,21 @@ namespace DTS_Wall_Tool.Commands
  // Nếu là cột trong chế độ2D, vẽ điểm hoặc skip
  if (f.IsVertical && !is3D)
  {
- // Vẽ cột dạng Point/Circle trên mặt bằng (chỉ hiển thị, không gán XData)
+ // Vẽ cột dạng Point/Circle trên mặt bằng (hiển thị và gán XData để link)
  Circle col = new Circle { Center = p1, Radius =100, Layer = POINT_LAYER, ColorIndex =3 };
  ObjectId colId = btr.AppendEntity(col);
  tr.AddNewlyCreatedDBObject(col, true);
 
- // Không gán XData cho marker point (chỉ dùng để hiển thị)
- // Nếu cần liên kết, liên kết sẽ thực hiện trên Line/Frame chính
+ // Gán XData cho marker point để có thể liên kết (Origin/Link)
+ var colData = new ColumnData { SectionName = f.Section, Material = "Concrete", BaseZ = Math.Min(f.Z1, f.Z2) };
+ DBObject colObj = tr.GetObject(colId, OpenMode.ForWrite);
+ XDataUtils.WriteElementData(colObj, colData, tr);
+
+ if (!string.IsNullOrEmpty(originHandle))
+ {
+ AddChildToOrigin(originHandle, colId.Handle.ToString(), tr);
+ }
+
  continue;
  }
  
