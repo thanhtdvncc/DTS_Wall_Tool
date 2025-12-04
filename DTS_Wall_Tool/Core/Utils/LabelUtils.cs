@@ -1,4 +1,5 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Geometry;
 using DTS_Wall_Tool.Core.Data;
 using DTS_Wall_Tool.Core.Engines;
 using DTS_Wall_Tool.Core.Primitives;
@@ -232,9 +233,8 @@ namespace DTS_Wall_Tool.Core.Utils
 
             if (ent is Line line)
             {
-                var pStart = new Point2D(line.StartPoint.X, line.StartPoint.Y);
-                var pEnd = new Point2D(line.EndPoint.X, line.EndPoint.Y);
-                LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, content, LabelPosition.MiddleTop, TEXT_HEIGHT_MAIN, LABEL_LAYER);
+                // Use 3D overload to keep Z if any
+                LabelPlotter.PlotLabel(btr, tr, line.StartPoint, line.EndPoint, content, LabelPosition.MiddleTop, TEXT_HEIGHT_MAIN, LABEL_LAYER);
             }
             else if (ent is Circle circle)
             {
@@ -271,11 +271,11 @@ namespace DTS_Wall_Tool.Core.Utils
             Entity ent = tr.GetObject(wallId, OpenMode.ForRead) as Entity;
             if (ent == null) return;
 
-            Point2D pStart, pEnd;
+            Autodesk.AutoCAD.Geometry.Point3d pStart, pEnd;
             if (ent is Line line)
             {
-                pStart = new Point2D(line.StartPoint.X, line.StartPoint.Y);
-                pEnd = new Point2D(line.EndPoint.X, line.EndPoint.Y);
+                pStart = line.StartPoint;
+                pEnd = line.EndPoint;
             }
             else return;
 
@@ -353,14 +353,17 @@ namespace DTS_Wall_Tool.Core.Utils
             Entity ent = tr.GetObject(columnId, OpenMode.ForRead) as Entity;
             if (ent == null) return;
 
-            Point2D center;
+            Point2D center2;
+            Point3d center3 = new Point3d(0, 0, 0);
             if (ent is Circle circle)
             {
-                center = new Point2D(circle.Center.X, circle.Center.Y);
+                center3 = circle.Center;
+                center2 = new Point2D(center3.X, center3.Y);
             }
             else if (ent is DBPoint point)
             {
-                center = new Point2D(point.Position.X, point.Position.Y);
+                center3 = point.Position;
+                center2 = new Point2D(center3.X, center3.Y);
             }
             else return;
 
@@ -375,8 +378,8 @@ namespace DTS_Wall_Tool.Core.Utils
             BlockTableRecord btr = (BlockTableRecord)tr.GetObject(
                  ent.Database.CurrentSpaceId, OpenMode.ForWrite);
 
-            // Vẽ label tại vị trí cột (point label)
-            LabelPlotter.PlotPointLabel(btr, tr, center, content, TEXT_HEIGHT_MAIN, LABEL_LAYER);
+            // Use PointLabel (2D) but ensure Z is considered for plotting elsewhere if needed
+            LabelPlotter.PlotPointLabel(btr, tr, center2, content, TEXT_HEIGHT_MAIN, LABEL_LAYER);
         }
 
         #endregion
@@ -392,11 +395,11 @@ namespace DTS_Wall_Tool.Core.Utils
             Entity ent = tr.GetObject(beamId, OpenMode.ForRead) as Entity;
             if (ent == null) return;
 
-            Point2D pStart, pEnd;
+            Point3d pStart, pEnd;
             if (ent is Line line)
             {
-                pStart = new Point2D(line.StartPoint.X, line.StartPoint.Y);
-                pEnd = new Point2D(line.EndPoint.X, line.EndPoint.Y);
+                pStart = line.StartPoint;
+                pEnd = line.EndPoint;
             }
             else return;
 
@@ -422,11 +425,10 @@ namespace DTS_Wall_Tool.Core.Utils
 
             string content = $"{handleText} {{\\C7;{beamType}}}";
 
-            // Lấy BlockTableRecord để vẽ
             BlockTableRecord btr = (BlockTableRecord)tr.GetObject(
                  ent.Database.CurrentSpaceId, OpenMode.ForWrite);
 
-            // Vẽ label
+            // Use 3D overload
             LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, content,
                      LabelPosition.MiddleTop, TEXT_HEIGHT_MAIN, LABEL_LAYER);
         }
@@ -564,33 +566,33 @@ namespace DTS_Wall_Tool.Core.Utils
         public static string GetMappingText(MappingResult res, string loadPattern = "DL")
         {
             if (!res.HasMapping)
-                return FormatColor("to New",1);
+                return FormatColor("to New", 1);
 
             var map = res.Mappings.First();
             if (map.TargetFrame == "New")
-                return FormatColor("to New",1);
+                return FormatColor("to New", 1);
 
             // Read detailed loads from SAP for this frame
             var detailed = SapUtils.GetFrameDistributedLoadsDetailed(map.TargetFrame);
 
             var lines = new List<string>();
 
-            bool hasAnyLoad = detailed != null && detailed.Count >0 && detailed.Values.Any(v => v != null && v.Count >0);
+            bool hasAnyLoad = detailed != null && detailed.Count > 0 && detailed.Values.Any(v => v != null && v.Count > 0);
             if (!hasAnyLoad)
             {
                 // No loads -> show mapping header only
                 string header = $"to {map.TargetFrame}";
                 if (map.MatchType == "FULL" || map.MatchType == "EXACT")
-                    header += $" (full {map.CoveredLength /1000.0:0.#}m)";
+                    header += $" (full {map.CoveredLength / 1000.0:0.#}m)";
                 else
-                    header += $" I={map.DistI /1000.0:0.0}to{map.DistJ /1000.0:0.0}";
+                    header += $" I={map.DistI / 1000.0:0.0}to{map.DistJ / 1000.0:0.0}";
                 lines.Add(header);
             }
             else
             {
                 // Has loads -> show only load lines (no redundant 'to ...')
-                int maxPatterns =5;
-                int count =0;
+                int maxPatterns = 5;
+                int count = 0;
                 foreach (var kv in detailed)
                 {
                     if (count++ >= maxPatterns) { lines.Add("+more"); break; }
@@ -605,16 +607,16 @@ namespace DTS_Wall_Tool.Core.Utils
                     {
                         foreach (var s in e.Segments)
                         {
-                            double i = s.I /1000.0;
-                            double j = s.J /1000.0;
-                            if (Math.Abs(i -0) <0.001 && Math.Abs(j - (map.FrameLength /1000.0)) <0.001)
-                                segs.Add($"full {map.FrameLength /1000.0:0.#}m");
+                            double i = s.I / 1000.0;
+                            double j = s.J / 1000.0;
+                            if (Math.Abs(i - 0) < 0.001 && Math.Abs(j - (map.FrameLength / 1000.0)) < 0.001)
+                                segs.Add($"full {map.FrameLength / 1000.0:0.#}m");
                             else
                                 segs.Add($"{i:0.0}to{j:0.0}");
                         }
                     }
 
-                    string segText = segs.Count >0 ? $" ({string.Join(",", segs)})" : "";
+                    string segText = segs.Count > 0 ? $" ({string.Join(",", segs)})" : "";
                     lines.Add($"{map.TargetFrame}: {pattern}={total:0.00}kN/m{segText}");
                 }
             }

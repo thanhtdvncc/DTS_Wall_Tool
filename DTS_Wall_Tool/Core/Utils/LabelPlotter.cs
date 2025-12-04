@@ -95,7 +95,7 @@ namespace DTS_Wall_Tool.Core.Utils
         }
 
         /// <summary>
-        /// Vẽ MText Label với Point3d input
+        /// Vẽ MText Label với Point3d input (Hỗ trợ Z)
         /// </summary>
         public static ObjectId PlotLabel(
             BlockTableRecord btr,
@@ -107,10 +107,29 @@ namespace DTS_Wall_Tool.Core.Utils
             double textHeight = DEFAULT_TEXT_HEIGHT,
             string layer = DEFAULT_LAYER)
         {
-            return PlotLabel(btr, tr,
-                new Point2D(startPt.X, startPt.Y),
-                new Point2D(endPt.X, endPt.Y),
-                content, position, textHeight, layer);
+            if (btr == null || tr == null) return ObjectId.Null;
+            if (string.IsNullOrWhiteSpace(content)) return ObjectId.Null;
+
+            // Tính toán geometry dựa trên mặt phẳng XY nhưng giữ Z trung bình
+            Point2D s2 = new Point2D(startPt.X, startPt.Y);
+            Point2D e2 = new Point2D(endPt.X, endPt.Y);
+            var geo = CalculateLabelGeometry(s2, e2, position, textHeight);
+            double avgZ = (startPt.Z + endPt.Z) / 2.0;
+
+            // Tạo MText
+            MText mtext = new MText();
+            mtext.Contents = content;
+            mtext.Location = new Point3d(geo.InsertPoint.X, geo.InsertPoint.Y, avgZ);
+            mtext.TextHeight = textHeight;
+            mtext.Rotation = geo.Rotation;
+            mtext.Attachment = geo.Attachment;
+            mtext.Layer = layer;
+            mtext.ColorIndex = DEFAULT_COLOR;
+
+            // Thêm vào drawing
+            ObjectId id = btr.AppendEntity(mtext);
+            tr.AddNewlyCreatedDBObject(mtext, true);
+            return id;
         }
 
         /// <summary>
@@ -201,9 +220,12 @@ namespace DTS_Wall_Tool.Core.Utils
             double dy = endPt.Y - startPt.Y;
             double length = Math.Sqrt(dx * dx + dy * dy);
 
+            // Xử lý cột đứng hoặc điểm: Mặc định xoay 0, offset sang phải
             if (length < GeometryConstants.EPSILON)
             {
-                result.InsertPoint = startPt;
+                result.InsertPoint = new Point2D(startPt.X + TEXT_GAP, startPt.Y);
+                result.Rotation = 0;
+                result.Attachment = AttachmentPoint.MiddleLeft;
                 return result;
             }
 

@@ -200,6 +200,58 @@ namespace DTS_Wall_Tool.Core.Utils
         }
 
         /// <summary>
+        /// Lấy tâm3D của entity (Hỗ trợ Link3D)
+        /// </summary>
+        public static Point3d GetEntityCenter3d(Entity ent)
+        {
+            if (ent == null) return new Point3d(0,0,0);
+
+            if (ent is Line line)
+            {
+                return new Point3d(
+                    (line.StartPoint.X + line.EndPoint.X) /2.0,
+                    (line.StartPoint.Y + line.EndPoint.Y) /2.0,
+                    (line.StartPoint.Z + line.EndPoint.Z) /2.0
+                );
+            }
+            else if (ent is Circle circle)
+            {
+                return circle.Center;
+            }
+            else if (ent is Polyline pline)
+            {
+                // Polyline may carry elevation
+                double elev = pline.Elevation;
+                try
+                {
+                    var ext = pline.GeometricExtents;
+                    return new Point3d(
+                        (ext.MinPoint.X + ext.MaxPoint.X) /2.0,
+                        (ext.MinPoint.Y + ext.MaxPoint.Y) /2.0,
+                        elev
+                    );
+                }
+                catch
+                {
+                    return new Point3d(pline.StartPoint.X, pline.StartPoint.Y, elev);
+                }
+            }
+            else
+            {
+                try
+                {
+                    var ext = ent.GeometricExtents;
+                    return new Point3d(
+                        (ext.MinPoint.X + ext.MaxPoint.X) /2.0,
+                        (ext.MinPoint.Y + ext.MaxPoint.Y) /2.0,
+                        (ext.MinPoint.Z + ext.MaxPoint.Z) /2.0
+                    );
+                }
+                catch { return new Point3d(0,0,0); }
+            }
+        }
+
+        /// <summary>
         /// Chuyển Point2D sang Point3d
         /// </summary>
         public static Point3d ToPoint3d(Point2D pt, double z =0)
