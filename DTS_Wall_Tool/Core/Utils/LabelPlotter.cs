@@ -68,63 +68,112 @@ namespace DTS_Wall_Tool.Core.Utils
             Vector3d delta = endPt - startPt;
             double length3d = delta.Length;
             double length2d = Math.Sqrt(delta.X * delta.X + delta.Y * delta.Y);
+            double deltaZ = Math.Abs(delta.Z);
+
+            if (length3d < GeometryConstants.EPSILON) return ObjectId.Null; // Bỏ qua nếu length=0
 
             Point3d insertPoint;
             double rotation = 0;
             AttachmentPoint attachment = AttachmentPoint.MiddleCenter;
 
-            // CASE1: Phần tử thẳng đứng (Cột) - Vertical
-            // Điều kiện: Độ dài2D gần bằng0 nhưng độ dài3D lớn
-            Vector3d axisDir = delta.GetNormal();
-            Vector3d up = new Vector3d(0, 0, 1);
+            // Vectors for text orientation
+            Vector3d textNormal = new Vector3d(0, 0, 1);
+            Vector3d textDir = new Vector3d(1, 0, 0);
 
-            // Nếu gần thẳng đứng
-            bool isVertical = length2d < GeometryConstants.EPSILON && length3d > GeometryConstants.EPSILON;
-
-            // SELECT base point
-            Point3d basePt;
-            if (position == LabelPosition.StartTop || position == LabelPosition.StartBottom)
-                basePt = startPt;
-            else if (position == LabelPosition.EndTop || position == LabelPosition.EndBottom)
-                basePt = endPt;
-            else
-                basePt = new Point3d((startPt.X + endPt.X) / 2.0, (startPt.Y + endPt.Y) / 2.0, (startPt.Z + endPt.Z) / 2.0);
-
-            // Compute textNormal and textDirection (baseline)
-            Vector3d textNormal;
-            if (isVertical)
+            // CASE1: Horizontal element (flat) -> place text on XY plane
+            if (deltaZ < 10.0)
             {
-                // For columns prefer a horizontal normal (push text away in X)
+                textNormal = new Vector3d(0, 0, 1);
+
+                Point2D s2 = new Point2D(startPt.X, startPt.Y);
+                Point2D e2 = new Point2D(endPt.X, endPt.Y);
+
+                var geo = CalculateLabelGeometry2D(s2, e2, position, textHeight);
+
+                // Keep average Z
+                double z = (startPt.Z + endPt.Z) / 2.0;
+                insertPoint = new Point3d(geo.InsertPoint.X, geo.InsertPoint.Y, z);
+                rotation = geo.Rotation;
+                attachment = geo.Attachment;
+
+                // Direction from rotation on XY
+                textDir = new Vector3d(Math.Cos(rotation), Math.Sin(rotation), 0);
+            }
+            // CASE2: Vertical (column)
+            else if (length2d < 10.0)
+            {
                 textNormal = new Vector3d(1, 0, 0);
-                axisDir = up; // baseline along Z for column text (text runs up)
+                textDir = new Vector3d(0, 0, 1);
+
+                Point3d midPt = new Point3d(startPt.X, startPt.Y, (startPt.Z + endPt.Z) / 2.0);
+                double offset = (textHeight / 2.0) + TEXT_GAP + 100.0; // +100 for big columns
+                insertPoint = new Point3d(midPt.X + textNormal.X * offset, midPt.Y + textNormal.Y * offset, midPt.Z + textNormal.Z * offset);
+
+                rotation = 0;
+                attachment = AttachmentPoint.MiddleLeft;
             }
+            // CASE3: Slanted/Inclined beam -> text stands upright (normal perpendicular to beam and Z)
             else
             {
-                // For beams/slanted: normal is cross(axis, globalZ) -> horizontal vector
-                textNormal = axisDir.CrossProduct(up);
-                if (textNormal.Length < 0.001) textNormal = new Vector3d(0, 0, 1);
-                else textNormal = textNormal.GetNormal();
-            }
+                Vector3d axisDir = delta.GetNormal();
+                Vector3d upVec = new Vector3d(0, 0, 1);
 
-            // Up direction for text is cross(normal, axis)
-            Vector3d textUp = textNormal.CrossProduct(axisDir).GetNormal();
+                // If axis is nearly vertical, avoid flattening text by fallback to Z.
+                // Instead pick a horizontal normal perpendicular to the axis projection,
+                // so the text baseline still follows the (possibly tilted) axis direction.
+                bool nearVertical = Math.Abs(axisDir.DotProduct(upVec)) > 0.98;
+                if (nearVertical)
+                {
+                    textDir = axisDir.GetNormal();
 
-            // Offset distance
-            bool isTop = (position == LabelPosition.StartTop || position == LabelPosition.MiddleTop || position == LabelPosition.EndTop);
-            double offset = (textHeight / 2.0) + TEXT_GAP;
+                    // Project axis onto XY and compute a perpendicular horizontal vector
+                    var proj = new Vector3d(axisDir.X, axisDir.Y, 0);
+                    if (proj.Length < 1e-6)
+                    {
+                        // Axis purely Z -> choose X as normal
+                        textNormal = new Vector3d(1, 0, 0);
+                    }
+                    else
+                    {
+                        // Perp in XY: (-y, x, 0)
+                        textNormal = new Vector3d(-proj.Y, proj.X, 0).GetNormal();
+                    }
+                }
+                else
+                {
+                    textNormal = axisDir.CrossProduct(upVec);
+                    if (textNormal.Length < 0.001)
+                    {
+                        // fallback
+                        textNormal = new Vector3d(0, 0, 1);
+                    }
+                    else
+                    {
+                        textNormal = textNormal.GetNormal();
+                    }
 
-            if (isVertical)
-            {
-                offset += 100.0; // extra gap for columns
-                insertPoint = basePt + textNormal * offset;
-            }
-            else
-            {
+                    textDir = axisDir;
+                }
+
+                Point3d basePt;
+                if (position == LabelPosition.StartTop || position == LabelPosition.StartBottom) basePt = startPt;
+                else if (position == LabelPosition.EndTop || position == LabelPosition.EndBottom) basePt = endPt;
+                else basePt = startPt + axisDir * (length3d / 2.0);
+
+                Vector3d textUp = textNormal.CrossProduct(textDir).GetNormal();
+                bool isTop = (position == LabelPosition.StartTop || position == LabelPosition.MiddleTop || position == LabelPosition.EndTop);
                 double sign = isTop ? 1.0 : -1.0;
-                insertPoint = basePt + textUp * (offset * sign);
+                double offsetDist = (textHeight / 2.0) + TEXT_GAP;
+
+                insertPoint = basePt + textUp * (offsetDist * sign);
+
+                if (position == LabelPosition.MiddleTop || position == LabelPosition.MiddleBottom)
+                    attachment = isTop ? AttachmentPoint.BottomCenter : AttachmentPoint.TopCenter;
+                else
+                    attachment = isTop ? AttachmentPoint.BottomLeft : AttachmentPoint.TopLeft;
             }
 
-            // Create MText with3D orientation
+            // Tạo MText
             MText mtext = new MText();
             mtext.Contents = content;
             mtext.Location = insertPoint;
@@ -132,24 +181,11 @@ namespace DTS_Wall_Tool.Core.Utils
             mtext.Layer = layer;
             mtext.ColorIndex = DEFAULT_COLOR;
 
-            // IMPORTANT: set Normal and Direction for proper3D orientation
+            // Gán thuộc tính3D
             mtext.Normal = textNormal;
-            mtext.Direction = axisDir.GetNormal();
-
-            // Attachment selection
-            if (isVertical)
-            {
-                mtext.Attachment = AttachmentPoint.MiddleLeft;
-            }
-            else
-            {
-                if (position == LabelPosition.MiddleTop || position == LabelPosition.MiddleBottom)
-                    mtext.Attachment = isTop ? AttachmentPoint.BottomCenter : AttachmentPoint.TopCenter;
-                else if (position.ToString().StartsWith("Start"))
-                    mtext.Attachment = isTop ? AttachmentPoint.BottomLeft : AttachmentPoint.TopLeft;
-                else
-                    mtext.Attachment = isTop ? AttachmentPoint.BottomRight : AttachmentPoint.TopRight;
-            }
+            mtext.Direction = textDir.GetNormal();
+            mtext.Rotation = rotation; // hữu dụng khi Normal = Z
+            mtext.Attachment = attachment;
 
             ObjectId id = btr.AppendEntity(mtext);
             tr.AddNewlyCreatedDBObject(mtext, true);
@@ -165,34 +201,33 @@ namespace DTS_Wall_Tool.Core.Utils
             double textHeight = DEFAULT_TEXT_HEIGHT,
             string layer = DEFAULT_LAYER)
         {
-            // Giữ nguyên logic Point cũ cho2D
             if (btr == null || tr == null) return ObjectId.Null;
+            MText m = new MText();
+            m.Contents = content;
+            m.Location = new Point3d(center.X, center.Y + TEXT_GAP, 0);
+            m.TextHeight = textHeight;
+            m.Layer = layer;
+            m.ColorIndex = DEFAULT_COLOR;
+            m.Attachment = AttachmentPoint.BottomCenter;
 
-            MText mtext = new MText();
-            mtext.Contents = content;
-            mtext.Location = new Point3d(center.X, center.Y + TEXT_GAP, 0);
-            mtext.TextHeight = textHeight;
-            mtext.Attachment = AttachmentPoint.BottomCenter;
-            mtext.Layer = layer;
-            mtext.ColorIndex = DEFAULT_COLOR;
-
-            ObjectId id = btr.AppendEntity(mtext);
-            tr.AddNewlyCreatedDBObject(mtext, true);
+            ObjectId id = btr.AppendEntity(m);
+            tr.AddNewlyCreatedDBObject(m, true);
             return id;
         }
 
-        private struct LabelGeometry
+        // Logic tính toán hình học2D (giữ nguyên logic cũ cho trường hợp nằm ngang)
+        private struct LabelGeometry2D
         {
             public Point2D InsertPoint;
             public double Rotation;
             public AttachmentPoint Attachment;
         }
 
-        private static LabelGeometry CalculateLabelGeometry(
+        private static LabelGeometry2D CalculateLabelGeometry2D(
             Point2D startPt, Point2D endPt,
             LabelPosition position, double textHeight)
         {
-            var result = new LabelGeometry();
+            var result = new LabelGeometry2D();
             double dx = endPt.X - startPt.X;
             double dy = endPt.Y - startPt.Y;
             double length = Math.Sqrt(dx * dx + dy * dy);
@@ -237,9 +272,21 @@ namespace DTS_Wall_Tool.Core.Utils
             );
 
             result.Rotation = readableAngle;
+            result.Attachment = isTopPos ? AttachmentPoint.BottomCenter : AttachmentPoint.TopCenter;
 
-            if (isTopPos) result.Attachment = AttachmentPoint.BottomCenter;
-            else result.Attachment = AttachmentPoint.TopCenter;
+            // Tinh chỉnh căn lề trái/phải nếu ở đầu/cuối
+            if (position.ToString().StartsWith("Start"))
+                result.Attachment = isTopPos ? AttachmentPoint.BottomLeft : AttachmentPoint.TopLeft;
+            if (position.ToString().StartsWith("End"))
+                result.Attachment = isTopPos ? AttachmentPoint.BottomRight : AttachmentPoint.TopRight;
+
+            if (isFlipped) // Đảo ngược lề nếu bị lật
+            {
+                if (result.Attachment == AttachmentPoint.BottomLeft) result.Attachment = AttachmentPoint.BottomRight;
+                else if (result.Attachment == AttachmentPoint.BottomRight) result.Attachment = AttachmentPoint.BottomLeft;
+                else if (result.Attachment == AttachmentPoint.TopLeft) result.Attachment = AttachmentPoint.TopRight;
+                else if (result.Attachment == AttachmentPoint.TopRight) result.Attachment = AttachmentPoint.TopLeft;
+            }
 
             return result;
         }

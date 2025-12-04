@@ -221,9 +221,9 @@ namespace DTS_Wall_Tool.Commands
 
  private void SetupLayers()
  {
- AcadUtils.CreateLayer(AXIS_LAYER,5); // Blue/Cyan
- AcadUtils.CreateLayer(FRAME_LAYER,3); // Green
- AcadUtils.CreateLayer(POINT_LAYER,3); // Green
+ AcadUtils.CreateLayer(AXIS_LAYER,5); // Blue/Cyan (axis)
+ AcadUtils.CreateLayer(FRAME_LAYER,2); // Beam default Yellow
+ AcadUtils.CreateLayer(POINT_LAYER,3); // Point/Column Green
  AcadUtils.CreateLayer(ORIGIN_LAYER,1); // Red
  AcadUtils.CreateLayer(LABEL_LAYER,254); // Gray
  }
@@ -244,6 +244,8 @@ namespace DTS_Wall_Tool.Commands
  var allGrids = SapUtils.GetGridLines();
  var allFrames = SapUtils.GetAllFramesGeometry();
  var framesAtStory = FilterFramesForStory(allFrames, story.Coordinate);
+ var allPoints = SapUtils.GetAllPoints();
+ var pointsAtStory = allPoints.Where(p => Math.Abs(p.Z - story.Coordinate) <=200.0).ToList();
 
  SetupLayers();
 
@@ -260,6 +262,14 @@ namespace DTS_Wall_Tool.Commands
 
  // Vẽ frame (và auto link vào origin)
  PlotFramesAt(btr, tr, framesAtStory, insertPoint, story.Coordinate, originHandle, is3D: false);
+
+ // Vẽ điểm thuộc tầng (2D)
+ foreach (var pt in pointsAtStory)
+ {
+ Point3d p2d = new Point3d(pt.X + insertPoint.X, pt.Y + insertPoint.Y,0);
+ PlotPoint(btr, tr, p2d);
+ }
+
  });
 
  WriteSuccess($"Vẽ xong {story.Name}");
@@ -272,6 +282,7 @@ namespace DTS_Wall_Tool.Commands
  {
  var allGrids = SapUtils.GetGridLines();
  var allFrames = SapUtils.GetAllFramesGeometry();
+ var allPoints = SapUtils.GetAllPoints();
  var yGrids = allGrids.Where(g => string.Equals(g.Orientation, "Y", StringComparison.OrdinalIgnoreCase)).ToList();
  if (yGrids.Count ==0) { WriteError("Không có trục Y"); return; }
 
@@ -308,6 +319,14 @@ namespace DTS_Wall_Tool.Commands
  PlotGridLines(btr, tr, allGrids, insert,0);
  var framesAt = FilterFramesForStory(allFrames, st.Coordinate);
  PlotFramesAt(btr, tr, framesAt, insert, st.Coordinate, originHandle, is3D: false);
+
+ // Vẽ Point cho từng mặt bằng
+ var pointsAt = allPoints.Where(p => Math.Abs(p.Z - st.Coordinate) <=200.0).ToList();
+ foreach (var pt in pointsAt)
+ {
+ Point3d p2d = new Point3d(pt.X + insert.X, pt.Y + insert.Y,0);
+ PlotPoint(btr, tr, p2d);
+ }
  }
  });
  WriteSuccess("Vẽ tất cả mặt bằng2D hoàn thành");
@@ -330,7 +349,7 @@ namespace DTS_Wall_Tool.Commands
  WriteMessage("Đang đọc dữ liệu từ SAP...");
  var allGrids = SapUtils.GetGridLines();
  var allFrames = SapUtils.GetAllFramesGeometry();
- 
+
  // NEW: Lấy tất cả Points
  var allPoints = SapUtils.GetAllPoints();
  WriteMessage($" -> Frames: {allFrames.Count}, Points: {allPoints.Count}");
@@ -472,9 +491,8 @@ namespace DTS_Wall_Tool.Commands
  }
  
  // Vẽ Line cho Dầm (hoặc Cột3D)
- // Set column color to green only in3D mode; keep previous color in2D
- int colorIndexForColumn = is3D ?3 :5;
- var line = new Line(p1, p2) { Layer = FRAME_LAYER, ColorIndex = f.IsBeam ?2 : colorIndexForColumn };
+ // Logic màu: Beam =2 (Yellow), Column =3 (Green)
+ var line = new Line(p1, p2) { Layer = FRAME_LAYER, ColorIndex = f.IsBeam ?2 :3 };
  ObjectId id = btr.AppendEntity(line); 
  tr.AddNewlyCreatedDBObject(line, true);
 
@@ -540,7 +558,7 @@ namespace DTS_Wall_Tool.Commands
 
  Line line = new Line(pt1, pt2);
  line.Layer = FRAME_LAYER;
- line.ColorIndex = frame.IsBeam ?2 :5;
+ line.ColorIndex = frame.IsBeam ?2 :3;
 
  ObjectId lineId = btr.AppendEntity(line);
  tr.AddNewlyCreatedDBObject(line, true);
@@ -564,6 +582,19 @@ namespace DTS_Wall_Tool.Commands
  if (!string.IsNullOrEmpty(originHandle))
  AddChildToOrigin(originHandle, lineId.Handle.ToString(), tr);
  }
+ }
+
+ private void PlotPoint(BlockTableRecord btr, Transaction tr, Point3d pt)
+ {
+ Circle circle = new Circle
+ {
+ Center = pt,
+ Radius =50,
+ Layer = POINT_LAYER,
+ ColorIndex =3
+ };
+ btr.AppendEntity(circle);
+ tr.AddNewlyCreatedDBObject(circle, true);
  }
 
  private string CreateOriginForStory(BlockTableRecord btr, Transaction tr, Point2D insertPoint, SapUtils.GridStoryItem story)
