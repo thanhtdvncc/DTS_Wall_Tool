@@ -1,14 +1,19 @@
 ﻿namespace DTS_Wall_Tool.Core.Data
 {
     /// <summary>
-    /// Bản ghi mapping giữa tường và dầm SAP2000
+    /// Bản ghi mapping giữa phần tử CAD và đối tượng SAP2000 (Frame/Area)
     /// </summary>
     public class MappingRecord
     {
         /// <summary>
-        /// Tên dầm đích trong SAP2000
+        /// Tên đối tượng đích trong SAP2000 (Frame name hoặc Area name)
         /// </summary>
         public string TargetFrame { get; set; }
+
+        /// <summary>
+        /// Loại đối tượng đích: "Frame" hoặc "Area"
+        /// </summary>
+        public string TargetType { get; set; } = "Frame";
 
         /// <summary>
         /// Loại mapping: FULL, PARTIAL, NEW
@@ -42,7 +47,7 @@
 
         public override string ToString()
         {
-            return $"{TargetFrame}({MatchType}, I={DistI:0}, J={DistJ:0}, Cover={CoveredLength:0})";
+            return $"{TargetFrame}({MatchType}, I={DistI:0}, J={DistJ:0}, Cover={CoveredLength:0}, Type={TargetType})";
         }
 
         /// <summary>
@@ -53,6 +58,7 @@
             return new MappingRecord
             {
                 TargetFrame = TargetFrame,
+                TargetType = TargetType,
                 MatchType = MatchType,
                 DistI = DistI,
                 DistJ = DistJ,

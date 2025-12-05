@@ -118,6 +118,7 @@
     <Compile Include="Core\Interfaces\IActivatable.cs" />
     <Compile Include="Core\Interfaces\IIdentifiable.cs" />
     <Compile Include="Core\Interfaces\ILineGeometry.cs" />
+    <Compile Include="Core\Interfaces\ILoadBearing.cs" />
     <Compile Include="Core\Primitives\BoundingBox.cs" />
     <Compile Include="Core\Primitives\GeometryConstants.cs" />
     <Compile Include="Core\Primitives\LineSegment2D.cs" />

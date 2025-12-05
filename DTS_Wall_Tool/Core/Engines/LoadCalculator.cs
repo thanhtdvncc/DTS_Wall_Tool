@@ -1,4 +1,5 @@
 ﻿using DTS_Wall_Tool.Core.Data;
+using DTS_Wall_Tool.Core.Interfaces;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -6,7 +7,8 @@ using System.Linq;
 namespace DTS_Wall_Tool.Core.Engines
 {
     /// <summary>
-    /// Tính toán tải trọng tường
+    /// Tính toán tải trọng tường và các phần tử khác.
+    /// Hỗ trợ ILoadBearing interface cho đa hình.
     /// </summary>
     public class LoadCalculator
     {
@@ -127,7 +129,7 @@ namespace DTS_Wall_Tool.Core.Engines
         }
 
         /// <summary>
-        /// Tính và gán tải cho WallData
+        /// Tính và gán tải cho WallData (backward compatibility)
         /// </summary>
         public void CalculateAndAssign(WallData wallData, double storyHeight = 0)
         {
@@ -143,6 +145,51 @@ namespace DTS_Wall_Tool.Core.Engines
 
             wallData.LoadValue = lineLoad;
             wallData.LoadPattern = DefaultLoadPattern;
+
+            // Cập nhật Height để CalculateLoads có thể sử dụng
+            wallData.Height = effectiveHeight;
+        }
+
+        /// <summary>
+        /// Tính và gán tải cho phần tử ILoadBearing (đa hình)
+        /// </summary>
+        public void CalculateAndAssign(ILoadBearing loadBearing, double storyHeight = 0)
+        {
+            // Phân luồng xử lý theo loại phần tử
+            if (loadBearing is WallData wallData)
+            {
+                CalculateAndAssign(wallData, storyHeight);
+
+                // Sau khi tính xong, gọi CalculateLoads để đồng bộ vào Loads list
+                wallData.CalculateLoads();
+            }
+            else if (loadBearing is SlabData slabData)
+            {
+                CalculateSlabLoad(slabData);
+            }
+            else if (loadBearing is BeamData beamData)
+            {
+                CalculateBeamLoad(beamData);
+            }
+            // Thêm các loại phần tử khác ở đây...
+        }
+
+        /// <summary>
+        /// Tính tải sàn (kN/m²) - Placeholder cho tương lai
+        /// </summary>
+        private void CalculateSlabLoad(SlabData slabData)
+        {
+            // TODO: Implement slab load calculation
+            // slabData.CalculateLoads();
+        }
+
+        /// <summary>
+        /// Tính tải dầm (kN/m) - Placeholder cho tương lai
+        /// </summary>
+        private void CalculateBeamLoad(BeamData beamData)
+        {
+            // TODO: Implement beam self-weight calculation
+            // beamData.CalculateLoads();
         }
 
         #endregion
@@ -203,7 +250,7 @@ namespace DTS_Wall_Tool.Core.Engines
                     Name = "PARAPET",
                     Type = "HEIGHT_OVERRIDE",
                     HeightOverride = 1200,
-                    Description = "Tường lan can (cao 1. 2m)"
+                    Description = "Tường lan can (cao 1.2m)"
                 },
                 new LoadModifier
                 {

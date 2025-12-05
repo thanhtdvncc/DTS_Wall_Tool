@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using DTS_Wall_Tool.Core.Interfaces;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DTS_Wall_Tool.Core.Data
 {
@@ -13,10 +15,10 @@ namespace DTS_Wall_Tool.Core.Data
     }
 
     /// <summary>
-    /// Dữ liệu Tường - Kế thừa từ ElementData. 
-    /// Chỉ chứa các thuộc tính đặc thù của Tường.
+    /// Dữ liệu Tường - Kế thừa từ ElementData và implement ILoadBearing.
+    /// Chứa các thuộc tính đặc thù của Tường và hỗ trợ gán tải đa năng.
     /// </summary>
-    public class WallData : ElementData
+    public class WallData : ElementData, ILoadBearing
     {
         #region Identity Override
 
@@ -46,17 +48,82 @@ namespace DTS_Wall_Tool.Core.Data
         /// </summary>
         public double? UnitWeight { get; set; } = 18.0;
 
-        // Default pattern being displayed in label
+        // Default pattern being displayed in label (backward compatibility)
         public string LoadPattern { get; set; } = "DL";
         public double? LoadValue { get; set; } = null;
         public double LoadFactor { get; set; } = 1.0;
 
-        // Cache totals by pattern
+        // Cache totals by pattern (backward compatibility)
         public Dictionary<string, double> LoadCases { get; set; } = new Dictionary<string, double>();
         public string LoadCasesLastSync { get; set; } = null;
 
-        // NEW: Detailed entries with segments (per pattern)
+        // Detailed entries with segments (backward compatibility for SAP sync)
         public List<LoadEntry> LoadEntries { get; set; } = new List<LoadEntry>();
+
+        #endregion
+
+        #region ILoadBearing Implementation
+
+        /// <summary>
+        /// Danh sách tải trọng chuẩn theo Interface ILoadBearing
+        /// </summary>
+        public List<LoadDefinition> Loads { get; set; } = new List<LoadDefinition>();
+
+        /// <summary>
+        /// Mappings đã có trong ElementData base class
+        /// </summary>
+        // List<MappingRecord> Mappings is inherited from ElementData
+
+        /// <summary>
+        /// Kiểm tra có tải trọng để gán không
+        /// </summary>
+        public bool HasLoads => Loads != null && Loads.Count > 0;
+
+        /// <summary>
+        /// Xóa tất cả tải trọng đã tính
+        /// </summary>
+        public void ClearLoads()
+        {
+            Loads?.Clear();
+        }
+
+        /// <summary>
+        /// Tính toán tải trọng và đưa vào danh sách Loads.
+        /// Đồng thời cập nhật LoadValue cho backward compatibility.
+        /// </summary>
+        public void CalculateLoads()
+        {
+            // Xóa tải cũ
+            ClearLoads();
+
+            if (!Thickness.HasValue || !Height.HasValue || !UnitWeight.HasValue)
+                return;
+
+            // 1. Tính toán giá trị tải phân bố (Line Load)
+            double thicknessM = Thickness.Value / 1000.0;
+            double heightM = Height.Value / 1000.0;
+            double val = thicknessM * heightM * UnitWeight.Value * LoadFactor;
+
+            // 2. Làm tròn 2 chữ số
+            val = System.Math.Round(val, 2);
+
+            // 3. Cập nhật thuộc tính cũ (backward compatibility - để Label hiển thị đúng)
+            LoadValue = val;
+
+            // 4. Thêm vào danh sách tải chuẩn (để SyncEngine xử lý)
+            Loads.Add(new LoadDefinition
+            {
+                Pattern = LoadPattern ?? "DL",
+                Value = val,
+                Type = Interfaces.LoadType.DistributedLine,
+                TargetElement = "Frame",
+                Direction = "Gravity",
+                LoadFactor = LoadFactor
+            });
+
+            // 5. Cập nhật LoadCases cache
+            UpdateLoadCase(LoadPattern ?? "DL", val);
+        }
 
         #endregion
 
@@ -77,8 +144,35 @@ namespace DTS_Wall_Tool.Core.Data
                 UnitWeight = UnitWeight,
                 LoadPattern = LoadPattern,
                 LoadValue = LoadValue,
-                LoadFactor = LoadFactor
+                LoadFactor = LoadFactor,
+                LoadCasesLastSync = LoadCasesLastSync
             };
+
+            // Clone LoadCases
+            if (LoadCases != null)
+            {
+                clone.LoadCases = new Dictionary<string, double>(LoadCases);
+            }
+
+            // Clone LoadEntries
+            if (LoadEntries != null)
+            {
+                clone.LoadEntries = LoadEntries.Select(e => new LoadEntry
+                {
+                    Pattern = e.Pattern,
+                    Value = e.Value,
+                    Direction = e.Direction,
+                    LoadType = e.LoadType,
+                    Segments = e.Segments?.Select(s => new LoadSegment { I = s.I, J = s.J }).ToList()
+                    ?? new List<LoadSegment>()
+                }).ToList();
+            }
+
+            // Clone Loads (ILoadBearing)
+            if (Loads != null)
+            {
+                clone.Loads = Loads.Select(l => l.Clone()).ToList();
+            }
 
             // Copy base properties
             CopyBaseTo(clone);
@@ -124,11 +218,30 @@ namespace DTS_Wall_Tool.Core.Data
             if (!string.IsNullOrEmpty(LoadCasesLastSync))
                 dict["xLoadCasesLastSync"] = LoadCasesLastSync;
 
-            // NEW: Serialize detailed entries
+            // Serialize detailed entries
             if (LoadEntries != null && LoadEntries.Count > 0)
             {
                 var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
                 dict["xLoadEntries"] = serializer.Serialize(LoadEntries);
+            }
+
+            // Serialize Loads (ILoadBearing)
+            if (Loads != null && Loads.Count > 0)
+            {
+                var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var loadsList = Loads.Select(l => new Dictionary<string, object>
+                {
+                    ["Pattern"] = l.Pattern,
+                    ["Value"] = l.Value,
+                    ["Type"] = l.Type.ToString(),
+                    ["TargetElement"] = l.TargetElement,
+                    ["Direction"] = l.Direction,
+                    ["DistI"] = l.DistI,
+                    ["DistJ"] = l.DistJ,
+                    ["IsRelativeDistance"] = l.IsRelativeDistance,
+                    ["LoadFactor"] = l.LoadFactor
+                }).ToList();
+                dict["xLoads"] = serializer.Serialize(loadsList);
             }
 
             return dict;
@@ -177,7 +290,7 @@ namespace DTS_Wall_Tool.Core.Data
             if (dict.TryGetValue("xLoadCasesLastSync", out var lastSync))
                 LoadCasesLastSync = lastSync?.ToString();
 
-            // NEW: Deserialize detailed entries
+            // Deserialize detailed entries
             if (dict.TryGetValue("xLoadEntries", out var loadEntriesJson))
             {
                 try
@@ -188,6 +301,40 @@ namespace DTS_Wall_Tool.Core.Data
                 catch
                 {
                     LoadEntries = new List<LoadEntry>();
+                }
+            }
+
+            // Deserialize Loads (ILoadBearing)
+            if (dict.TryGetValue("xLoads", out var loadsJson))
+            {
+                try
+                {
+                    var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+                    var loadsList = serializer.Deserialize<List<Dictionary<string, object>>>(loadsJson.ToString());
+                    Loads = new List<LoadDefinition>();
+
+                    foreach (var loadDict in loadsList)
+                    {
+                        var load = new LoadDefinition();
+                        if (loadDict.TryGetValue("Pattern", out var p)) load.Pattern = p?.ToString();
+                        if (loadDict.TryGetValue("Value", out var v)) load.Value = System.Convert.ToDouble(v);
+                        if (loadDict.TryGetValue("Type", out var t))
+                        {
+                            if (System.Enum.TryParse<Interfaces.LoadType>(t.ToString(), out var lt))
+                                load.Type = lt;
+                        }
+                        if (loadDict.TryGetValue("TargetElement", out var te)) load.TargetElement = te?.ToString();
+                        if (loadDict.TryGetValue("Direction", out var d)) load.Direction = d?.ToString();
+                        if (loadDict.TryGetValue("DistI", out var di)) load.DistI = System.Convert.ToDouble(di);
+                        if (loadDict.TryGetValue("DistJ", out var dj)) load.DistJ = System.Convert.ToDouble(dj);
+                        if (loadDict.TryGetValue("IsRelativeDistance", out var ir)) load.IsRelativeDistance = System.Convert.ToBoolean(ir);
+                        if (loadDict.TryGetValue("LoadFactor", out var lf)) load.LoadFactor = System.Convert.ToDouble(lf);
+                        Loads.Add(load);
+                    }
+                }
+                catch
+                {
+                    Loads = new List<LoadDefinition>();
                 }
             }
         }
@@ -208,23 +355,19 @@ namespace DTS_Wall_Tool.Core.Data
         }
 
         /// <summary>
-        /// Tính tải trọng tường (kN/m)
+        /// Tính tải trọng tường (kN/m) - Backward compatibility method
         /// LoadValue = Thickness(m) * Height(m) * UnitWeight(kN/m3) * LoadFactor
         /// </summary>
         public void CalculateLoad()
         {
-            if (!Thickness.HasValue || !Height.HasValue || !UnitWeight.HasValue) return;
-
-            double thicknessM = Thickness.Value / 1000.0;
-            double heightM = Height.Value / 1000.0;
-
-            LoadValue = thicknessM * heightM * UnitWeight.Value * LoadFactor;
+            // Delegate to new method
+            CalculateLoads();
         }
 
         public override string ToString()
         {
             string thkStr = Thickness.HasValue ? $"{Thickness.Value:0}mm" : "[N/A]";
-            string loadStr = LoadValue.HasValue ? $"{LoadValue.Value:0.00}kN/m" : "[N/A]";  // FIX: Loại bỏ dấu cách
+            string loadStr = LoadValue.HasValue ? $"{LoadValue.Value:0.00}kN/m" : "[N/A]";
             string linkStatus = IsLinked ? $"Linked:{OriginHandle}" : "Unlinked";
 
             return $"Wall[{WallType ?? "N/A"}] T={thkStr}, Load={loadStr}, {linkStatus}";
@@ -242,7 +385,7 @@ namespace DTS_Wall_Tool.Core.Data
             if (pattern == LoadPattern) LoadValue = value;
         }
 
-        // NEW: Cache load case without overwriting current LoadValue
+        // Cache load case without overwriting current LoadValue
         public void CacheLoadCase(string pattern, double value)
         {
             if (LoadCases == null) LoadCases = new Dictionary<string, double>();
@@ -250,12 +393,12 @@ namespace DTS_Wall_Tool.Core.Data
             LoadCasesLastSync = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
         }
 
-        // Keep existing GetLoadCase/GetAllLoadCaseNames/ClearLoadCases definitions elsewhere in file; do not redefine here
+        // Clear load entries
         public void ClearLoadEntries() { LoadEntries?.Clear(); }
 
         public string GetLoadCasesDisplay()
         {
-            if (LoadCases == null || LoadCases.Count ==0) return "No loadcases";
+            if (LoadCases == null || LoadCases.Count == 0) return "No loadcases";
             var lines = new List<string>();
             foreach (var kvp in LoadCases)
             {

@@ -1,11 +1,13 @@
-﻿using System.Collections.Generic;
+﻿using DTS_Wall_Tool.Core.Interfaces;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DTS_Wall_Tool.Core.Data
 {
     /// <summary>
-    /// Dữ liệu Sàn - Kế thừa từ ElementData.
+    /// Dữ liệu Sàn - Kế thừa từ ElementData và implement ILoadBearing.
     /// </summary>
-    public class SlabData : ElementData
+    public class SlabData : ElementData, ILoadBearing
     {
         #region Identity Override
 
@@ -50,6 +52,90 @@ namespace DTS_Wall_Tool.Core.Data
         /// </summary>
         public double? FinishLoad { get; set; } = null;
 
+        /// <summary>
+        /// Dung trọng bê tông (kN/m³)
+        /// </summary>
+        public double UnitWeight { get; set; } = 25.0;
+
+        /// <summary>
+        /// Load pattern mặc định
+        /// </summary>
+        public string LoadPattern { get; set; } = "DL";
+
+        #endregion
+
+        #region ILoadBearing Implementation
+
+        /// <summary>
+        /// Danh sách tải trọng chuẩn theo Interface ILoadBearing
+        /// </summary>
+        public List<LoadDefinition> Loads { get; set; } = new List<LoadDefinition>();
+
+        /// <summary>
+        /// Kiểm tra có tải trọng để gán không
+        /// </summary>
+        public bool HasLoads => Loads != null && Loads.Count > 0;
+
+        /// <summary>
+        /// Xóa tất cả tải trọng đã tính
+        /// </summary>
+        public void ClearLoads()
+        {
+            Loads?.Clear();
+        }
+
+        /// <summary>
+        /// Tính toán tải trọng sàn và đưa vào danh sách Loads.
+        /// Tải sàn = Thickness(m) * UnitWeight(kN/m³) = kN/m²
+        /// </summary>
+        public void CalculateLoads()
+        {
+            ClearLoads();
+
+            if (!Thickness.HasValue) return;
+
+            // 1. Tính tải bản thân sàn (kN/m²)
+            double thicknessM = Thickness.Value / 1000.0;
+            double selfWeight = thicknessM * UnitWeight;
+            selfWeight = System.Math.Round(selfWeight, 2);
+
+            // Thêm tải bản thân
+            Loads.Add(new LoadDefinition
+            {
+                Pattern = LoadPattern ?? "DL",
+                Value = selfWeight,
+                Type = LoadType.UniformArea,
+                TargetElement = "Area",
+                Direction = "Gravity"
+            });
+
+            // 2. Thêm tải hoàn thiện nếu có
+            if (FinishLoad.HasValue && FinishLoad.Value > 0)
+            {
+                Loads.Add(new LoadDefinition
+                {
+                    Pattern = "SDL",
+                    Value = FinishLoad.Value,
+                    Type = LoadType.UniformArea,
+                    TargetElement = "Area",
+                    Direction = "Gravity"
+                });
+            }
+
+            // 3. Thêm hoạt tải nếu có
+            if (LiveLoad.HasValue && LiveLoad.Value > 0)
+            {
+                Loads.Add(new LoadDefinition
+                {
+                    Pattern = "LL",
+                    Value = LiveLoad.Value,
+                    Type = LoadType.UniformArea,
+                    TargetElement = "Area",
+                    Direction = "Gravity"
+                });
+            }
+        }
+
         #endregion
 
         #region Override Methods
@@ -69,8 +155,16 @@ namespace DTS_Wall_Tool.Core.Data
                 Area = Area,
                 Material = Material,
                 LiveLoad = LiveLoad,
-                FinishLoad = FinishLoad
+                FinishLoad = FinishLoad,
+                UnitWeight = UnitWeight,
+                LoadPattern = LoadPattern
             };
+
+            // Clone Loads (ILoadBearing)
+            if (Loads != null)
+            {
+                clone.Loads = Loads.Select(l => l.Clone()).ToList();
+            }
 
             CopyBaseTo(clone);
             return clone;
@@ -88,6 +182,24 @@ namespace DTS_Wall_Tool.Core.Data
             if (!string.IsNullOrEmpty(Material)) dict["xMaterial"] = Material;
             if (LiveLoad.HasValue) dict["xLiveLoad"] = LiveLoad.Value;
             if (FinishLoad.HasValue) dict["xFinishLoad"] = FinishLoad.Value;
+            dict["xUnitWeight"] = UnitWeight;
+            if (!string.IsNullOrEmpty(LoadPattern)) dict["xLoadPattern"] = LoadPattern;
+
+            // Serialize Loads (ILoadBearing)
+            if (Loads != null && Loads.Count > 0)
+            {
+                var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+                var loadsList = Loads.Select(l => new Dictionary<string, object>
+                {
+                    ["Pattern"] = l.Pattern,
+                    ["Value"] = l.Value,
+                    ["Type"] = l.Type.ToString(),
+                    ["TargetElement"] = l.TargetElement,
+                    ["Direction"] = l.Direction,
+                    ["LoadFactor"] = l.LoadFactor
+                }).ToList();
+                dict["xLoads"] = serializer.Serialize(loadsList);
+            }
 
             return dict;
         }
@@ -103,6 +215,39 @@ namespace DTS_Wall_Tool.Core.Data
             if (dict.TryGetValue("xMaterial", out var mat)) Material = mat?.ToString();
             if (dict.TryGetValue("xLiveLoad", out var ll)) LiveLoad = ConvertToDouble(ll);
             if (dict.TryGetValue("xFinishLoad", out var fl)) FinishLoad = ConvertToDouble(fl);
+            if (dict.TryGetValue("xUnitWeight", out var uw)) UnitWeight = ConvertToDouble(uw) ?? 25.0;
+            if (dict.TryGetValue("xLoadPattern", out var lp)) LoadPattern = lp?.ToString();
+
+            // Deserialize Loads (ILoadBearing)
+            if (dict.TryGetValue("xLoads", out var loadsJson))
+            {
+                try
+                {
+                    var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+                    var loadsList = serializer.Deserialize<List<Dictionary<string, object>>>(loadsJson.ToString());
+                    Loads = new List<LoadDefinition>();
+
+                    foreach (var loadDict in loadsList)
+                    {
+                        var load = new LoadDefinition();
+                        if (loadDict.TryGetValue("Pattern", out var p)) load.Pattern = p?.ToString();
+                        if (loadDict.TryGetValue("Value", out var v)) load.Value = System.Convert.ToDouble(v);
+                        if (loadDict.TryGetValue("Type", out var tp))
+                        {
+                            if (System.Enum.TryParse<LoadType>(tp.ToString(), out var lt))
+                                load.Type = lt;
+                        }
+                        if (loadDict.TryGetValue("TargetElement", out var te)) load.TargetElement = te?.ToString();
+                        if (loadDict.TryGetValue("Direction", out var d)) load.Direction = d?.ToString();
+                        if (loadDict.TryGetValue("LoadFactor", out var lf)) load.LoadFactor = System.Convert.ToDouble(lf);
+                        Loads.Add(load);
+                    }
+                }
+                catch
+                {
+                    Loads = new List<LoadDefinition>();
+                }
+            }
         }
 
         #endregion
@@ -117,11 +262,40 @@ namespace DTS_Wall_Tool.Core.Data
             }
         }
 
+        /// <summary>
+        /// Tính tổng tải sàn (kN/m²) = Bản thân + Hoàn thiện + Hoạt tải
+        /// </summary>
+        public double GetTotalLoad()
+        {
+            double total = 0;
+
+            // Bản thân
+            if (Thickness.HasValue)
+            {
+                total += (Thickness.Value / 1000.0) * UnitWeight;
+            }
+
+            // Hoàn thiện
+            if (FinishLoad.HasValue)
+            {
+                total += FinishLoad.Value;
+            }
+
+            // Hoạt tải
+            if (LiveLoad.HasValue)
+            {
+                total += LiveLoad.Value;
+            }
+
+            return System.Math.Round(total, 2);
+        }
+
         public override string ToString()
         {
             string thkStr = Thickness.HasValue ? $"{Thickness.Value:0}mm" : "[N/A]";
+            string loadStr = HasLoads ? $"{Loads.Sum(l => l.Value):0.00}kN/m²" : "[N/A]";
             string linkStatus = IsLinked ? "Linked" : "Unlinked";
-            return $"Slab[{SlabName ?? "N/A"}] T={thkStr}, {SlabType}, {linkStatus}";
+            return $"Slab[{SlabName ?? "N/A"}] T={thkStr}, Load={loadStr}, {SlabType}, {linkStatus}";
         }
 
         #endregion

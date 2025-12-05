@@ -7,7 +7,7 @@ namespace DTS_Wall_Tool.Core.Data
     /// Lớp cơ sở trừu tượng cho tất cả phần tử xây dựng trong hệ thống DTS. 
     /// Tuân thủ ISO/IEC 25010: Maintainability, Modularity, Reusability. 
     /// 
-    /// Mọi phần tử (Wall, Column, Beam, Slab.. .) đều kế thừa từ lớp này.
+    /// Mọi phần tử (Wall, Column, Beam, Slab...) đều kế thừa từ lớp này.
     /// Chứa các thuộc tính chung: Link, Origin, BaseZ, Metadata. 
     /// </summary>
     public abstract class ElementData
@@ -252,6 +252,7 @@ namespace DTS_Wall_Tool.Core.Data
                     {
                         var rec = new MappingRecord();
                         if (dict.TryGetValue("TargetFrame", out var tf)) rec.TargetFrame = tf?.ToString();
+                        if (dict.TryGetValue("TargetType", out var tt)) rec.TargetType = tt?.ToString() ?? "Frame";
                         if (dict.TryGetValue("MatchType", out var mt)) rec.MatchType = mt?.ToString();
                         if (dict.TryGetValue("DistI", out var di)) rec.DistI = Convert.ToDouble(di);
                         if (dict.TryGetValue("DistJ", out var dj)) rec.DistJ = Convert.ToDouble(dj);
@@ -272,6 +273,7 @@ namespace DTS_Wall_Tool.Core.Data
                 list.Add(new Dictionary<string, object>
                 {
                     ["TargetFrame"] = m.TargetFrame,
+                    ["TargetType"] = m.TargetType,
                     ["MatchType"] = m.MatchType,
                     ["DistI"] = m.DistI,
                     ["DistJ"] = m.DistJ,
