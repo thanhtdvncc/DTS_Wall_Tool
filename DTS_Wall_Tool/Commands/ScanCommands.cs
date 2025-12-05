@@ -198,7 +198,11 @@ namespace DTS_Wall_Tool.Commands
             string linkInfo = data.IsLinked ? $"Linked:{data.OriginHandle}" : "Unlinked";
 
             if (data is WallData w)
-                info = $"{w.WallType} T={w.Thickness} Load={w.LoadValue:0.00}";
+            {
+                // ⚠️ CLEAN: Đọc từ Loads list thay vì LoadValue
+                double loadValue = w.GetPrimaryLoadValue();
+                info = $"{w.WallType} T={w.Thickness} Load={loadValue:0.00}";
+            }
             else if (data is ColumnData c)
                 info = $"{c.ColumnType} {c.Material}";
             else if (data is BeamData b)

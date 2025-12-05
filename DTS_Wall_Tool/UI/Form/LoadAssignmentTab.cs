@@ -333,7 +333,7 @@ namespace DTS_Wall_Tool.UI.Forms
                             Index = index++,
                             Handle = lineId.Handle.ToString(),
                             Thickness = wData?.Thickness ?? 0,
-                            LoadPattern = wData?.LoadPattern ?? "DL"
+                            LoadPattern = wData?.GetPrimaryLoadPattern() ?? "DL"
                         };
                         _wallLoadItems.Add(item);
 
