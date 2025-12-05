@@ -933,5 +933,652 @@ ref csys,
         }
 
         #endregion
+
+        #region Extended Load Reading - AUDIT FEATURES
+
+        /// <summary>
+        /// Đọc TẤT CẢ tải phân bố trên TOÀN BỘ Frame theo pattern.
+        /// Trả về danh sách RawSapLoad để xử lý thống kê.
+        /// </summary>
+        public static List<RawSapLoad> GetAllFrameDistributedLoads(string patternFilter = null)
+        {
+            var results = new List<RawSapLoad>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                // Lấy danh sách tất cả frame
+                int frameCount = 0;
+                string[] frameNames = null;
+                model.FrameObj.GetNameList(ref frameCount, ref frameNames);
+                if (frameCount == 0 || frameNames == null) return results;
+
+                // Cache geometry để lấy Z
+                var frameGeometryCache = new Dictionary<string, SapFrame>();
+                foreach (var fn in frameNames)
+                {
+                    var geo = GetFrameGeometry(fn);
+                    if (geo != null) frameGeometryCache[fn] = geo;
+                }
+
+                // Đọc tải từng frame
+                foreach (var frameName in frameNames)
+                {
+                    int numberItems = 0;
+                    string[] fNames = null;
+                    string[] loadPatterns = null;
+                    int[] myTypes = null;
+                    string[] csys = null;
+                    int[] dirs = null;
+                    double[] rd1 = null, rd2 = null;
+                    double[] dist1 = null, dist2 = null;
+                    double[] val1 = null, val2 = null;
+
+                    int ret = model.FrameObj.GetLoadDistributed(
+                        frameName, ref numberItems, ref fNames, ref loadPatterns,
+                        ref myTypes, ref csys, ref dirs,
+                        ref rd1, ref rd2, ref dist1, ref dist2, ref val1, ref val2,
+                        eItemType.Objects);
+
+                    if (ret != 0 || numberItems == 0) continue;
+
+                    for (int i = 0; i < numberItems; i++)
+                    {
+                        // Lọc theo pattern
+                        if (!string.IsNullOrEmpty(patternFilter) &&
+                            !loadPatterns[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        double avgZ = 0;
+                        if (frameGeometryCache.TryGetValue(frameName, out var geo))
+                            avgZ = geo.AverageZ;
+
+                        results.Add(new RawSapLoad
+                        {
+                            ElementName = frameName,
+                            LoadPattern = loadPatterns[i],
+                            Value1 = ConvertLoadToKnPerM(val1[i]),
+                            Value2 = ConvertLoadToKnPerM(val2[i]),
+                            LoadType = "FrameDistributed",
+                            Direction = GetDirectionName(dirs[i]),
+                            DistStart = dist1[i],
+                            DistEnd = dist2[i],
+                            IsRelative = rd1[i] > 0.5, // 1 = relative
+                            CoordSys = csys[i],
+                            ElementZ = avgZ
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Đọc tải tập trung (Point Load) trên Frame
+        /// </summary>
+        public static List<RawSapLoad> GetAllFramePointLoads(string patternFilter = null)
+        {
+            var results = new List<RawSapLoad>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                int frameCount = 0;
+                string[] frameNames = null;
+                model.FrameObj.GetNameList(ref frameCount, ref frameNames);
+                if (frameCount == 0 || frameNames == null) return results;
+
+                var frameGeometryCache = new Dictionary<string, SapFrame>();
+                foreach (var fn in frameNames)
+                {
+                    var geo = GetFrameGeometry(fn);
+                    if (geo != null) frameGeometryCache[fn] = geo;
+                }
+
+                foreach (var frameName in frameNames)
+                {
+                    int numberItems = 0;
+                    string[] fNames = null;
+                    string[] loadPatterns = null;
+                    int[] myTypes = null;
+                    string[] csys = null;
+                    int[] dirs = null;
+                    double[] rd = null;
+                    double[] dist = null;
+                    double[] val = null;
+
+                    int ret = model.FrameObj.GetLoadPoint(
+                        frameName, ref numberItems, ref fNames, ref loadPatterns,
+                        ref myTypes, ref csys, ref dirs, ref rd, ref dist, ref val,
+                        eItemType.Objects);
+
+                    if (ret != 0 || numberItems == 0) continue;
+
+                    for (int i = 0; i < numberItems; i++)
+                    {
+                        if (!string.IsNullOrEmpty(patternFilter) &&
+                            !loadPatterns[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        double avgZ = 0;
+                        if (frameGeometryCache.TryGetValue(frameName, out var geo))
+                            avgZ = geo.AverageZ;
+
+                        results.Add(new RawSapLoad
+                        {
+                            ElementName = frameName,
+                            LoadPattern = loadPatterns[i],
+                            Value1 = ConvertForceToKn(val[i]),
+                            LoadType = "FramePoint",
+                            Direction = GetDirectionName(dirs[i]),
+                            DistStart = dist[i],
+                            IsRelative = rd[i] > 0.5,
+                            CoordSys = csys[i],
+                            ElementZ = avgZ
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Đọc tải đều trên Area (Shell Uniform Load - kN/m²)
+        /// </summary>
+        public static List<RawSapLoad> GetAllAreaUniformLoads(string patternFilter = null)
+        {
+            var results = new List<RawSapLoad>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                int areaCount = 0;
+                string[] areaNames = null;
+                model.AreaObj.GetNameList(ref areaCount, ref areaNames);
+                if (areaCount == 0 || areaNames == null) return results;
+
+                // Cache area Z
+                var areaZCache = new Dictionary<string, double>();
+                foreach (var aName in areaNames)
+                {
+                    var areaGeo = GetAreaGeometry(aName);
+                    if (areaGeo != null)
+                        areaZCache[aName] = areaGeo.AverageZ;
+                }
+
+                foreach (var areaName in areaNames)
+                {
+                    int numItems = 0;
+                    string[] aNames = null;
+                    string[] pats = null;
+                    string[] csys = null;
+                    int[] dirs = null;
+                    double[] vals = null;
+
+                    int ret = model.AreaObj.GetLoadUniform(
+                        areaName, ref numItems, ref aNames, ref pats,
+                        ref csys, ref dirs, ref vals, eItemType.Objects);
+
+                    if (ret != 0 || numItems == 0) continue;
+
+                    for (int i = 0; i < numItems; i++)
+                    {
+                        if (!string.IsNullOrEmpty(patternFilter) &&
+                            !pats[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        double avgZ = 0;
+                        areaZCache.TryGetValue(areaName, out avgZ);
+
+                        results.Add(new RawSapLoad
+                        {
+                            ElementName = areaName,
+                            LoadPattern = pats[i],
+                            Value1 = ConvertLoadToKnPerM2(vals[i]),
+                            LoadType = "AreaUniform",
+                            Direction = GetDirectionName(dirs[i]),
+                            CoordSys = csys[i],
+                            ElementZ = avgZ
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Đọc tải Area Uniform To Frame (1-way/2-way distribution)
+        /// </summary>
+        public static List<RawSapLoad> GetAllAreaUniformToFrameLoads(string patternFilter = null)
+        {
+            var results = new List<RawSapLoad>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                int areaCount = 0;
+                string[] areaNames = null;
+                model.AreaObj.GetNameList(ref areaCount, ref areaNames);
+                if (areaCount == 0 || areaNames == null) return results;
+
+                var areaZCache = new Dictionary<string, double>();
+                foreach (var aName in areaNames)
+                {
+                    var areaGeo = GetAreaGeometry(aName);
+                    if (areaGeo != null)
+                        areaZCache[aName] = areaGeo.AverageZ;
+                }
+
+                foreach (var areaName in areaNames)
+                {
+                    int numItems = 0;
+                    string[] aNames = null;
+                    string[] pats = null;
+                    string[] csys = null;
+                    int[] dirs = null;
+                    double[] vals = null;
+                    int[] distTypes = null;
+
+                    int ret = model.AreaObj.GetLoadUniformToFrame(
+                        areaName, ref numItems, ref aNames, ref pats,
+                        ref csys, ref dirs, ref vals, ref distTypes, eItemType.Objects);
+
+                    if (ret != 0 || numItems == 0) continue;
+
+                    for (int i = 0; i < numItems; i++)
+                    {
+                        if (!string.IsNullOrEmpty(patternFilter) &&
+                            !pats[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        double avgZ = 0;
+                        areaZCache.TryGetValue(areaName, out avgZ);
+
+                        results.Add(new RawSapLoad
+                        {
+                            ElementName = areaName,
+                            LoadPattern = pats[i],
+                            Value1 = ConvertLoadToKnPerM2(vals[i]),
+                            LoadType = "AreaUniformToFrame",
+                            Direction = GetDirectionName(dirs[i]),
+                            DistributionType = distTypes[i] == 1 ? "1-Way" : "2-Way",
+                            CoordSys = csys[i],
+                            ElementZ = avgZ
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Đọc tải tập trung trên Point/Joint
+        /// </summary>
+        public static List<RawSapLoad> GetAllPointLoads(string patternFilter = null)
+        {
+            var results = new List<RawSapLoad>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                int pointCount = 0;
+                string[] pointNames = null;
+                model.PointObj.GetNameList(ref pointCount, ref pointNames);
+                if (pointCount == 0 || pointNames == null) return results;
+
+                // Cache point coordinates
+                var pointCache = GetAllPoints().ToDictionary(p => p.Name, p => p);
+
+                foreach (var pointName in pointNames)
+                {
+                    int numItems = 0;
+                    string[] pNames = null;
+                    string[] pats = null;
+                    int[] lcStep = null;
+                    string[] csys = null;
+                    double[] f1 = null, f2 = null, f3 = null;
+                    double[] m1 = null, m2 = null, m3 = null;
+
+                    int ret = model.PointObj.GetLoadForce(
+                        pointName, ref numItems, ref pNames, ref pats, ref lcStep,
+                        ref csys, ref f1, ref f2, ref f3, ref m1, ref m2, ref m3,
+                        eItemType.Objects);
+
+                    if (ret != 0 || numItems == 0) continue;
+
+                    for (int i = 0; i < numItems; i++)
+                    {
+                        if (!string.IsNullOrEmpty(patternFilter) &&
+                            !pats[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        double z = 0;
+                        if (pointCache.TryGetValue(pointName, out var pt))
+                            z = pt.Z;
+
+                        // Xử lý lực theo từng hướng (thường quan tâm F3 = Gravity)
+                        if (Math.Abs(f3[i]) > 0.001)
+                        {
+                            results.Add(new RawSapLoad
+                            {
+                                ElementName = pointName,
+                                LoadPattern = pats[i],
+                                Value1 = Math.Abs(ConvertForceToKn(f3[i])),
+                                LoadType = "PointForce",
+                                Direction = f3[i] < 0 ? "Gravity (-Z)" : "+Z",
+                                CoordSys = csys[i],
+                                ElementZ = z
+                            });
+                        }
+
+                        // Có thể thêm F1, F2 nếu cần
+                        if (Math.Abs(f1[i]) > 0.001)
+                        {
+                            results.Add(new RawSapLoad
+                            {
+                                ElementName = pointName,
+                                LoadPattern = pats[i],
+                                Value1 = Math.Abs(ConvertForceToKn(f1[i])),
+                                LoadType = "PointForce",
+                                Direction = "X",
+                                CoordSys = csys[i],
+                                ElementZ = z
+                            });
+                        }
+
+                        if (Math.Abs(f2[i]) > 0.001)
+                        {
+                            results.Add(new RawSapLoad
+                            {
+                                ElementName = pointName,
+                                LoadPattern = pats[i],
+                                Value1 = Math.Abs(ConvertForceToKn(f2[i])),
+                                LoadType = "PointForce",
+                                Direction = "Y",
+                                CoordSys = csys[i],
+                                ElementZ = z
+                            });
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Đọc Joint Mass (khối lượng tham gia dao động)
+        /// </summary>
+        public static List<RawSapLoad> GetAllJointMasses()
+        {
+            var results = new List<RawSapLoad>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                int pointCount = 0;
+                string[] pointNames = null;
+                model.PointObj.GetNameList(ref pointCount, ref pointNames);
+                if (pointCount == 0 || pointNames == null) return results;
+
+                var pointCache = GetAllPoints().ToDictionary(p => p.Name, p => p);
+
+                foreach (var pointName in pointNames)
+                {
+                    double[] m = new double[6];
+
+                    int ret = model.PointObj.GetMass(pointName, ref m);
+
+                    if (ret != 0) continue;
+
+                    // m[0], m[1], m[2] = mass in X, Y, Z directions
+                    double totalMass = m[0] + m[1] + m[2];
+                    if (totalMass < 0.001) continue;
+
+                    double z = 0;
+                    if (pointCache.TryGetValue(pointName, out var pt))
+                        z = pt.Z;
+
+                    results.Add(new RawSapLoad
+                    {
+                        ElementName = pointName,
+                        LoadPattern = "MASS",
+                        Value1 = totalMass, // kg or kN*s²/m depending on units
+                        LoadType = "JointMass",
+                        Direction = "All",
+                        ElementZ = z
+                    });
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Lấy tất cả Area Geometry (boundary points)
+        /// </summary>
+        public static List<SapArea> GetAllAreasGeometry()
+        {
+            var results = new List<SapArea>();
+            var model = GetModel();
+            if (model == null) return results;
+
+            try
+            {
+                int areaCount = 0;
+                string[] areaNames = null;
+                model.AreaObj.GetNameList(ref areaCount, ref areaNames);
+                if (areaCount == 0 || areaNames == null) return results;
+
+                foreach (var areaName in areaNames)
+                {
+                    var area = GetAreaGeometry(areaName);
+                    if (area != null)
+                        results.Add(area);
+                }
+            }
+            catch { }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Lấy geometry của một Area
+        /// </summary>
+        public static SapArea GetAreaGeometry(string areaName)
+        {
+            var model = GetModel();
+            if (model == null) return null;
+
+            try
+            {
+                int numPoints = 0;
+                string[] pointNames = null;
+
+                int ret = model.AreaObj.GetPoints(areaName, ref numPoints, ref pointNames);
+                if (ret != 0 || numPoints < 3 || pointNames == null) return null;
+
+                var area = new SapArea
+                {
+                    Name = areaName,
+                    BoundaryPoints = new List<Point2D>(),
+                    ZValues = new List<double>(),
+                    JointNames = pointNames.ToList()
+                };
+
+                foreach (var pName in pointNames)
+                {
+                    double x = 0, y = 0, z = 0;
+                    ret = model.PointObj.GetCoordCartesian(pName, ref x, ref y, ref z, "Global");
+                    if (ret == 0)
+                    {
+                        area.BoundaryPoints.Add(new Point2D(x, y));
+                        area.ZValues.Add(z);
+                    }
+                }
+
+                if (area.BoundaryPoints.Count < 3) return null;
+
+                return area;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Lấy phản lực đáy theo Load Pattern (để đối chiếu)
+        /// </summary>
+        public static double GetBaseReactionZ(string loadPattern)
+        {
+            var model = GetModel();
+            if (model == null) return 0;
+
+            try
+            {
+                // Deselect all cases first
+                model.Results.Setup.DeselectAllCasesAndCombosForOutput();
+
+                // Select specific load case
+                model.Results.Setup.SetCaseSelectedForOutput(loadPattern);
+
+                // Read from Database Tables - more reliable
+                int tableVer = 0;
+                string[] fields = null;
+                int numRec = 0;
+                string[] tableData = null;
+                string[] input = new string[] { "" };
+
+                int ret = model.DatabaseTables.GetTableForDisplayArray(
+                    "Base Reactions",
+                    ref input, "All", ref tableVer, ref fields, ref numRec, ref tableData);
+
+                if (ret == 0 && numRec > 0 && fields != null && tableData != null)
+                {
+                    int idxCase = Array.IndexOf(fields, "OutputCase");
+                    if (idxCase < 0) idxCase = Array.FindIndex(fields, f => f != null && f.ToLowerInvariant().Contains("case"));
+
+                    int idxFz = Array.IndexOf(fields, "GlobalFZ");
+                    if (idxFz < 0) idxFz = Array.FindIndex(fields, f => f != null && (f.Contains("FZ") || f.Contains("GlobalZ")));
+
+                    if (idxCase >= 0 && idxFz >= 0)
+                    {
+                        double totalZ = 0;
+                        int cols = fields.Length;
+
+                        for (int r = 0; r < numRec; r++)
+                        {
+                            string rowCase = tableData[r * cols + idxCase];
+                            if (rowCase != null && rowCase.Equals(loadPattern, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (double.TryParse(tableData[r * cols + idxFz],
+                                    NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
+                                {
+                                    totalZ += val;
+                                }
+                            }
+                        }
+
+                        return ConvertForceToKn(totalZ);
+                    }
+                }
+            }
+            catch { }
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Lấy tên Model SAP2000 hiện tại
+        /// </summary>
+        public static string GetModelName()
+        {
+            var model = GetModel();
+            if (model == null) return "Unknown";
+
+            try
+            {
+                return System.IO.Path.GetFileName(model.GetModelFilename());
+            }
+            catch
+            {
+                return "Unknown";
+            }
+        }
+
+        #endregion
+
+        #region Unit Conversion Helpers
+
+        /// <summary>
+        /// Chuyển đổi lực từ SAP sang kN
+        /// </summary>
+        private static double ConvertForceToKn(double sapValue)
+        {
+            string forceUnit = UnitManager.Info.ForceUnit.ToLowerInvariant();
+            switch (forceUnit)
+            {
+                case "n":
+                    return sapValue / 1000.0; // N -> kN
+                case "kgf":
+                    return sapValue * 0.00981; // kgf -> kN
+                case "ton":
+                    return sapValue * 9.81; // Ton -> kN
+                case "lb":
+                    return sapValue * 0.00445; // lb -> kN
+                case "kip":
+                    return sapValue * 4.448; // kip -> kN
+                case "kn":
+                default:
+                    return sapValue; // kN
+            }
+        }
+
+        /// <summary>
+        /// Chuyển đổi tải diện tích từ SAP sang kN/m²
+        /// </summary>
+        private static double ConvertLoadToKnPerM2(double sapValue)
+        {
+            string lengthUnit = UnitManager.Info.LengthUnit.ToLowerInvariant();
+
+            // Tải diện tích = Force / Length²
+            // Nếu SAP dùng mm: val (kN/mm²) = val * 1000000 kN/m²
+            // Nếu SAP dùng m: val đã là kN/m²
+
+            switch (lengthUnit)
+            {
+                case "mm":
+                    return sapValue * 1000000.0; // kN/mm² -> kN/m²
+                case "cm":
+                    return sapValue * 10000.0; // kN/cm² -> kN/m²
+                case "m":
+                    return sapValue; // kN/m²
+                case "in":
+                    return sapValue * 1550.0; // kN/in² -> kN/m² (approx)
+                case "ft":
+                    return sapValue * 10.764; // kN/ft² -> kN/m² (approx)
+                default:
+                    return sapValue * 1000000.0; // Default mm
+            }
+        }
+
+        #endregion
     }
 }

@@ -94,6 +94,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Commands\AuditCommands.cs" />
     <Compile Include="Commands\CommandBase.cs" />
     <Compile Include="Commands\LinkCommands.cs" />
     <Compile Include="Commands\OriginCommands.cs" />
@@ -109,6 +110,7 @@
     <Compile Include="Core\Algorithms\MergeAlgorithms.cs" />
     <Compile Include="Core\Algorithms\OverlapAlgorithms.cs" />
     <Compile Include="Core\Algorithms\ProjectionAlgorithms.cs" />
+    <Compile Include="Core\Data\AuditData.cs" />
     <Compile Include="Core\Data\BeamData.cs" />
     <Compile Include="Core\Data\ColumnData.cs" />
     <Compile Include="Core\Data\ElementData.cs" />
@@ -126,6 +128,7 @@
     <Compile Include="Core\Data\StoryData.cs" />
     <Compile Include="Core\Data\SyncStatus.cs" />
     <Compile Include="Core\Data\WallData.cs" />
+    <Compile Include="Core\Engines\AuditEngine.cs" />
     <Compile Include="Core\Engines\LoadCalculator.cs" />
     <Compile Include="Core\Engines\MappingEngine.cs" />
     <Compile Include="Core\Engines\SyncEngine.cs" />
