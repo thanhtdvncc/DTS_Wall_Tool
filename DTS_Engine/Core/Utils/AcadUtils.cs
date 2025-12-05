@@ -28,16 +28,27 @@ namespace DTS_Engine.Core.Utils
         /// </summary>
         public static void UsingTransaction(Action<Transaction> action)
         {
-            using (Transaction tr = Db.TransactionManager.StartTransaction())
+            var tm = Db.TransactionManager;
+            var ambient = tm.TopTransaction;
+            if (ambient != null)
+            {
+                // reuse without committing/aborting
+                action(ambient);
+                return;
+            }
+
+            using (var tr = tm.StartTransaction())
             {
                 try
                 {
                     action(tr);
-                    tr.Commit();
+                    tr.Commit();    
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
-                    tr.Abort();
+                    // only abort if this tr is still top
+                    if (ReferenceEquals(tr, tm.TopTransaction))
+                        tr.Abort();
                     Ed.WriteMessage($"\n[LỖI Transaction]: {ex.Message}");
                 }
             }
