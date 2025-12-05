@@ -1,6 +1,6 @@
-using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.GraphicsInterface;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
+using Autodesk.AutoCAD.GraphicsInterface;
 using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Primitives;
 using System;
@@ -9,25 +9,72 @@ using System.Collections.Generic;
 namespace DTS_Engine.Core.Utils
 {
     /// <summary>
-    /// Qu?n l� hi?n th? t?m th?i (Transient Graphics) ?? tr�nh l�m "b?n" b?n v?.
-    /// S? d?ng TransientManager ?? v? overlay m�u ?o l�n ??i t??ng.
-    /// Overlay s? bi?n m?t khi g?i ClearAll() ho?c Regen, tr? l?i nguy�n tr?ng b?n v?.
+    /// Quan ly hien thi tam thoi (Transient Graphics) de tranh lam "ban" ban ve.
+    /// Su dung TransientManager de ve overlay mau ao len doi tuong.
+    /// Overlay se bien mat khi goi ClearAll() hoac Regen, tra lai nguyen trang ban ve.
     /// 
-    /// Tu�n th? ISO/IEC 25010: Maintainability, Non-destructive visualization.
+    /// Tuan thu ISO/IEC 25010: Maintainability, Non-destructive visualization.
     /// </summary>
     public static class VisualUtils
     {
         private static readonly List<DBObject> _transients = new List<DBObject>();
         private static readonly object _syncLock = new object();
 
+        // Tracking cancel count cho auto-clear
+        private static int _cancelCount = 0;
+        private static DateTime _lastCancelTime = DateTime.MinValue;
+        private const int CANCEL_THRESHOLD = 5;
+        private const double CANCEL_TIMEOUT_SECONDS = 3.0;
+
+        #region Cancel Tracking for Auto-Clear
+
+        /// <summary>
+        /// Goi khi user cancel (Esc) mot lenh.
+        /// Neu cancel 5 lan trong 3 giay va co transient, tu dong clear.
+        /// </summary>
+        /// <returns>True neu da tu dong clear, False neu chua</returns>
+        public static bool TrackCancelAndAutoClear()
+        {
+            var now = DateTime.Now;
+
+            // Reset counter neu qua timeout
+            if ((now - _lastCancelTime).TotalSeconds > CANCEL_TIMEOUT_SECONDS)
+            {
+                _cancelCount = 0;
+            }
+
+            _cancelCount++;
+            _lastCancelTime = now;
+
+            // Neu dat threshold va co transient, tu dong clear
+            if (_cancelCount >= CANCEL_THRESHOLD && TransientCount > 0)
+            {
+                ClearAll();
+                _cancelCount = 0;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Reset cancel counter (goi khi bat dau lenh moi).
+        /// </summary>
+        public static void ResetCancelTracking()
+        {
+            _cancelCount = 0;
+        }
+
+        #endregion
+
         #region Highlight Objects
 
         /// <summary>
-        /// Highlight ??i t??ng b?ng m�u t?m th?i (kh�ng ??i m�u g?c c?a Entity).
-        /// Clone entity v� v? overlay v?i m�u ch? ??nh.
+        /// Highlight đối tượng bằng màu tạm thời (không đổi màu gốc của Entity).
+        /// Clone entity và vẽ overlay với màu chỉ định.
         /// </summary>
-        /// <param name="id">ObjectId c?a entity c?n highlight</param>
-        /// <param name="colorIndex">M� m�u AutoCAD (1=Red, 2=Yellow, 3=Green, 4=Cyan, 5=Blue, 6=Magenta, 7=White)</param>
+        /// <param name="id">ObjectId của entity cần highlight</param>
+        /// <param name="colorIndex">Mã màu AutoCAD (1=Red, 2=Yellow, 3=Green, 4=Cyan, 5=Blue, 6=Magenta, 7=White)</param>
         public static void HighlightObject(ObjectId id, int colorIndex)
         {
             if (id == ObjectId.Null || id.IsErased) return;
@@ -61,7 +108,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Highlight danh s�ch ??i t??ng v?i c�ng m?t m�u.
+        /// Highlight danh sách đối tượng với cùng một màu.
         /// </summary>
         public static void HighlightObjects(List<ObjectId> ids, int colorIndex)
         {
@@ -74,7 +121,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Highlight ??i t??ng v?i m�u d?a tr�n tr?ng th�i ??ng b?.
+        /// Highlight đối tượng với màu dựa trên trạng thái đồng bộ.
         /// </summary>
         public static void HighlightBySyncState(ObjectId id, SyncState state)
         {
@@ -87,7 +134,7 @@ namespace DTS_Engine.Core.Utils
         #region Draw Transient Geometry
 
         /// <summary>
-        /// V? ???ng Line t?m th?i (kh�ng t?o entity th?t trong b?n v?).
+        /// Vẽ đường Line tạm thời (không tạo entity thật trong bản vẽ).
         /// </summary>
         public static void DrawTransientLine(Point3d start, Point3d end, int colorIndex)
         {
@@ -104,7 +151,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// V? ???ng Line t?m th?i t? Point2D (Z=0).
+        /// Vẽ đường Line tạm thời từ Point2D (Z=0).
         /// </summary>
         public static void DrawTransientLine(Point2D start, Point2D end, int colorIndex)
         {
@@ -116,7 +163,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// V? v�ng tr�n t?m th?i.
+        /// Vẽ vòng tròn tạm thời.
         /// </summary>
         public static void DrawTransientCircle(Point3d center, double radius, int colorIndex)
         {
@@ -133,10 +180,10 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Th�m ??i t??ng t�y � v�o danh s�ch transient ?? hi?n th?.
+        /// Thêm đối tượng tùy ý vào danh sách transient để hiển thị.
         /// </summary>
-        /// <param name="obj">DBObject ?? hi?n th? (ph?i l� Entity)</param>
-        /// <param name="colorIndex">M� m�u (256 = ByLayer)</param>
+        /// <param name="obj">DBObject để hiển thị (phải là Entity)</param>
+        /// <param name="colorIndex">Mã màu (256 = ByLayer)</param>
         public static void AddTransient(DBObject obj, int colorIndex = 256)
         {
             if (obj == null) return;
@@ -163,8 +210,8 @@ namespace DTS_Engine.Core.Utils
         #region Draw Link Lines
 
         /// <summary>
-        /// V? c�c ???ng link t?m th?i t? Parent ??n danh s�ch Children.
-        /// Thay th? cho vi?c t?o Line th?t tr�n layer dts_linkmap.
+        /// Vẽ các đường link tạm thời từ Parent đến danh sách Children.
+        /// Thay thế cho việc tạo Line thật trên layer dts_linkmap.
         /// </summary>
         public static void DrawLinkLines(ObjectId parentId, List<ObjectId> childIds, int colorIndex = 2)
         {
@@ -217,8 +264,8 @@ namespace DTS_Engine.Core.Utils
         #region Scan Link Visualization
 
         /// <summary>
-        /// V? c�c ???ng scan link t?m th?i t? ?i?m g?c ??n c�c item.
-        /// Thay th? cho DrawScanLinks trong ScanCommands.
+        /// Vẽ các đường scan link tạm thời từ điểm gốc đến các item.
+        /// Thay thế cho DrawScanLinks trong ScanCommands.
         /// </summary>
         public static int DrawScanLinks(Point3d originPt, List<ScanLinkItem> items)
         {
@@ -249,7 +296,7 @@ namespace DTS_Engine.Core.Utils
         #region Clear & Cleanup
 
         /// <summary>
-        /// X�a to�n b? c�c hi?n th? t?m th?i (tr? l?i nguy�n tr?ng m�n h�nh).
+        /// Xóa toàn bộ các hiển thị tạm thời (trả lại nguyên trạng màn hình).
         /// </summary>
         public static void ClearAll()
         {
@@ -294,7 +341,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// L?y s? l??ng transient ?ang ???c hi?n th?.
+        /// Lấy số lượng transient đang được hiển thị.
         /// </summary>
         public static int TransientCount
         {
@@ -351,7 +398,7 @@ namespace DTS_Engine.Core.Utils
     #region Supporting Types
 
     /// <summary>
-    /// Item d�ng cho scan link visualization.
+    /// Item dùng cho scan link visualization.
     /// </summary>
     public class ScanLinkItem
     {

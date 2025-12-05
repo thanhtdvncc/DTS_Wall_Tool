@@ -1,17 +1,17 @@
-using Autodesk.AutoCAD.DatabaseServices;
+﻿using Autodesk.AutoCAD.DatabaseServices;
 using DTS_Engine.Core.Data;
 
 namespace DTS_Engine.Core.Utils
 {
     /// <summary>
-    /// Quy tac lien ket giua cac phan tu trong DTS Engine.
-    /// Dam bao tinh toan ven cua cay lien ket.
+    /// Quy tắc liên kết giữa các phần tử trong DTS Engine.
+    /// Đảm bảo tính toàn vẹn của cây liên kết.
     /// </summary>
     public static class LinkRules
     {
         /// <summary>
-        /// Rule 1: Phan cap nghiem ngat cho Cha Chinh (Primary Parent).
-        /// Xac dinh xem mot loai phan tu co the lam cha cua loai khac khong.
+        /// Quy tắc 1: Phân cấp nghiêm ngặt cho Cha Chính (Primary Parent).
+        /// Xác định xem một loại phần tử có thể làm cha của loại khác hay không.
         /// </summary>
         public static bool CanBePrimaryParent(ElementType parentType, ElementType childType)
         {
@@ -33,8 +33,8 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Rule 2: Chong vong lap (Acyclic Check).
-        /// Duyet nguoc tu Parent len tren, neu gap Child Handle thi la vong lap.
+        /// Quy tắc 2: Chống vòng lặp (Acyclic Check).
+        /// Duyệt ngược từ Parent lên trên; nếu gặp Child Handle thì là vòng lặp.
         /// </summary>
         public static bool DetectCycle(DBObject parentObj, string childHandle, Transaction tr)
         {
@@ -73,17 +73,18 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Rule 3: Kiem tra hop le cho Reference (Cha phu).
-        /// Su dung handle string thay vi truy cap truc tiep property Handle tren ElementData.
+        /// Quy tắc 3: Kiểm tra hợp lệ cho Reference (Cha thứ 2).
+        /// Sử dụng chuỗi handle thay vì truy cập trực tiếp property Handle trên ElementData.
         /// </summary>
         public static bool CanAddReference(ElementData host, string hostHandle, string targetHandle)
         {
             if (host == null) return false;
             if (string.IsNullOrEmpty(hostHandle) || string.IsNullOrEmpty(targetHandle)) return false;
-            if (hostHandle == targetHandle) return false; // Khong tu tham chieu
-            if (host.OriginHandle == targetHandle) return false; // Khong trung Cha chinh
-            if (host.ChildHandles != null && host.ChildHandles.Contains(targetHandle)) return false; // Khong tham chieu con minh
+            if (hostHandle == targetHandle) return false; // Không tự tham chiếu
+            if (host.OriginHandle == targetHandle) return false; // Không trùng Cha chính
+            if (host.ChildHandles != null && host.ChildHandles.Contains(targetHandle)) return false; // Không tham chiếu tới con của chính nó
             return true;
         }
     }
 }
+

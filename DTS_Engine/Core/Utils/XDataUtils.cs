@@ -126,7 +126,7 @@ namespace DTS_Engine.Core.Utils
         #region Specialized Readers (Backward Compatibility)
 
         /// <summary>
-        /// Đọc WallData - Shortcut method (không cần Transaction)
+        /// Đọc WallData - Phương thức tiện ích (không cần Transaction)
         /// </summary>
         public static WallData ReadWallData(DBObject obj)
         {
@@ -134,7 +134,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Ghi WallData - Shortcut method
+        /// Ghi WallData - Phương thức tiện ích
         /// </summary>
         public static void SaveWallData(DBObject obj, WallData data, Transaction tr)
         {
@@ -175,7 +175,7 @@ namespace DTS_Engine.Core.Utils
 
         #endregion
 
-        #region StoryData (Special Case)
+        #region StoryData (Trường hợp đặc biệt)
 
         /// <summary>
         /// Đọc StoryData từ entity (không cần Transaction)
@@ -204,92 +204,287 @@ namespace DTS_Engine.Core.Utils
 
         #endregion
 
-        #region Link Management
+        #region Hệ thống quản lý liên kết (Hoạt động nguyên tử 2 chiều)
 
         /// <summary>
-        /// Thiết lập liên kết cha-con
+        /// [LEGACY] Thiết lập liên kết cha-con (tương thích ngược).
+        /// Khuyến nghị: Sử dụng RegisterLink() để đảm bảo tính toán vẹn 2 chiều.
         /// </summary>
         public static void SetLink(DBObject child, DBObject parent, Transaction tr)
         {
-            var childElement = ReadElementData(child);
-            if (childElement == null) return;
-
-            string parentHandle = parent.Handle.ToString();
-            childElement.OriginHandle = parentHandle;
-            WriteElementData(child, childElement, tr);
-
-            // Cập nhật cha
-            var parentStory = ReadStoryData(parent);
-            if (parentStory != null)
-            {
-                string childHandle = child.Handle.ToString();
-                if (!parentStory.ChildHandles.Contains(childHandle))
-                {
-                    parentStory.ChildHandles.Add(childHandle);
-                    WriteStoryData(parent, parentStory, tr);
-                }
-            }
-            else
-            {
-                var parentElement = ReadElementData(parent);
-                if (parentElement != null)
-                {
-                    string childHandle = child.Handle.ToString();
-                    if (!parentElement.ChildHandles.Contains(childHandle))
-                    {
-                        parentElement.ChildHandles.Add(childHandle);
-                        WriteElementData(parent, parentElement, tr);
-                    }
-                }
-            }
+            RegisterLink(child, parent, isReference: false, tr);
         }
 
         /// <summary>
-        /// Xóa liên kết cha-con
+        /// [LEGACY] Xoa lien ket cha-con (backward compatible).
+        /// Recommend: Su dung UnregisterLink() hoac ClearAllLinks().
         /// </summary>
         public static void RemoveLink(DBObject child, Transaction tr)
         {
-            var childElement = ReadElementData(child);
-            if (childElement == null || !childElement.IsLinked) return;
+            var childData = ReadElementData(child);
+            if (childData == null || !childData.IsLinked) return;
+            UnregisterLink(child, childData.OriginHandle, tr);
+        }
 
-            string parentHandle = childElement.OriginHandle;
-            childElement.OriginHandle = null;
-            WriteElementData(child, childElement, tr);
+        /// <summary>
+        /// [ATOMIC] Đăng ký liên kết 2 chiều giữa Con và Cha.
+        /// Tự động cập nhật OriginHandle của Con VÀ ChildHandles của Cha.
+        /// </summary>
+        /// <param name="childObj">Đối tượng Con</param>
+        /// <param name="parentObj">Đối tượng Cha</param>
+        /// <param name="isReference">True = thêm vào ReferenceHandles, False = gán làm Cha chính</param>
+        /// <param name="tr">Transaction hiện tại</param>
+        /// <returns>Kết quả đăng ký: Primary, Reference, hoặc AlreadyLinked</returns>
+        public static LinkRegistrationResult RegisterLink(DBObject childObj, DBObject parentObj, bool isReference, Transaction tr)
+        {
+            if (childObj == null || parentObj == null)
+                return LinkRegistrationResult.Failed;
+
+            string childHandle = childObj.Handle.ToString();
+            string parentHandle = parentObj.Handle.ToString();
+
+            // Đọc dữ liệu Con
+            var childData = ReadElementData(childObj);
+            if (childData == null)
+                return LinkRegistrationResult.NoData;
+
+            LinkRegistrationResult result;
+
+            if (isReference)
+            {
+                // Thêm vào ReferenceHandles
+                if (childData.ReferenceHandles == null)
+                    childData.ReferenceHandles = new List<string>();
+
+                if (childData.ReferenceHandles.Contains(parentHandle))
+                    return LinkRegistrationResult.AlreadyLinked;
+
+                childData.ReferenceHandles.Add(parentHandle);
+                result = LinkRegistrationResult.Reference;
+            }
+            else
+            {
+                // Gán làm Cha chính (Primary)
+                if (childData.OriginHandle == parentHandle)
+                    return LinkRegistrationResult.AlreadyLinked;
+
+                // Nếu đang có cha cũ khác, phải gỡ con khỏi cha cũ trước
+                if (!string.IsNullOrEmpty(childData.OriginHandle) && childData.OriginHandle != parentHandle)
+                {
+                    RemoveChildFromParentList(childData.OriginHandle, childHandle, tr);
+                }
+
+                childData.OriginHandle = parentHandle;
+
+                // Kế thừa cao độ nếu cha là Story
+                var pStory = ReadStoryData(parentObj);
+                if (pStory != null)
+                {
+                    childData.BaseZ = pStory.Elevation;
+                    childData.Height = pStory.StoryHeight;
+                }
+
+                result = LinkRegistrationResult.Primary;
+            }
+
+            // Lưu Con
+            WriteElementData(childObj, childData, tr);
+
+            // Cập nhật Cha (thêm con vào danh sách)
+            AddChildToParentList(parentObj, childHandle, tr);
+
+            return result;
+        }
+
+        /// <summary>
+        /// [ATOMIC] Gỡ bỏ liên kết 2 chiều cụ thể giữa Con và một Cha xác định.
+        /// Nếu gỡ Cha chính và có Reference, tự động dọn Reference đầu tiên lên làm Cha chính.
+        /// </summary>
+        /// <param name="childObj">Đối tượng Con</param>
+        /// <param name="targetParentHandle">Handle của Cha cần gỡ</param>
+        /// <param name="tr">Transaction hiện tại</param>
+        /// <returns>True nếu gỡ thành công, False nếu không tìm thấy liên kết</returns>
+        public static bool UnregisterLink(DBObject childObj, string targetParentHandle, Transaction tr)
+        {
+            if (childObj == null || string.IsNullOrEmpty(targetParentHandle))
+                return false;
+
+            var childData = ReadElementData(childObj);
+            if (childData == null) return false;
+
+            bool changed = false;
+            string childHandle = childObj.Handle.ToString();
+            string promotedParent = null;
+
+            // Trường hợp A: Gỡ Cha chính
+            if (childData.OriginHandle == targetParentHandle)
+            {
+                childData.OriginHandle = null;
+                changed = true;
+
+                // Tự động dọn Reference đầu tiên lên làm Cha chính (nếu có)
+                if (childData.ReferenceHandles != null && childData.ReferenceHandles.Count > 0)
+                {
+                    promotedParent = childData.ReferenceHandles[0];
+                    childData.ReferenceHandles.RemoveAt(0);
+                    childData.OriginHandle = promotedParent;
+                }
+            }
+            // Trường hợp B: Gỡ Reference
+            else if (childData.ReferenceHandles != null && childData.ReferenceHandles.Contains(targetParentHandle))
+            {
+                childData.ReferenceHandles.Remove(targetParentHandle);
+                changed = true;
+            }
+
+            if (changed)
+            {
+                // Lưu Con
+                WriteElementData(childObj, childData, tr);
+
+                // Xóa Con khỏi danh sách của Cha (Target)
+                RemoveChildFromParentList(targetParentHandle, childHandle, tr);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// [ATOMIC] Xoa TOAN BO lien ket cua con (voi moi cha: Primary + References).
+        /// </summary>
+        public static void ClearAllLinks(DBObject childObj, Transaction tr)
+        {
+            var data = ReadElementData(childObj);
+            if (data == null) return;
+
+            string myHandle = childObj.Handle.ToString();
+
+            // 1. Go khoi Cha chinh
+            if (!string.IsNullOrEmpty(data.OriginHandle))
+            {
+                RemoveChildFromParentList(data.OriginHandle, myHandle, tr);
+                data.OriginHandle = null;
+            }
+
+            // 2. Go khoi tat ca Reference
+            if (data.ReferenceHandles != null && data.ReferenceHandles.Count > 0)
+            {
+                foreach (string refHandle in data.ReferenceHandles)
+                {
+                    RemoveChildFromParentList(refHandle, myHandle, tr);
+                }
+                data.ReferenceHandles.Clear();
+            }
+
+            WriteElementData(childObj, data, tr);
+        }
+
+        /// <summary>
+        /// Lay danh sach tat ca Parents (Primary + References) cua mot doi tuong.
+        /// </summary>
+        public static List<string> GetAllParentHandles(DBObject obj)
+        {
+            var result = new List<string>();
+            var data = ReadElementData(obj);
+            if (data == null) return result;
+
+            if (!string.IsNullOrEmpty(data.OriginHandle))
+                result.Add(data.OriginHandle);
+
+            if (data.ReferenceHandles != null)
+                result.AddRange(data.ReferenceHandles);
+
+            return result;
+        }
+
+        /// <summary>
+        /// Kiem tra doi tuong co lien ket nao khong (Primary hoac Reference).
+        /// </summary>
+        public static bool HasAnyLink(DBObject obj)
+        {
+            var data = ReadElementData(obj);
+            if (data == null) return false;
+
+            if (data.IsLinked) return true;
+            if (data.ReferenceHandles != null && data.ReferenceHandles.Count > 0) return true;
+
+            return false;
+        }
+
+        #region Private Helpers
+
+        private static void AddChildToParentList(DBObject parentObj, string childHandle, Transaction tr)
+        {
+            // Thu doc StoryData
+            var story = ReadStoryData(parentObj);
+            if (story != null)
+            {
+                if (story.ChildHandles == null)
+                    story.ChildHandles = new List<string>();
+                if (!story.ChildHandles.Contains(childHandle))
+                {
+                    story.ChildHandles.Add(childHandle);
+                    WriteStoryData(parentObj, story, tr);
+                }
+                return;
+            }
+
+            // Thu doc ElementData (neu cha la Dam/Cot)
+            var elem = ReadElementData(parentObj);
+            if (elem != null)
+            {
+                if (elem.ChildHandles == null)
+                    elem.ChildHandles = new List<string>();
+                if (!elem.ChildHandles.Contains(childHandle))
+                {
+                    elem.ChildHandles.Add(childHandle);
+                    WriteElementData(parentObj, elem, tr);
+                }
+            }
+        }
+
+        private static void RemoveChildFromParentList(string parentHandle, string childHandle, Transaction tr)
+        {
+            if (string.IsNullOrEmpty(parentHandle)) return;
+
+            ObjectId pid = AcadUtils.GetObjectIdFromHandle(parentHandle);
+            if (pid == ObjectId.Null || pid.IsErased) return; // Cha da xoa, khong can xu ly
 
             try
             {
-                ObjectId parentId = AcadUtils.GetObjectIdFromHandle(parentHandle);
-                if (parentId != ObjectId.Null)
-                {
-                    DBObject parentObj = tr.GetObject(parentId, OpenMode.ForWrite);
-                    string childHandle = child.Handle.ToString();
+                var parentObj = tr.GetObject(pid, OpenMode.ForWrite);
 
-                    var parentStory = ReadStoryData(parentObj);
-                    if (parentStory != null)
-                    {
-                        parentStory.ChildHandles.Remove(childHandle);
-                        WriteStoryData(parentObj, parentStory, tr);
-                    }
-                    else
-                    {
-                        var parentElement = ReadElementData(parentObj);
-                        if (parentElement != null)
-                        {
-                            parentElement.ChildHandles.Remove(childHandle);
-                            WriteElementData(parentObj, parentElement, tr);
-                        }
-                    }
+                var story = ReadStoryData(parentObj);
+                if (story != null && story.ChildHandles != null && story.ChildHandles.Contains(childHandle))
+                {
+                    story.ChildHandles.Remove(childHandle);
+                    WriteStoryData(parentObj, story, tr);
+                    return;
+                }
+
+                var elem = ReadElementData(parentObj);
+                if (elem != null && elem.ChildHandles != null && elem.ChildHandles.Contains(childHandle))
+                {
+                    elem.ChildHandles.Remove(childHandle);
+                    WriteElementData(parentObj, elem, tr);
                 }
             }
-            catch { }
+            catch
+            {
+                // Ignore errors if parent is inaccessible
+            }
         }
 
-        #endregion // End of Link Management
+        #endregion
 
-        #region Low-Level XData Access
+        #endregion // Kết thúc Hệ thống quản lý liên kết
+
+        #region Truy cập XData cấp thấp
 
         /// <summary>
-        /// Đọc raw Dictionary từ XData
+        /// Đọc Dictionary thô từ XData
         /// </summary>
         public static Dictionary<string, object> GetRawData(DBObject obj)
         {
@@ -317,7 +512,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Ghi raw Dictionary vào XData
+        /// Ghi Dictionary thô vào XData
         /// </summary>
         public static void SetRawData(DBObject obj, Dictionary<string, object> data, Transaction tr)
         {
@@ -350,7 +545,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Kiểm tra entity có XData DTS_APP không
+        /// Kiểm tra entity có XData DTS_APP hay không
         /// </summary>
         public static bool HasDtsData(DBObject obj)
         {
@@ -465,47 +660,36 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// [ATOMIC UNLINK] Xóa liên kết an toàn 2 chiều (Cha <-> Con)
+        /// [ATOMIC UNLINK] Xoa lien ket an toan 2 chieu (Cha <-> Con).
+        /// DEPRECATED: Su dung ClearAllLinks() thay the.
         /// </summary>
+        [System.Obsolete("Sử dụng ClearAllLinks() để xóa toàn bộ liên kết, hoặc UnregisterLink() để xóa liên kết cụ thể.")]
         public static void RemoveLinkTwoWay(DBObject child, Transaction tr)
         {
-            var childData = ReadElementData(child);
-            if (childData == null || !childData.IsLinked) return;
-
-            string parentHandle = childData.OriginHandle;
-            string childHandle = child.Handle.ToString();
-
-            // 1. Xóa ở Con
-            childData.OriginHandle = null;
-            WriteElementData(child, childData, tr);
-
-            // 2. Xóa ở Cha
-            ObjectId parentId = AcadUtils.GetObjectIdFromHandle(parentHandle);
-            if (parentId != ObjectId.Null && !parentId.IsErased)
-            {
-                try 
-                {
-                    DBObject parentObj = tr.GetObject(parentId, OpenMode.ForWrite);
-                    var storyData = ReadStoryData(parentObj);
-                    if (storyData != null && storyData.ChildHandles.Contains(childHandle))
-                    {
-                        storyData.ChildHandles.Remove(childHandle);
-                        WriteStoryData(parentObj, storyData, tr);
-                    }
-                    else 
-                    {
-                        var parentElem = ReadElementData(parentObj);
-                        if (parentElem != null && parentElem.ChildHandles.Contains(childHandle))
-                        {
-                            parentElem.ChildHandles.Remove(childHandle);
-                            WriteElementData(parentObj, parentElem, tr);
-                        }
-                    }
-                }
-                catch { }
-            }
+            ClearAllLinks(child, tr);
         }
 
         #endregion // End of Low-Level XData Access
+    }
+
+    /// <summary>
+    /// Ket qua dang ky lien ket.
+    /// </summary>
+    public enum LinkRegistrationResult
+    {
+        /// <summary>Dang ky lien ket chinh (Primary) thanh cong</summary>
+        Primary,
+
+        /// <summary>Dang ky lien ket phu (Reference) thanh cong</summary>
+        Reference,
+
+        /// <summary>Lien ket da ton tai truoc do</summary>
+        AlreadyLinked,
+
+        /// <summary>Doi tuong chua co du lieu DTS</summary>
+        NoData,
+
+        /// <summary>Dang ky that bai (loi khong xac dinh)</summary>
+        Failed
     }
 }

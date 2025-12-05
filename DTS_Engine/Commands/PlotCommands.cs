@@ -479,19 +479,25 @@ namespace DTS_Engine.Commands
                 // Nếu là cột trong chế độ2D, vẽ điểm hoặc skip
                 if (f.IsVertical && !is3D)
                 {
-                    // Vẽ cột dạng Point/Circle trên mặt bằng (hiển thị và gán XData để link)
+                    // Ve cot dang Point/Circle tren mat bang (hien thi va gan XData de link)
                     Circle col = new Circle { Center = p1, Radius = 100, Layer = POINT_LAYER, ColorIndex = 3 };
                     ObjectId colId = btr.AppendEntity(col);
                     tr.AddNewlyCreatedDBObject(col, true);
 
-                    // Gán XData cho marker point để có thể liên kết (Origin/Link)
+                    // Gan XData cho marker point de co the lien ket (Origin/Link)
                     var colData = new ColumnData { SectionName = f.Section, Material = "Concrete", BaseZ = Math.Min(f.Z1, f.Z2) };
                     DBObject colObj = tr.GetObject(colId, OpenMode.ForWrite);
                     XDataUtils.WriteElementData(colObj, colData, tr);
 
+                    // Su dung ham atomic de dam bao 2 chieu
                     if (!string.IsNullOrEmpty(originHandle))
                     {
-                        AddChildToOrigin(originHandle, colId.Handle.ToString(), tr);
+                        ObjectId originId = AcadUtils.GetObjectIdFromHandle(originHandle);
+                        if (originId != ObjectId.Null)
+                        {
+                            DBObject originObj = tr.GetObject(originId, OpenMode.ForWrite);
+                            XDataUtils.RegisterLink(colObj, originObj, isReference: false, tr);
+                        }
                     }
 
                     continue;
@@ -524,9 +530,15 @@ namespace DTS_Engine.Commands
 
                 try { LabelUtils.RefreshEntityLabel(id, tr); } catch { }
 
+                // Su dung ham atomic de dam bao 2 chieu
                 if (!string.IsNullOrEmpty(originHandle))
                 {
-                    AddChildToOrigin(originHandle, id.Handle.ToString(), tr);
+                    ObjectId originId = AcadUtils.GetObjectIdFromHandle(originHandle);
+                    if (originId != ObjectId.Null)
+                    {
+                        DBObject originObj = tr.GetObject(originId, OpenMode.ForWrite);
+                        XDataUtils.RegisterLink(line, originObj, isReference: false, tr);
+                    }
                 }
 
                 // Vẽ điểm node (3D only)
@@ -577,17 +589,29 @@ namespace DTS_Engine.Commands
                 else
                     elemData = new ColumnData { SectionName = frame.Section, Material = "Concrete" };
 
-                elemData.BaseZ = frame.Z1; //3D dùng Z thực
+                elemData.BaseZ = frame.Z1; //3D dung Z thuc
                 elemData.Height = Math.Abs(frame.Z2 - frame.Z1);
                 if (!string.IsNullOrEmpty(originHandle)) elemData.OriginHandle = originHandle;
 
-                XDataUtils.WriteElementData(tr.GetObject(lineId, OpenMode.ForRead), elemData, tr);
+                XDataUtils.WriteElementData(tr.GetObject(lineId, OpenMode.ForWrite), elemData, tr);
 
-                // Label3D (Sử dụng LabelPlotter mới)
+                // Label3D (Su dung LabelPlotter moi)
                 try { LabelUtils.RefreshEntityLabel(lineId, tr); } catch { }
 
+                // Su dung ham atomic de dam bao 2 chieu
                 if (!string.IsNullOrEmpty(originHandle))
-                    AddChildToOrigin(originHandle, lineId.Handle.ToString(), tr);
+                {
+                    ObjectId originId = AcadUtils.GetObjectIdFromHandle(originHandle);
+                    if (originId != ObjectId.Null)
+                    {
+                        DBObject originObj = tr.GetObject(originId, OpenMode.ForWrite);
+                        Entity lineEnt = tr.GetObject(lineId, OpenMode.ForWrite) as Entity;
+                        if (lineEnt != null)
+                        {
+                            XDataUtils.RegisterLink(lineEnt, originObj, isReference: false, tr);
+                        }
+                    }
+                }
             }
         }
 
@@ -642,23 +666,6 @@ namespace DTS_Engine.Commands
             return id.Handle.ToString();
         }
 
-        private void AddChildToOrigin(string originHandle, string childHandle, Transaction tr)
-        {
-            ObjectId originId = AcadUtils.GetObjectIdFromHandle(originHandle);
-            if (originId == ObjectId.Null) return;
-
-            DBObject originObj = tr.GetObject(originId, OpenMode.ForWrite);
-            var story = XDataUtils.ReadStoryData(originObj);
-            if (story != null)
-            {
-                if (story.ChildHandles == null) story.ChildHandles = new List<string>();
-                if (!story.ChildHandles.Contains(childHandle))
-                {
-                    story.ChildHandles.Add(childHandle);
-                    XDataUtils.WriteStoryData(originObj, story, tr);
-                }
-            }
-        }
         #endregion
     }
 }

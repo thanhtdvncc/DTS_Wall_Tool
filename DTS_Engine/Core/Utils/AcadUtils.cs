@@ -42,7 +42,7 @@ namespace DTS_Engine.Core.Utils
                 try
                 {
                     action(tr);
-                    tr.Commit();    
+                    tr.Commit();
                 }
                 catch (Exception ex)
                 {

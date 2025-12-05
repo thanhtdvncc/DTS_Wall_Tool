@@ -8,72 +8,74 @@ using DTS_Engine.Core.Utils;
 namespace DTS_Engine.Commands
 {
     /// <summary>
-    /// Các lệnh tiện ích chung cho DTS Engine.
+    /// Cac lenh tien ich chung cho DTS Engine.
+    /// Tuan thu ISO/IEC 25010: Usability, Maintainability.
     /// </summary>
     public class UtilityCommands : CommandBase
     {
         /// <summary>
-        /// Hiển thị danh sách lệnh DTS.
+        /// Hien thi danh sach lenh DTS.
         /// </summary>
         [CommandMethod("DTS_HELP")]
         public void DTS_HELP()
         {
-            WriteMessage("╔══════════════════════════════════════════════════════════════╗");
-            WriteMessage("║   DTS TOOL - DANH SÁCH LỆNH                                  ║");
-            WriteMessage("╠══════════════════════════════════════════════════════════════╣");
-            WriteMessage("║ THIẾT LẬP:                                                   ║");
-            WriteMessage("║   DTS_SET_ORIGIN  - Thiết lập Origin cho tầng                ║");
-            WriteMessage("║   DTS_LINK        - Liên kết phần tử (hỗ trợ Reference)      ║");
-            WriteMessage("║   DTS_LINK_ORIGIN - Liên kết phần tử với Story Origin        ║");
-            WriteMessage("║   DTS_UNLINK      - Gỡ liên kết cụ thể giữa Con và Cha       ║");
-            WriteMessage("║   DTS_CLEAR_LINK  - Xóa toàn bộ liên kết của phần tử         ║");
-            WriteMessage("║   DTS_SHOW_LINK   - Hiển thị và kiểm tra liên kết            ║");
-            WriteMessage("╠══════════════════════════════════════════════════════════════╣");
-            WriteMessage("║ SAP2000:                                                     ║");
-            WriteMessage("║   DTS_TEST_SAP    - Kiểm tra kết nối SAP2000                 ║");
-            WriteMessage("║   DTS_GET_FRAMES  - Lấy danh sách frames từ SAP              ║");
-            WriteMessage("║   DTS_SYNC_SAP    - Đồng bộ SAP → CAD (PULL)                 ║");
-            WriteMessage("║   DTS_PUSH_LOAD   - Gán tải CAD → SAP (PUSH)                 ║");
-            WriteMessage("║   DTS_CHECK_SYNC  - Kiểm tra trạng thái đồng bộ              ║");
-            WriteMessage("╠══════════════════════════════════════════════════════════════╣");
-            WriteMessage("║ TÍNH TOÁN:                                                   ║");
-            WriteMessage("║   DTS_CALC_LOAD   - Tính tải trọng tường                     ║");
-            WriteMessage("║   DTS_CALC_ALL    - Tính tải cho tất cả phần tử ILoadBearing ║");
-            WriteMessage("║   DTS_SCAN        - Quét và kiểm tra thông tin đối tượng     ║");
-            WriteMessage("╠══════════════════════════════════════════════════════════════╣");
-            WriteMessage("║ HIỂN THỊ & DỌN DẸP:                                          ║");
-            WriteMessage("║   DTS_SHOW_LABEL  - Hiển thị/Cập nhật nhãn phần tử           ║");
-            WriteMessage("║   DTS_CLEAR_LABEL - Xóa tất cả nhãn                          ║");
-            WriteMessage("║   DTS_CLEAR_VISUAL- Xóa hiển thị tạm thời (Transient)        ║");
-            WriteMessage("║   DTS_CLEANUP     - Dọn dẹp tất cả layer tạm                 ║");
-            WriteMessage("╠══════════════════════════════════════════════════════════════╣");
-            WriteMessage("║ MÀU SẮC TRẠNG THÁI:                                          ║");
-            WriteMessage("║   Xanh lá (3)  - Đã đồng bộ / Full match                     ║");
-            WriteMessage("║   Vàng (2)     - CAD thay đổi / Partial match                ║");
-            WriteMessage("║   Xanh dương(5)- SAP thay đổi                                ║");
-            WriteMessage("║   Đỏ (1)       - Không map / SAP đã xóa                      ║");
-            WriteMessage("║   Magenta (6)  - Xung đột                                    ║");
-            WriteMessage("║   Cyan (4)     - Phần tử mới                                 ║");
-            WriteMessage("╚══════════════════════════════════════════════════════════════╝");
+            WriteMessage("================================================================");
+            WriteMessage("   DTS TOOL - DANH SÁCH LỆNH v2.3.0                            ");
+            WriteMessage("================================================================");
+            WriteMessage(" THIẾT LẬP:                                                    ");
+            WriteMessage("   DTS_SET_ORIGIN  - Thiết lập Origin cho tầng                 ");
+            WriteMessage("   DTS_LINK        - Liên kết phần tử (hỗ trợ Reference)        ");
+            WriteMessage("   DTS_LINK_ORIGIN - Liên kết phần tử với Story Origin          ");
+            WriteMessage("   DTS_UNLINK      - Gỡ liên kết cụ thể giữa Con và Cha        ");
+            WriteMessage("   DTS_CLEAR_LINK  - Xóa toàn bộ liên kết của phần tử          ");
+            WriteMessage("   DTS_SHOW_LINK   - Hiển thị và kiểm tra liên kết             ");
+            WriteMessage("----------------------------------------------------------------");
+            WriteMessage(" SAP2000:                                                      ");
+            WriteMessage("   DTS_TEST_SAP    - Kiểm tra kết nối SAP2000                  ");
+            WriteMessage("   DTS_GET_FRAMES  - Lấy danh sách frames từ SAP               ");
+            WriteMessage("   DTS_SYNC_SAP    - Đồng bộ SAP -> CAD (PULL)                 ");
+            WriteMessage("   DTS_PUSH_LOAD   - Gán tải CAD -> SAP (PUSH)                ");
+            WriteMessage("   DTS_CHECK_SYNC  - Kiểm tra trạng thái đồng bộ               ");
+            WriteMessage("----------------------------------------------------------------");
+            WriteMessage(" TINH TOAN:                                                    ");
+            WriteMessage("   DTS_CALC_LOAD   - Tính tải trọng tường                      ");
+            WriteMessage("   DTS_CALC_ALL    - Tính tải cho tất cả phần tử ILoadBearing  ");
+            WriteMessage("   DTS_SCAN        - Quét và kiểm tra thông tin đối tượng      ");
+            WriteMessage("----------------------------------------------------------------");
+            WriteMessage(" HIEN THI & DON DEP:                                           ");
+            WriteMessage("   DTS_SHOW_LABEL  - Hiển thị/Cập nhật nhãn phần tử            ");
+            WriteMessage("   DTS_CLEAR_LABEL - Xóa tất cả nhãn                           ");
+            WriteMessage("   DTS_CLEAR_VISUAL- Xóa hiển thị tạm thời (Transient)         ");
+            WriteMessage("   DTS_CLEANUP     - Dọn dẹp tất cả layer tạm                  ");
+            WriteMessage("----------------------------------------------------------------");
+            WriteMessage(" MAU SAC TRANG THAI:                                           ");
+            WriteMessage("   Xanh lá (3)  - Đã đồng bộ / Full match                     ");
+            WriteMessage("   Vàng (2)     - CAD thay đổi / Partial match                ");
+            WriteMessage("   Xanh dương(5)- SAP thay đổi                                ");
+            WriteMessage("   Đỏ (1)       - Không map / SAP đã xóa                      ");
+            WriteMessage("   Magenta (6)  - Xung đột                                     ");
+            WriteMessage("   Cyan (4)     - Phần tử mới                                  ");
+            WriteMessage("================================================================");
         }
 
         /// <summary>
-        /// Hiển thị thông tin phiên bản DTS Engine.
+        /// Hien thi thong tin phien ban DTS Engine.
         /// </summary>
         [CommandMethod("DTS_VERSION")]
         public void DTS_VERSION()
         {
-            WriteMessage("╔══════════════════════════════════════════════════════════════╗");
-            WriteMessage("║  DTS ENGINE v2.2.0 - Smart Linking & Transient Graphics     ║");
-            WriteMessage("║  BY THANHTDVNCC / CTCI VIETNAM                               ║");
-            WriteMessage("║  ISO/IEC 25010 Compliant                                     ║");
-            WriteMessage("║                                                              ║");
-            WriteMessage("║  New in v2.2.0:                                              ║");
-            WriteMessage("║  - VisualUtils: Transient Graphics (không làm bẩn bản vẽ)   ║");
-            WriteMessage("║  - Smart Link: Hỗ trợ Reference (nhánh phụ)                  ║");
-            WriteMessage("║  - DTS_UNLINK: Gỡ liên kết cụ thể                            ║");
-            WriteMessage("║  - DTS_CLEAR_VISUAL: Xóa hiển thị tạm thời                   ║");
-            WriteMessage("╚══════════════════════════════════════════════════════════════╝");
+            WriteMessage("================================================================");
+            WriteMessage("  DTS ENGINE v2.3.0 - Atomic 2-Way Linking                     ");
+            WriteMessage("  BY THANHTDVNCC / CTCI VIETNAM                                ");
+            WriteMessage("  ISO/IEC 25010 & ISO/IEC 12207 Compliant                      ");
+            WriteMessage("                                                               ");
+            WriteMessage("  New in v2.3.0:                                               ");
+            WriteMessage("  - Atomic 2-Way Linking: Dam bao tinh toan ven du lieu        ");
+            WriteMessage("  - RegisterLink/UnregisterLink: Quan ly lien ket tap trung    ");
+            WriteMessage("  - ExecuteSafe: Co che xu ly loi an toan                      ");
+            WriteMessage("  - VisualUtils: Transient Graphics (khong lam ban ban ve)     ");
+            WriteMessage("  - Smart Link: Ho tro Reference (nhanh phu)                   ");
+            WriteMessage("================================================================");
         }
 
 

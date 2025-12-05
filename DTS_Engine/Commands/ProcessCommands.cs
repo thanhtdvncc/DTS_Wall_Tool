@@ -32,7 +32,7 @@ namespace DTS_Engine.Commands
                 return;
             }
 
-            WriteMessage($"Đã chọn {lineIds.Count} đường.. .");
+            WriteMessage($"Đã chọn {lineIds.Count} đường...");
 
             // Nhập các độ dày cần detect
             PromptStringOptions thickOpt = new PromptStringOptions("\nNhập các độ dày cần detect (phân cách bằng dấu phẩy, VD: 100,200,220): ")
