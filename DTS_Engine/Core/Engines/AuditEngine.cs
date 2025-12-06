@@ -110,21 +110,19 @@ namespace DTS_Engine.Core.Engines
             };
 
             var dbReader = new SapDatabaseReader(SapUtils.GetModel());
-            var allLoads = new List<RawSapLoad>();
 
-            // Read loads using new reader (provides DirectionX/Y/Z)
-            allLoads.AddRange(dbReader.ReadFrameDistributedLoads(loadPattern));
-            allLoads.AddRange(dbReader.ReadAreaUniformLoads(loadPattern));
-            allLoads.AddRange(dbReader.ReadAreaUniformToFrameLoads(loadPattern));
-            allLoads.AddRange(dbReader.ReadJointLoads(loadPattern));
-
-            // Keep legacy frame point loads (already reliable)
-            allLoads.AddRange(SapUtils.GetAllFramePointLoads(loadPattern));
-
-            // Final strict filtering
-            allLoads = allLoads.Where(l => string.Equals(l.LoadPattern, loadPattern, StringComparison.OrdinalIgnoreCase)).ToList();
-
-            if (allLoads.Count == 0) return report;
+            // ⚠️ FIX BUG #1 + #2: CHỊ DÙNG SapDatabaseReader (không gọi SapUtils trực tiếp)
+            // Read all loads ONCE using upgraded reader
+            var allLoads = dbReader.ReadAllLoadsWithBaseReaction(loadPattern, out double baseReaction);
+            
+            // Set base reaction trực tiếp từ reader (không cần tính lại)
+            report.SapBaseReaction = baseReaction;
+            
+            if (allLoads.Count == 0) 
+            {
+                report.IsAnalyzed = Math.Abs(baseReaction) >= 0.001;
+                return report;
+            }
 
             // Group and process by story
             var storyBuckets = GroupLoadsByStory(allLoads);
@@ -133,19 +131,6 @@ namespace DTS_Engine.Core.Engines
                 var storyGroup = ProcessStory(bucket.StoryName, bucket.Elevation, bucket.Loads);
                 if (storyGroup.LoadTypes.Count > 0)
                     report.Stories.Add(storyGroup);
-            }
-
-            // Smart Base Reaction: decide direction using summed global components
-            if (CheckIfLateralLoad(allLoads))
-            {
-                double totalX = allLoads.Sum(l => Math.Abs(l.DirectionX));
-                double totalY = allLoads.Sum(l => Math.Abs(l.DirectionY));
-                string dominantDir = totalX > totalY ? "X" : "Y";
-                report.SapBaseReaction = dbReader.ReadBaseReaction(loadPattern, dominantDir);
-            }
-            else
-            {
-                report.SapBaseReaction = dbReader.ReadBaseReaction(loadPattern, "Z");
             }
 
             if (Math.Abs(report.SapBaseReaction) < 0.001) report.IsAnalyzed = false;

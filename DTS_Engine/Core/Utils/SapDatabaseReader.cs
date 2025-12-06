@@ -915,5 +915,47 @@ namespace DTS_Engine.Core.Utils
         }
 
         #endregion
+
+        #region Direction Vector Resolution (FIX BUG #1 + #3)
+
+        /// <summary>
+        /// Phân tích Direction String và CoordSys ?? tính vector h??ng (X, Y, Z).
+        /// 
+        /// ?? LOGIC:
+        /// - "Gravity" / "GravProj" ? (0, 0, -1) * magnitude
+        /// - "X" / "Y" / "Z" trong GLOBAL ? (±1, 0, 0) etc.
+        /// - Local Dir ? C?n frame angle (t?m b? qua, coi nh? Global)
+        /// </summary>
+        private (double X, double Y, double Z) ResolveDirectionVector(string direction, string coordSys, double magnitude)
+        {
+            if (string.IsNullOrEmpty(direction)) return (0, 0, 0);
+
+            var dir = direction.ToUpperInvariant().Trim();
+            var cs = coordSys?.ToUpperInvariant().Trim() ?? "GLOBAL";
+
+            // Case 1: Gravity (Vertical Down)
+            if (dir.Contains("GRAV") || dir.Contains("Z"))
+                return (0, 0, Math.Abs(magnitude)); // Z-component d??ng (vì magnitude ?ã abs)
+
+            // Case 2: Global X
+            if (cs.Contains("GLOBAL") && (dir.Contains("X") || dir.Equals("1")))
+                return (Math.Abs(magnitude), 0, 0);
+
+            // Case 3: Global Y
+            if (cs.Contains("GLOBAL") && (dir.Contains("Y") || dir.Equals("2")))
+                return (0, Math.Abs(magnitude), 0);
+
+            // Case 4: Projected X/Y
+            if (dir.Contains("XPROJ") || dir.Contains("X PROJ"))
+                return (Math.Abs(magnitude), 0, 0);
+
+            if (dir.Contains("YPROJ") || dir.Contains("Y PROJ"))
+                return (0, Math.Abs(magnitude), 0);
+
+            // Default: Vertical (safest assumption for unknown)
+            return (0, 0, Math.Abs(magnitude));
+        }
+
+        #endregion
     }
 }

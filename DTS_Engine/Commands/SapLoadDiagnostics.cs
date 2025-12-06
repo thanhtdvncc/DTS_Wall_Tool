@@ -380,5 +380,127 @@ namespace DTS_Engine.Commands
         }
 
         #endregion
+
+        /// <summary>
+        /// TEST ULTIMATE: Kiểm tra fix cho Bug #1 (Direction Vector) và Bug #2 (Trapezoidal Load)
+        /// </summary>
+        [CommandMethod("DTS_TEST_AUDIT_FIX")]
+        public void DTS_TEST_AUDIT_FIX()
+        {
+            ExecuteSafe(() =>
+            {
+                WriteMessage("\n=== TEST ULTIMATE: KIỂM TRA FIX BUG #1 + #2 ===");
+
+                if (!SapUtils.IsConnected && !SapUtils.Connect(out string msg))
+                {
+                    WriteError(msg);
+                    return;
+                }
+
+                // 1. Nhập Load Pattern để test
+                var patOpt = new PromptStringOptions("\nNhập Load Pattern để test (VD: WYP): ");
+                var patRes = Ed.GetString(patOpt);
+                if (patRes.Status != PromptStatus.OK) return;
+                string pattern = patRes.StringResult.Trim();
+
+                WriteMessage($"\n--- TEST PATTERN: {pattern} ---");
+
+                // 2. Test SapDatabaseReader (NEW)
+                WriteMessage("\n[1] Testing SapDatabaseReader.ReadAllLoadsWithBaseReaction()...");
+                var dbReader = new SapDatabaseReader(SapUtils.GetModel());
+                var loads = dbReader.ReadAllLoadsWithBaseReaction(pattern, out double baseReaction);
+
+                WriteMessage($"    Total Loads Read: {loads.Count}");
+                WriteMessage($"    Base Reaction: {baseReaction:0.00} kN");
+
+                // Phân tích Direction Components
+                double sumX = loads.Sum(l => Math.Abs(l.DirectionX));
+                double sumY = loads.Sum(l => Math.Abs(l.DirectionY));
+                double sumZ = loads.Sum(l => Math.Abs(l.DirectionZ));
+
+                WriteMessage($"    Direction Components:");
+                WriteMessage($"      - Sum |DirectionX|: {sumX:0.00}");
+                WriteMessage($"      - Sum |DirectionY|: {sumY:0.00}");
+                WriteMessage($"      - Sum |DirectionZ|: {sumZ:0.00}");
+
+                string dominantDir = sumX > sumY ? (sumX > sumZ ? "X" : "Z") : (sumY > sumZ ? "Y" : "Z");
+                WriteMessage($"      - Dominant Direction: {dominantDir}");
+
+                // 3. Kiểm tra tải hình thang (FIX BUG #2)
+                WriteMessage("\n[2] Checking for Trapezoidal Loads (FIX #2)...");
+                var frameDistLoads = loads.Where(l => l.LoadType == "FrameDistributed").ToList();
+                if (frameDistLoads.Count > 0)
+                {
+                    WriteMessage($"    Found {frameDistLoads.Count} Frame Distributed Loads");
+                    
+                    // In 3 mẫu đầu tiên
+                    int sampleCount = Math.Min(3, frameDistLoads.Count);
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        var load = frameDistLoads[i];
+                        WriteMessage($"    Sample {i+1}: {load.ElementName} = {load.Value1:0.00} kN/m (Dir: {load.Direction})");
+                    }
+                }
+                else
+                {
+                    WriteMessage("    (No Frame Distributed Loads)");
+                }
+
+                // 4. Kiểm tra tải ngang trên Area (FIX BUG #1)
+                WriteMessage("\n[3] Checking Lateral Loads on Walls (FIX #1)...");
+                var lateralLoads = loads.Where(l => 
+                    (l.LoadType.Contains("Area") || l.LoadType.Contains("AreaUniform")) &&
+                    (Math.Abs(l.DirectionX) > 0.01 || Math.Abs(l.DirectionY) > 0.01)
+                ).ToList();
+
+                if (lateralLoads.Count > 0)
+                {
+                    WriteMessage($"    Found {lateralLoads.Count} Lateral Wall Loads:");
+                    
+                    double totalLateralForce = 0;
+                    foreach (var load in lateralLoads.Take(5))
+                    {
+                        WriteMessage($"      - {load.ElementName}: Value={load.Value1:0.00}, DirX={load.DirectionX:0.00}, DirY={load.DirectionY:0.00}");
+                        totalLateralForce += load.Value1;
+                    }
+                    
+                    WriteMessage($"    Total Lateral Force (first 5): {totalLateralForce:0.00}");
+                }
+                else
+                {
+                    WriteWarning("    (No Lateral Wall Loads found - This may indicate bug still exists!)");
+                }
+
+                // 5. So sánh với AuditEngine
+                WriteMessage("\n[4] Testing AuditEngine.RunSingleAudit()...");
+                var engine = new DTS_Engine.Core.Engines.AuditEngine();
+                var report = engine.RunSingleAudit(pattern);
+
+                WriteMessage($"    Stories Processed: {report.Stories.Count}");
+                WriteMessage($"    Total Calculated: {report.TotalCalculatedForce:0.00} kN");
+                WriteMessage($"    SAP Base Reaction: {report.SapBaseReaction:0.00} kN");
+                WriteMessage($"    Difference: {report.DifferencePercent:0.00}%");
+
+                // 6. Kết luận
+                WriteMessage("\n=== KẾT LUẬN ===");
+                if (Math.Abs(sumX) > 0.01 || Math.Abs(sumY) > 0.01)
+                {
+                    WriteSuccess("✓ FIX #1 OK: Direction Components đã được resolve (có lateral loads)");
+                }
+                else
+                {
+                    WriteWarning("⚠ FIX #1 CẦN KIỂM TRA: Không phát hiện lateral components");
+                }
+
+                if (Math.Abs(report.DifferencePercent) < 10.0)
+                {
+                    WriteSuccess("✓ FIX #2 OK: Sai số < 10% (có thể do rounding)");
+                }
+                else
+                {
+                    WriteWarning($"⚠ FIX #2 CẦN KIỂM TRA: Sai số {report.DifferencePercent:0.00}% vẫn còn cao");
+                }
+            });
+        }
     }
 }

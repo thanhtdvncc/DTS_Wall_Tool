@@ -270,12 +270,22 @@ namespace DTS_Engine.Core.Utils
                 string pattern = table.GetString(i, "LoadPat") ?? table.GetString(i, "OutputCase");
                 if (string.IsNullOrEmpty(pattern)) continue;
 
-                // Đọc giá trị RAW từ SAP (đơn vị SAP hiện tại, thường kN/mm)
-                double rawValue = table.GetDouble(i, "FOverLA");
-                if (rawValue == 0) rawValue = table.GetDouble(i, "FOverLB");
-                if (rawValue == 0) rawValue = table.GetDouble(i, "FOverL");
+                // ⚠️ FIX BUG #2: ĐỌC CẢ 2 ĐẦU TẢI HÌNH THANG
+                double rawValueA = table.GetDouble(i, "FOverLA");
+                double rawValueB = table.GetDouble(i, "FOverLB");
+                
+                // Nếu không có cột riêng A/B, thử đọc FOverL chung
+                if (rawValueA == 0 && rawValueB == 0)
+                {
+                    double fallback = table.GetDouble(i, "FOverL");
+                    rawValueA = fallback;
+                    rawValueB = fallback;
+                }
 
-                // ⚠️ CRITICAL: Convert NGAY bằng UnitManager - KHÔNG kiểm tra threshold trước
+                // Tính trung bình (cho tải hình thang) hoặc lấy giá trị duy nhất (tải đều)
+                double rawValue = (rawValueA + rawValueB) / 2.0;
+
+                // ⚠️ CRITICAL: Convert NGAY bằng UnitManager
                 double normalizedValue = ConvertLoadToKnPerM(rawValue);
 
                 // Đọc khoảng cách
