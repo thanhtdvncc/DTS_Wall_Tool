@@ -265,6 +265,7 @@ namespace DTS_Engine.Core.Engines
         }
 
         // --- SMART SHAPE ANALYSIS ---
+
         private struct DecompositionResult
         {
             public string Formula;
@@ -272,42 +273,250 @@ namespace DTS_Engine.Core.Engines
             public bool IsExact;
         }
 
+        #region Ultimate Decomposition Engine (The Competition)
+
+        public static class PolygonDecomposer
+        {
+            /// <summary>
+            /// PHƯƠNG THỨC CHÍNH: Chạy đua giữa các thuật toán và chọn người chiến thắng.
+            /// Tiêu chí thắng: Số lượng hình chữ nhật ít nhất (Công thức ngắn nhất).
+            /// Nếu bằng nhau: Ưu tiên thuật toán tạo ra khối chính (Main Chunk) lớn nhất.
+            /// </summary>
+            public static List<Envelope> DecomposeOptimal(Geometry poly)
+            {
+                if (poly == null || poly.IsEmpty) return new List<Envelope>();
+
+                // --- ĐỘI 1: Matrix Strategy (Tìm khối lớn nhất lặp lại) ---
+                var resMatrix = RunMatrixStrategy(poly);
+
+                // --- ĐỘI 2: Slicing Strategy (Quét trục X và Y - Dual Axis) ---
+                var resSliceX = RunSlicingStrategy(poly, isVertical: false); // Cắt ngang
+                var resSliceY = RunSlicingStrategy(poly, isVertical: true);  // Cắt dọc
+
+                // --- SO SÁNH & CHỌN ---
+                // Tạo danh sách các ứng viên
+                var candidates = new List<List<Envelope>> { resMatrix, resSliceX, resSliceY };
+
+                // 1. Lọc lấy những phương án có ít hình nhất (Complexity thấp nhất)
+                int minCount = candidates.Min(c => c.Count);
+                var bestCandidates = candidates.Where(c => c.Count == minCount).ToList();
+
+                // 2. Nếu chỉ có 1 ứng viên tốt nhất -> Chọn luôn
+                if (bestCandidates.Count == 1) return bestCandidates[0];
+
+                // 3. Nếu hòa nhau về số lượng -> Chọn phương án có hình chữ nhật "chủ đạo" lớn nhất
+                // (Tư duy kỹ sư: Thích nhìn thấy một con số to đùng cộng với mấy số lẻ)
+                return bestCandidates.OrderByDescending(c => c.Max(r => r.Area)).First();
+            }
+
+            #region Strategy A: Matrix (Iterative Largest Rectangle)
+            
+            private static List<Envelope> RunMatrixStrategy(Geometry poly)
+            {
+                var coords = poly.Coordinates;
+                var xUnique = coords.Select(c => c.X).Distinct().OrderBy(x => x).ToList();
+                var yUnique = coords.Select(c => c.Y).Distinct().OrderBy(y => y).ToList();
+
+                int cols = xUnique.Count - 1;
+                int rows = yUnique.Count - 1;
+                if (cols <= 0 || rows <= 0) return new List<Envelope> { poly.EnvelopeInternal };
+
+                bool[,] matrix = new bool[rows, cols];
+                var factory = poly.Factory;
+
+                // Xây dựng ma trận
+                for (int r = 0; r < rows; r++)
+                {
+                    double cy = (yUnique[r] + yUnique[r + 1]) / 2.0;
+                    for (int c = 0; c < cols; c++)
+                    {
+                        double cx = (xUnique[c] + xUnique[c + 1]) / 2.0;
+                        if (poly.Intersects(factory.CreatePoint(new Coordinate(cx, cy))))
+                            matrix[r, c] = true;
+                    }
+                }
+
+                var result = new List<Envelope>();
+                // Clone ma trận để không làm hỏng dữ liệu nếu cần dùng lại (dù ở đây local var)
+                var workMatrix = (bool[,])matrix.Clone();
+
+                while (true)
+                {
+                    var maxRect = FindLargestRect(workMatrix, rows, cols, xUnique, yUnique);
+                    if (maxRect.Area <= 0.0001) break;
+
+                    result.Add(maxRect.Env);
+                    for (int r = maxRect.RowStart; r < maxRect.RowEnd; r++)
+                        for (int c = maxRect.ColStart; c < maxRect.ColEnd; c++)
+                            workMatrix[r, c] = false;
+                }
+                return result;
+            }
+
+            private struct MatrixRect { public Envelope Env; public double Area; public int RowStart, RowEnd, ColStart, ColEnd; }
+
+            private static MatrixRect FindLargestRect(bool[,] matrix, int rows, int cols, List<double> xCoords, List<double> yCoords)
+            {
+                int[] heights = new int[cols];
+                double maxArea = -1;
+                MatrixRect best = new MatrixRect { Area = 0 };
+
+                for (int r = 0; r < rows; r++)
+                {
+                    for (int c = 0; c < cols; c++) heights[c] = matrix[r, c] ? heights[c] + 1 : 0;
+
+                    for (int c = 0; c < cols; c++)
+                    {
+                        if (heights[c] == 0) continue;
+                        int h = heights[c];
+                        int rStart = r - h + 1;
+                        double realH = yCoords[r + 1] - yCoords[rStart];
+
+                        int cLeft = c; while (cLeft > 0 && heights[cLeft - 1] >= h) cLeft--;
+                        int cRight = c; while (cRight < cols - 1 && heights[cRight + 1] >= h) cRight++;
+
+                        double realW = xCoords[cRight + 1] - xCoords[cLeft];
+                        double area = realW * realH;
+
+                        if (area > maxArea)
+                        {
+                            maxArea = area;
+                            best = new MatrixRect { Area = area, Env = new Envelope(xCoords[cLeft], xCoords[cRight + 1], yCoords[rStart], yCoords[r + 1]), RowStart = rStart, RowEnd = r + 1, ColStart = cLeft, ColEnd = cRight + 1 };
+                        }
+                    }
+                }
+                return best;
+            }
+            #endregion
+
+            #region Strategy B: Slicing (Dual-Axis Sweep & Merge)
+
+            private static List<Envelope> RunSlicingStrategy(Geometry poly, bool isVertical)
+            {
+                var coords = poly.Coordinates;
+                var splitCoords = isVertical 
+                    ? coords.Select(c => c.X).Distinct().OrderBy(x => x).ToList()
+                    : coords.Select(c => c.Y).Distinct().OrderBy(y => y).ToList();
+
+                var strips = new List<Envelope>();
+                var factory = poly.Factory;
+                var env = poly.EnvelopeInternal;
+
+                // 1. Cắt lát (Slicing)
+                for (int i = 0; i < splitCoords.Count - 1; i++)
+                {
+                    double c1 = splitCoords[i];
+                    double c2 = splitCoords[i+1];
+                    
+                    // Tạo dải cắt vô tận
+                    Envelope stripEnv = isVertical
+                        ? new Envelope(c1, c2, env.MinY, env.MaxY)
+                        : new Envelope(env.MinX, env.MaxX, c1, c2);
+
+                    var intersection = poly.Intersection(factory.ToGeometry(stripEnv));
+                    for (int k = 0; k < intersection.NumGeometries; k++)
+                    {
+                        var g = intersection.GetGeometryN(k);
+                        if (g.Area > 0.001) strips.Add(g.EnvelopeInternal);
+                    }
+                }
+
+                // 2. Gộp lại (Merging) theo chiều ngược lại
+                // Nếu cắt dọc (Vertical Slice) -> Gộp các cột liền kề có cùng chiều cao (Y)
+                return MergeStrips(strips, mergeAlongX: isVertical); 
+            }
+
+            private static List<Envelope> MergeStrips(List<Envelope> inputs, bool mergeAlongX)
+            {
+                if (inputs.Count == 0) return new List<Envelope>();
+                
+                // Group theo chiều cao/rộng cố định
+                var groups = inputs.GroupBy(e => mergeAlongX 
+                    ? $"{e.MinY:F3}-{e.MaxY:F3}"  // Cùng chiều cao Y -> Gộp ngang X
+                    : $"{e.MinX:F3}-{e.MaxX:F3}"); // Cùng chiều rộng X -> Gộp dọc Y
+                    
+                var result = new List<Envelope>();
+
+                foreach (var grp in groups)
+                {
+                    var sorted = mergeAlongX ? grp.OrderBy(e => e.MinX).ToList() : grp.OrderBy(e => e.MinY).ToList();
+                    Envelope current = sorted[0];
+
+                    for (int i = 1; i < sorted.Count; i++)
+                    {
+                        var next = sorted[i];
+                        bool isAdjacent = mergeAlongX 
+                            ? Math.Abs(current.MaxX - next.MinX) < 2.0 
+                            : Math.Abs(current.MaxY - next.MinY) < 2.0;
+
+                        if (isAdjacent)
+                        {
+                            current = new Envelope(
+                                Math.Min(current.MinX, next.MinX), Math.Max(current.MaxX, next.MaxX),
+                                Math.Min(current.MinY, next.MinY), Math.Max(current.MaxY, next.MaxY));
+                        }
+                        else
+                        {
+                            result.Add(current);
+                            current = next;
+                        }
+                    }
+                    result.Add(current);
+                }
+                return result;
+            }
+            #endregion
+        }
+
+        #endregion
+
+        // --- CẬP NHẬT AnalyzeShapeStrategy: THÊM TRỌNG TÀI CHO CHIẾN LƯỢC TRỪ ---
+
         private DecompositionResult AnalyzeShapeStrategy(Geometry geom)
         {
-            // Priority 1: Detect basic shapes (Rect/Triangle)
+            // 1. Check hình cơ bản (Tuyệt đối nhanh)
             if (IsRectangle(geom))
-            {
-                return new DecompositionResult
-                {
-                    Formula = FormatRect(geom.EnvelopeInternal),
-                    ComplexityScore = 1,
-                    IsExact = true
-                };
-            }
-
+                return new DecompositionResult { Formula = FormatRect(geom.EnvelopeInternal), ComplexityScore = 1, IsExact = true };
+            
             if (IsTriangle(geom))
+                return new DecompositionResult { Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})", ComplexityScore = 1, IsExact = true };
+
+            // 2. Chạy thuật toán "Đấu thầu" cho chiến lược CỘNG (Additive)
+            // Đây là nơi Matrix vs Slicing đấu nhau
+            var optimalRects = PolygonDecomposer.DecomposeOptimal(geom);
+            
+            // Sắp xếp kết quả: Hình to nhất lên đầu (Tư duy kỹ sư)
+            optimalRects = optimalRects.OrderByDescending(r => r.Area).ToList();
+            
+            string addFormula = string.Join(" + ", optimalRects.Select(r => FormatRect(r)));
+            int addScore = optimalRects.Count;
+
+            // 3. Chạy chiến lược TRỪ (Subtractive) nếu tiềm năng
+            // Tiêu chuẩn: Hình đặc chiếm > 60% hình bao
+            var env = geom.EnvelopeInternal;
+            if (geom.Area / env.Area > 0.6)
             {
-                return new DecompositionResult
+                var subRes = EvaluateSubtractive(geom);
+                
+                // QUYẾT ĐỊNH CUỐI CÙNG:
+                // Chỉ chọn TRỪ nếu nó thực sự gọn hơn CỘNG (Score nhỏ hơn hẳn)
+                // Ví dụ: Cộng ra 5 hình, Trừ ra 2 hình -> Chọn Trừ.
+                // Nếu Cộng ra 3 hình, Trừ ra 2 hình -> Vẫn có thể chọn Cộng vì nó tường minh hơn,
+                // trừ khi Trừ là (1 BoundingBox - 1 Lỗ) rất đẹp.
+                
+                if (subRes.IsExact && subRes.ComplexityScore < addScore)
                 {
-                    Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})",
-                    ComplexityScore = 1,
-                    IsExact = true
-                };
+                    return subRes;
+                }
             }
 
-            // Priority 2 & 3: Try subtractive and additive decompositions
-            var subRes = EvaluateSubtractive(geom);
-            var addRes = EvaluateAdditive(geom);
-
-            // If both failed to produce exact decomposition -> return additive (may contain Poly(...))
-            if (!subRes.IsExact && !addRes.IsExact)
-                return addRes;
-
-            // Prefer subtractive when complexity is similar (engineer's preference for envelope minus holes)
-            if (subRes.IsExact && subRes.ComplexityScore <= addRes.ComplexityScore + 1)
-                return subRes;
-
-            return addRes;
+            // Mặc định chọn phương án CỘNG tối ưu nhất
+            return new DecompositionResult 
+            { 
+                Formula = addFormula, 
+                ComplexityScore = addScore, 
+                IsExact = true 
+            };
         }
 
         // Subtractive: Envelope - rectangular holes
@@ -355,118 +564,6 @@ namespace DTS_Engine.Core.Engines
                 Formula = "Complex",
                 ComplexityScore = 999,
                 IsExact = false
-            };
-        }
-
-        // Additive: Decompose into rects + triangles
-        private DecompositionResult EvaluateAdditive(Geometry geom)
-        {
-            var parts = new List<string>();
-            var workingGeom = geom.Copy();
-            int maxIterations = 12; // allow deeper recursion for complex shapes
-            double thresholdMm2 = MIN_AREA_THRESHOLD_M2 * 1e6;
-
-            for (int iter = 0; iter < maxIterations; iter++)
-            {
-                if (workingGeom.IsEmpty || workingGeom.Area < thresholdMm2) break;
-
-                // If remaining is simple
-                if (IsRectangle(workingGeom))
-                {
-                    parts.Add(FormatRect(workingGeom.EnvelopeInternal));
-                    workingGeom = _geometryFactory.CreatePolygon();
-                    break;
-                }
-                if (IsTriangle(workingGeom))
-                {
-                    parts.Add($"Tam giác({FormatRect(workingGeom.EnvelopeInternal)})");
-                    workingGeom = _geometryFactory.CreatePolygon();
-                    break;
-                }
-
-                // Use envelope as approximation rectangle (largest axis-aligned inscribed rect is expensive)
-                var env = workingGeom.EnvelopeInternal;
-                var rect = _geometryFactory.ToGeometry(env);
-
-                if (rect != null && !rect.IsEmpty && rect.Area > thresholdMm2)
-                {
-                    parts.Add(FormatRect(env));
-                    try
-                    {
-                        var remainder = workingGeom.Difference(rect);
-                        // If difference didn't reduce area significantly, stop to avoid infinite loop
-                        if (Math.Abs(remainder.Area - workingGeom.Area) < (thresholdMm2 * 0.01)) break;
-                        workingGeom = remainder;
-                        continue;
-                    }
-                    catch { break; }
-                }
-
-                // Can't extract simple rect/tri -> attempt to split by subdividing envelope into quadrants
-                try
-                {
-                    var bbox2 = workingGeom.EnvelopeInternal;
-                    double midX = (bbox2.MinX + bbox2.MaxX) / 2.0;
-                    double midY = (bbox2.MinY + bbox2.MaxY) / 2.0;
-
-                    var quadEnvs = new[] {
-                        new Envelope(bbox2.MinX, midX, bbox2.MinY, midY),
-                        new Envelope(midX, bbox2.MaxX, bbox2.MinY, midY),
-                        new Envelope(bbox2.MinX, midX, midY, bbox2.MaxY),
-                        new Envelope(midX, bbox2.MaxX, midY, bbox2.MaxY)
-                    };
-
-                    var pieces = new List<Geometry>();
-                    foreach (var qe in quadEnvs)
-                    {
-                        if (qe.Width <= 0 || qe.Height <= 0) continue;
-                        var qg = _geometryFactory.ToGeometry(qe);
-                        var inter = workingGeom.Intersection(qg);
-                        if (inter != null && !inter.IsEmpty && inter.Area > 0) pieces.Add(inter);
-                    }
-
-                    if (pieces.Count > 1)
-                    {
-                        double largestArea = 0; int largestIdx = 0;
-                        for (int k = 0; k < pieces.Count; k++)
-                        {
-                            var gk = pieces[k];
-                            if (gk.Area > largestArea) { largestArea = gk.Area; largestIdx = k; }
-                        }
-
-                        for (int k = 0; k < pieces.Count; k++)
-                        {
-                            if (k == largestIdx) continue;
-                            double a = pieces[k].Area / 1.0e6;
-                            if (a > MIN_AREA_THRESHOLD_M2) parts.Add($"Poly({a:0.00}m²)");
-                        }
-
-                        workingGeom = pieces[largestIdx];
-                        continue;
-                    }
-                }
-                catch { }
-
-                // Give up decomposition
-                break;
-            }
-
-            string formula = string.Join(" + ", parts);
-            bool isExact = true;
-
-            if (!workingGeom.IsEmpty && workingGeom.Area > thresholdMm2)
-            {
-                double remArea = workingGeom.Area / 1.0e6;
-                if (!string.IsNullOrEmpty(formula)) formula += " + ";
-                formula += $"Poly({remArea:0.00}m²)";
-                isExact = false;
-            }
-
-            return new DecompositionResult
-            {
-                Formula = string.IsNullOrEmpty(formula) ? "Poly(0.00m²)" : formula,
-                ComplexityScore = parts.Count + (isExact ? 0 : 1),
-                IsExact = isExact
             };
         }
 
@@ -549,23 +646,135 @@ namespace DTS_Engine.Core.Engines
         // --- XỬ LÝ TẢI ĐIỂM (POINT) ---
         private void ProcessPointLoads(List<RawSapLoad> loads, AuditValueGroup valueGroup)
         {
-            // Gom nhóm các điểm trùng vị trí (nếu có)
-            var groups = loads.GroupBy(l => GetGridLocationForPoint(l.ElementName));
+            // 1. Chuẩn bị dữ liệu: Gắn thông tin Grid cho từng điểm tải
+            var pointItems = new List<PointAuditItem>();
+            var allPoints = SapUtils.GetAllPoints(); // Lấy cache toạ độ điểm
 
-            foreach (var g in groups)
+            foreach (var load in loads)
             {
-                double totalForce = g.Sum(l => l.Value1);
-                int count = g.Count();
+                var ptCoord = allPoints.FirstOrDefault(p => p.Name == load.ElementName);
+                if (ptCoord == null) continue; // Skip nếu không tìm thấy tọa độ
 
-                valueGroup.Entries.Add(new AuditEntry
+                // Tìm Grid X và Grid Y chính xác (Snap)
+                var gridX = _xGrids.OrderBy(g => Math.Abs(g.Coordinate - ptCoord.X)).FirstOrDefault();
+                var gridY = _yGrids.OrderBy(g => Math.Abs(g.Coordinate - ptCoord.Y)).FirstOrDefault();
+
+                string xName = (gridX != null && Math.Abs(gridX.Coordinate - ptCoord.X) < GRID_SNAP_TOLERANCE) 
+                    ? gridX.Name 
+                    : null;
+                    
+                string yName = (gridY != null && Math.Abs(gridY.Coordinate - ptCoord.Y) < GRID_SNAP_TOLERANCE)
+                    ? FormatGridWithOffset(gridY.Name, ptCoord.Y - gridY.Coordinate) // Hỗ trợ E(-2.2m)
+                    : null;
+
+                pointItems.Add(new PointAuditItem
                 {
-                    GridLocation = g.Key,
-                    Explanation = $"{count} vị trí",
-                    Quantity = count,
-                    Force = totalForce,
-                    ElementList = g.Select(l => l.ElementName).ToList()
+                    Load = load,
+                    XName = xName,
+                    YName = yName,
+                    RawX = ptCoord.X, // Dùng để sort
+                    RawY = ptCoord.Y
                 });
             }
+
+            // 2. Chiến lược gom nhóm: Ưu tiên gom theo phương ngang (Y Grids) trước, sau đó dọc (X Grids)
+            // Kỹ sư thường đọc bản vẽ theo phương ngang (Trục A, B, C...)
+            
+            var processedItems = new HashSet<RawSapLoad>();
+
+            // --- PASS 1: Gom theo Trục Y (Ngang) ---
+            var groupsY = pointItems.Where(p => p.YName != null)
+                                    .GroupBy(p => p.YName)
+                                    .OrderBy(g => g.Key);
+
+            foreach (var grp in groupsY)
+            {
+                var itemsInRow = grp.ToList();
+                // Chỉ gom nếu có từ 2 điểm trở lên trên cùng trục
+                if (itemsInRow.Count > 1) 
+                {
+                    double totalForce = itemsInRow.Sum(i => i.Load.Value1);
+                    int count = itemsInRow.Count;
+                    
+                    // Tạo danh sách trục cắt: VD "1, 2, 11, 12"
+                    var xLocs = itemsInRow.Select(i => i.XName ?? "?").OrderBy(s => s).Distinct();
+                    string crossAxes = string.Join(",", xLocs);
+                    if (crossAxes.Length > 20) crossAxes = $"{itemsInRow.Count} vị trí";
+
+                    valueGroup.Entries.Add(new AuditEntry
+                    {
+                        GridLocation = $"Trục {grp.Key} (x {crossAxes})", // VD: Trục E(-2.2m) (x 1,2,11,12)
+                        Explanation = $"{count} vị trí",
+                        Quantity = count,
+                        Force = totalForce,
+                        ElementList = itemsInRow.Select(i => i.Load.ElementName).ToList()
+                    });
+
+                    foreach (var item in itemsInRow) processedItems.Add(item.Load);
+                }
+            }
+
+            // --- PASS 2: Gom theo Trục X (Dọc) cho các điểm còn lại ---
+            var remainingItems = pointItems.Where(p => !processedItems.Contains(p.Load)).ToList();
+            var groupsX = remainingItems.Where(p => p.XName != null)
+                                        .GroupBy(p => p.XName)
+                                        .OrderBy(g => g.Key);
+
+            foreach (var grp in groupsX)
+            {
+                var itemsInCol = grp.ToList();
+                if (itemsInCol.Count > 1)
+                {
+                    double totalForce = itemsInCol.Sum(i => i.Load.Value1);
+                    int count = itemsInCol.Count;
+
+                    var yLocs = itemsInCol.Select(i => i.YName ?? "?").OrderBy(s => s).Distinct();
+                    string crossAxes = string.Join(",", yLocs);
+                     if (crossAxes.Length > 20) crossAxes = $"{itemsInCol.Count} vị trí";
+
+                    valueGroup.Entries.Add(new AuditEntry
+                    {
+                        GridLocation = $"Trục {grp.Key} (x {crossAxes})",
+                        Explanation = $"{count} vị trí",
+                        Quantity = count,
+                        Force = totalForce,
+                        ElementList = itemsInCol.Select(i => i.Load.ElementName).ToList()
+                    });
+
+                    foreach (var item in itemsInCol) processedItems.Add(item.Load);
+                }
+            }
+
+            // --- PASS 3: Các điểm lẻ tẻ còn lại ---
+            var leftovers = pointItems.Where(p => !processedItems.Contains(p.Load)).ToList();
+            
+            // Gom các điểm trùng vị trí (nếu có)
+            var uniqueLeftovers = leftovers.GroupBy(p => GetGridLocationForPoint(p.Load.ElementName));
+            
+            foreach (var grp in uniqueLeftovers)
+            {
+                double totalForce = grp.Sum(i => i.Load.Value1);
+                int count = grp.Count();
+                
+                valueGroup.Entries.Add(new AuditEntry
+                {
+                    GridLocation = grp.Key, // Format cũ: (GridX, GridY)
+                    Explanation = "1 vị trí",
+                    Quantity = count,
+                    Force = totalForce,
+                    ElementList = grp.Select(i => i.Load.ElementName).ToList()
+                });
+            }
+        }
+
+        // Helper class nội bộ để xử lý gom nhóm
+        private class PointAuditItem
+        {
+            public RawSapLoad Load { get; set; }
+            public string XName { get; set; }
+            public string YName { get; set; }
+            public double RawX { get; set; }
+            public double RawY { get; set; }
         }
 
         #endregion
