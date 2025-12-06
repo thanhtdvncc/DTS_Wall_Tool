@@ -20,6 +20,28 @@ namespace DTS_Engine.Core.Data
         // NEW: Global Axis resolution
         public string GlobalAxis { get; set; } // "X", "Y", "Z" after local→global conversion
         public double DirectionSign { get; set; } = -1.0; // +1 or -1 (direction của lực)
+
+        // Resolved global components of the load (in same unit as Value1)
+        // These are calculated by transforming the local/load direction into global X/Y/Z components.
+        public double DirectionX { get; set; }
+        public double DirectionY { get; set; }
+        public double DirectionZ { get; set; }
+
+        /// <summary>
+        /// Is this load primarily lateral (X or Y) compared to Z?
+        /// Uses a simple dominance test: max(|X|,|Y|) > 0.5 * |Z|
+        /// </summary>
+        public bool IsLateralLoad
+        {
+            get
+            {
+                double absX = Math.Abs(DirectionX);
+                double absY = Math.Abs(DirectionY);
+                double absZ = Math.Abs(DirectionZ);
+                double lateralMag = Math.Max(absX, absY);
+                return lateralMag > absZ * 0.5;
+            }
+        }
         
         public string DistributionType { get; set; }
         public double DistStart { get; set; }
