@@ -12,10 +12,11 @@ namespace DTS_Engine.Core.Engines
 {
 
     /// <summary>
-    /// Engine kiểm toán tải trọng SAP2000 (Phiên bản v2.4 - Smart Grid & Union)
+    /// Engine kiểm toán tải trọng SAP2000 (Phiên bản v2.4 - Smart Grid & Union) - enhanced with story grouping & word wrap
     /// - Sử dụng NetTopologySuite để gộp (Union) hình học, tránh cắt nát phần tử.
     /// - Định vị trục thông minh dựa trên BoundingBox (Range).
     /// - Hỗ trợ đa đơn vị hiển thị qua UnitManager.
+    /// - Added: GroupLoadsByStory (sàn đỡ tường trên) và Word Wrap trong GenerateTextReport.
     /// </summary>
     public class AuditEngine
     {
@@ -33,7 +34,7 @@ namespace DTS_Engine.Core.Engines
         // Geometry Caches
         private Dictionary<string, SapFrame> _frameGeometryCache;
         private Dictionary<string, SapArea> _areaGeometryCache;
-        
+
         // NTS Factory
         private GeometryFactory _geometryFactory;
 
@@ -93,6 +94,7 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Chạy kiểm toán cho một Load Pattern cụ thể
+        /// Updated: use GroupLoadsByStory logic (sàn dưới đỡ tường trên)
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
@@ -112,16 +114,18 @@ namespace DTS_Engine.Core.Engines
             allLoads.AddRange(SapUtils.GetAllAreaUniformToFrameLoads(loadPattern));
             allLoads.AddRange(SapUtils.GetAllPointLoads(loadPattern));
 
+            // Strict filtering: ensure only loads that exactly match the requested pattern are processed
+            allLoads = allLoads.Where(l => string.Equals(l.LoadPattern, loadPattern, StringComparison.OrdinalIgnoreCase)).ToList();
+
             if (allLoads.Count == 0) return report;
-                  
-            var storyElevations = DetermineStoryElevations(allLoads);
 
-            foreach (var storyInfo in storyElevations.OrderByDescending(s => s.Value))
+            // NEW LOGIC: group loads by story using "sàn dưới đỡ tường trên" logic
+            var storyBuckets = GroupLoadsByStory(allLoads);
+
+            // iterate from top to bottom stories for reporting
+            foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
-                var storyLoads = allLoads.Where(l => Math.Abs(l.ElementZ - storyInfo.Value) <= STORY_TOLERANCE).ToList();
-                if (storyLoads.Count == 0) continue;
-
-                var storyGroup = ProcessStory(storyInfo.Key, storyInfo.Value, storyLoads);
+                var storyGroup = ProcessStory(bucket.StoryName, bucket.Elevation, bucket.Loads);
                 if (storyGroup.LoadTypes.Count > 0)
                     report.Stories.Add(storyGroup);
             }
@@ -142,6 +146,70 @@ namespace DTS_Engine.Core.Engines
             if (Math.Abs(report.SapBaseReaction) < 0.001) report.IsAnalyzed = false;
 
             return report;
+        }
+
+        #endregion
+
+        #region Grouping Loads by Story (New Logic)
+
+        // Temp bucket class
+        private class TempStoryBucket
+        {
+            public string StoryName { get; set; }
+            public double Elevation { get; set; }
+            public List<RawSapLoad> Loads { get; set; } = new List<RawSapLoad>();
+        }
+
+        /// <summary>
+        /// Group loads by story using logic:
+        /// Each load belongs to the highest story where load.Z >= story.Elevation - 50mm tolerance.
+        /// If no story matched (below lowest), assign to lowest story.
+        /// </summary>
+        private List<TempStoryBucket> GroupLoadsByStory(List<RawSapLoad> loads)
+        {
+            var buckets = new List<TempStoryBucket>();
+
+            // Use story Elevation information from _stories (IsElevation flag)
+            var activeStories = _stories.Where(s => s.IsElevation).OrderBy(s => s.Elevation).ToList();
+
+            // If no stories found, create a base bucket at Z=0
+            if (activeStories.Count == 0)
+            {
+                buckets.Add(new TempStoryBucket { StoryName = "Base", Elevation = 0.0 });
+            }
+            else
+            {
+                foreach (var s in activeStories)
+                    buckets.Add(new TempStoryBucket { StoryName = s.Name, Elevation = s.Elevation });
+            }
+
+            // Sort descending for assignment (highest story first)
+            var sortedBuckets = buckets.OrderByDescending(b => b.Elevation).ToList();
+
+            foreach (var load in loads)
+            {
+                var z = load.ElementZ;
+                bool assigned = false;
+
+                foreach (var bucket in sortedBuckets)
+                {
+                    // tolerance 50mm to attach loads sitting exactly on slab
+                    if (z >= bucket.Elevation - 50.0)
+                    {
+                        bucket.Loads.Add(load);
+                        assigned = true;
+                        break;
+                    }
+                }
+
+                // if still not assigned, add to lowest bucket
+                if (!assigned && sortedBuckets.Count > 0)
+                {
+                    sortedBuckets.Last().Loads.Add(load);
+                }
+            }
+
+            return sortedBuckets.Where(b => b.Loads.Count > 0).ToList();
         }
 
         #endregion
@@ -307,7 +375,7 @@ namespace DTS_Engine.Core.Engines
             }
 
             #region Strategy A: Matrix (Iterative Largest Rectangle)
-            
+
             private static List<Envelope> RunMatrixStrategy(Geometry poly)
             {
                 var coords = poly.Coordinates;
@@ -391,7 +459,7 @@ namespace DTS_Engine.Core.Engines
             private static List<Envelope> RunSlicingStrategy(Geometry poly, bool isVertical)
             {
                 var coords = poly.Coordinates;
-                var splitCoords = isVertical 
+                var splitCoords = isVertical
                     ? coords.Select(c => c.X).Distinct().OrderBy(x => x).ToList()
                     : coords.Select(c => c.Y).Distinct().OrderBy(y => y).ToList();
 
@@ -403,8 +471,8 @@ namespace DTS_Engine.Core.Engines
                 for (int i = 0; i < splitCoords.Count - 1; i++)
                 {
                     double c1 = splitCoords[i];
-                    double c2 = splitCoords[i+1];
-                    
+                    double c2 = splitCoords[i + 1];
+
                     // Tạo dải cắt vô tận
                     Envelope stripEnv = isVertical
                         ? new Envelope(c1, c2, env.MinY, env.MaxY)
@@ -420,18 +488,18 @@ namespace DTS_Engine.Core.Engines
 
                 // 2. Gộp lại (Merging) theo chiều ngược lại
                 // Nếu cắt dọc (Vertical Slice) -> Gộp các cột liền kề có cùng chiều cao (Y)
-                return MergeStrips(strips, mergeAlongX: isVertical); 
+                return MergeStrips(strips, mergeAlongX: isVertical);
             }
 
             private static List<Envelope> MergeStrips(List<Envelope> inputs, bool mergeAlongX)
             {
                 if (inputs.Count == 0) return new List<Envelope>();
-                
+
                 // Group theo chiều cao/rộng cố định
-                var groups = inputs.GroupBy(e => mergeAlongX 
+                var groups = inputs.GroupBy(e => mergeAlongX
                     ? $"{e.MinY:F3}-{e.MaxY:F3}"  // Cùng chiều cao Y -> Gộp ngang X
                     : $"{e.MinX:F3}-{e.MaxX:F3}"); // Cùng chiều rộng X -> Gộp dọc Y
-                    
+
                 var result = new List<Envelope>();
 
                 foreach (var grp in groups)
@@ -442,8 +510,8 @@ namespace DTS_Engine.Core.Engines
                     for (int i = 1; i < sorted.Count; i++)
                     {
                         var next = sorted[i];
-                        bool isAdjacent = mergeAlongX 
-                            ? Math.Abs(current.MaxX - next.MinX) < 2.0 
+                        bool isAdjacent = mergeAlongX
+                            ? Math.Abs(current.MaxX - next.MinX) < 2.0
                             : Math.Abs(current.MaxY - next.MinY) < 2.0;
 
                         if (isAdjacent)
@@ -474,17 +542,17 @@ namespace DTS_Engine.Core.Engines
             // 1. Check hình cơ bản (Tuyệt đối nhanh)
             if (IsRectangle(geom))
                 return new DecompositionResult { Formula = FormatRect(geom.EnvelopeInternal), ComplexityScore = 1, IsExact = true };
-            
+
             if (IsTriangle(geom))
                 return new DecompositionResult { Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})", ComplexityScore = 1, IsExact = true };
 
             // 2. Chạy thuật toán "Đấu thầu" cho chiến lược CỘNG (Additive)
             // Đây là nơi Matrix vs Slicing đấu nhau
             var optimalRects = PolygonDecomposer.DecomposeOptimal(geom);
-            
+
             // Sắp xếp kết quả: Hình to nhất lên đầu (Tư duy kỹ sư)
             optimalRects = optimalRects.OrderByDescending(r => r.Area).ToList();
-            
+
             string addFormula = string.Join(" + ", optimalRects.Select(r => FormatRect(r)));
             int addScore = optimalRects.Count;
 
@@ -494,13 +562,13 @@ namespace DTS_Engine.Core.Engines
             if (geom.Area / env.Area > 0.6)
             {
                 var subRes = EvaluateSubtractive(geom);
-                
+
                 // QUYẾT ĐỊNH CUỐI CÙNG:
                 // Chỉ chọn TRỪ nếu nó thực sự gọn hơn CỘNG (Score nhỏ hơn hẳn)
                 // Ví dụ: Cộng ra 5 hình, Trừ ra 2 hình -> Chọn Trừ.
                 // Nếu Cộng ra 3 hình, Trừ ra 2 hình -> Vẫn có thể chọn Cộng vì nó tường minh hơn,
                 // trừ khi Trừ là (1 BoundingBox - 1 Lỗ) rất đẹp.
-                
+
                 if (subRes.IsExact && subRes.ComplexityScore < addScore)
                 {
                     return subRes;
@@ -508,11 +576,11 @@ namespace DTS_Engine.Core.Engines
             }
 
             // Mặc định chọn phương án CỘNG tối ưu nhất
-            return new DecompositionResult 
-            { 
-                Formula = addFormula, 
-                ComplexityScore = addScore, 
-                IsExact = true 
+            return new DecompositionResult
+            {
+                Formula = addFormula,
+                ComplexityScore = addScore,
+                IsExact = true
             };
         }
 
@@ -524,8 +592,8 @@ namespace DTS_Engine.Core.Engines
             var voids = envGeom.Difference(geom);
 
             if (voids.IsEmpty)
-                return new DecompositionResult 
-                { 
+                return new DecompositionResult
+                {
                     Formula = FormatRect(env),
                     ComplexityScore = 1,
                     IsExact = true
@@ -583,65 +651,138 @@ namespace DTS_Engine.Core.Engines
             return $"{env.Width / 1000.0:0.##}x{env.Height / 1000.0:0.##}";
         }
 
-        // --- XỬ LÝ TẢI THANH (FRAME - LINE UNION) ---
+        // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
+        // Gom nhóm theo trục chính (Primary Grid) thay vì union hình học để tránh cắt nát
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
-            var lines = new List<(LineString Line, string Name)>();
+            var frameItems = new List<FrameAuditItem>();
 
             foreach (var load in loads)
             {
-                if (_frameGeometryCache.TryGetValue(load.ElementName, out var frame))
+                if (!_frameGeometryCache.TryGetValue(load.ElementName, out var frame)) continue;
+
+                string primaryGrid = DeterminePrimaryGrid(frame);
+
+                frameItems.Add(new FrameAuditItem
                 {
-                    var line = CreateNtsLineString(frame.StartPt, frame.EndPt);
-                    if (line != null && line.IsValid)
-                        lines.Add((line, load.ElementName));
-                }
+                    Load = load,
+                    Frame = frame,
+                    PrimaryGrid = primaryGrid,
+                    Length = frame.Length2D / 1000.0
+                });
             }
 
-            if (lines.Count == 0) return;
+            if (frameItems.Count == 0) return;
 
-            // UNION LineString: Gộp các đoạn thẳng nối tiếp hoặc chồng lấn
-            var geometries = lines.Select(l => l.Line).Cast<Geometry>().ToList();
-            Geometry unionResult;
-            try
+            var groups = frameItems.GroupBy(f => f.PrimaryGrid);
+
+            foreach (var grp in groups)
             {
-                unionResult = UnaryUnionOp.Union(geometries);
-            }
-            catch
-            {
-                unionResult = _geometryFactory.CreateGeometryCollection(geometries.ToArray());
-            }
+                string gridName = grp.Key;
+                double totalLength = grp.Sum(f => f.Length);
+                double totalForce = totalLength * loadVal;
 
-            for (int i = 0; i < unionResult.NumGeometries; i++)
-            {
-                var geom = unionResult.GetGeometryN(i);
-                
-                // Chiều dài mm -> m
-                double lenM = geom.Length / 1000.0;
-                double force = lenM * loadVal;
+                string rangeDesc = DetermineCrossAxisRange(grp.ToList());
 
-                string location = GetGridRangeDescription(geom.EnvelopeInternal);
-                string explanation = $"L = {lenM:0.00}m";
+                string location = gridName;
+                string explanation = string.IsNullOrEmpty(rangeDesc)
+                    ? $"L = {totalLength:0.00}m"
+                    : $"{rangeDesc} (L={totalLength:0.00}m)";
 
-                // Trace elements
-                var containedElements = lines
-                    .Where(l => geom.Contains(l.Line) || geom.Intersects(l.Line))
-                    .Select(l => l.Name)
-                    .ToList();
+                var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
 
                 targetList.Add(new AuditEntry
                 {
                     GridLocation = location,
                     Explanation = explanation,
-                    Quantity = lenM,
+                    Quantity = totalLength,
                     QuantityUnit = "m",
                     UnitLoad = loadVal,
                     UnitLoadString = $"{loadVal:0.00} {UnitManager.Info.ForceUnit}/m",
-                    TotalForce = force,
+                    TotalForce = totalForce,
                     Direction = dir,
-                    ElementList = containedElements
+                    ElementList = elementNames
                 });
             }
+        }
+
+        private class FrameAuditItem
+        {
+            public RawSapLoad Load;
+            public SapFrame Frame;
+            public string PrimaryGrid;
+            public double Length;
+        }
+
+        /// <summary>
+        /// Xác định thanh nằm trên trục nào (Trục A, Trục 1, hoặc Xiên)
+        /// </summary>
+        private string DeterminePrimaryGrid(SapFrame frame)
+        {
+            double angle = Math.Abs(frame.Angle);
+            while (angle > Math.PI) angle -= Math.PI;
+
+            bool isHorizontal = (angle < 0.1 || Math.Abs(angle - Math.PI) < 0.1);
+            bool isVertical = (Math.Abs(angle - Math.PI / 2) < 0.1);
+
+            Point2D mid = frame.Midpoint;
+
+            if (isHorizontal)
+            {
+                string gridY = FindAxisRange(mid.Y, mid.Y, _yGrids, true);
+                return $"Trục {gridY}";
+            }
+            else if (isVertical)
+            {
+                string gridX = FindAxisRange(mid.X, mid.X, _xGrids, true);
+                return $"Trục {gridX}";
+            }
+            else
+            {
+                string gridX = FindAxisRange(mid.X, mid.X, _xGrids, true);
+                string gridY = FindAxisRange(mid.Y, mid.Y, _yGrids, true);
+                return $"Xiên {gridX}-{gridY}";
+            }
+        }
+
+        /// <summary>
+        /// Xác định phạm vi quét của nhóm dầm (VD: Từ trục 1 đến trục 5)
+        /// </summary>
+        private string DetermineCrossAxisRange(List<FrameAuditItem> items)
+        {
+            if (items == null || items.Count == 0) return string.Empty;
+
+            var sample = items[0].Frame;
+            double angle = Math.Abs(sample.Angle);
+            while (angle > Math.PI) angle -= Math.PI;
+            bool isHorizontal = (angle < 0.1 || Math.Abs(angle - Math.PI) < 0.1);
+
+            double minVal = double.MaxValue;
+            double maxVal = double.MinValue;
+
+            foreach (var item in items)
+            {
+                if (isHorizontal)
+                {
+                    minVal = Math.Min(minVal, Math.Min(item.Frame.StartPt.X, item.Frame.EndPt.X));
+                    maxVal = Math.Max(maxVal, Math.Max(item.Frame.StartPt.X, item.Frame.EndPt.X));
+                }
+                else
+                {
+                    minVal = Math.Min(minVal, Math.Min(item.Frame.StartPt.Y, item.Frame.EndPt.Y));
+                    maxVal = Math.Max(maxVal, Math.Max(item.Frame.StartPt.Y, item.Frame.EndPt.Y));
+                }
+            }
+
+            var crossGrids = isHorizontal ? _xGrids : _yGrids;
+            string startGrid = FindAxisRange(minVal, minVal, crossGrids, true);
+            string endGrid = FindAxisRange(maxVal, maxVal, crossGrids, true);
+
+            if (startGrid == endGrid) return $"tại {startGrid}";
+
+            string cleanStart = startGrid.Split('(')[0];
+            string cleanEnd = endGrid.Split('(')[0];
+            return $"{cleanStart}-{cleanEnd}";
         }
 
         // --- XỬ LÝ TẢI ĐIỂM (POINT) ---
@@ -798,7 +939,7 @@ namespace DTS_Engine.Core.Engines
                 double avgZ = group.Average();
                 var match = stories.FirstOrDefault(s => Math.Abs(s.Elevation - avgZ) <= STORY_TOLERANCE);
                 string name = match != null ? match.Name : $"Z={avgZ / 1000.0:0.0}m";
-                
+
                 if (!result.ContainsKey(name)) result[name] = avgZ;
             }
             return result;
@@ -840,10 +981,10 @@ namespace DTS_Engine.Core.Engines
 
         #endregion
 
-        #region Report Generation (With Unit Conversion & Bilingual Support)
+        #region Report Generation (With Unit Conversion & Word Wrap)
 
         /// <summary>
-        /// Generate text report with bilingual support (English/Vietnamese)
+        /// Generate text report with bilingual support (English/Vietnamese) and word-wrap for Location & Explanation
         /// </summary>
         /// <param name="report">Audit report data</param>
         /// <param name="targetUnit">Target force unit (kN, Ton, kgf, lb)</param>
@@ -917,16 +1058,36 @@ namespace DTS_Engine.Core.Engines
                             else unitStr = $"{displayUnitLoad:0.00} {targetUnit}";
                         }
 
-                        string loc = entry.GridLocation.Length > 24 ? entry.GridLocation.Substring(0, 22) + "..." : entry.GridLocation;
-                        string desc = entry.Explanation.Length > 28 ? entry.Explanation.Substring(0, 26) + "..." : entry.Explanation;
+                        string loc = entry.GridLocation; // will be wrapped below
+                        string desc = entry.Explanation;
+
                         string qtyStr = (entry.QuantityUnit?.ToLowerInvariant() ?? "").Contains("²")
                             ? $"{entry.Quantity,8:0.00} m²"
                             : (entry.QuantityUnit?.Equals("ea", StringComparison.OrdinalIgnoreCase) == true
                                 ? $"{entry.Quantity,8:0} No."
                                 : $"{entry.Quantity,8:0.00} m");
 
-                        sb.AppendLine(string.Format(" | {0,-26} | {1,-30} | {2,-10} | {3,-12} | {4,12:N2} |",
-                            loc, desc, qtyStr, unitStr, displayForce));
+                        string forceStr = $"{displayForce:N2}";
+
+                        // Word wrap both columns and print row-by-row
+                        var locLines = SplitTextToWidth(loc, 26);
+                        var descLines = SplitTextToWidth(desc, 30);
+
+                        int maxLines = Math.Max(locLines.Count, descLines.Count);
+                        if (maxLines == 0) maxLines = 1;
+
+                        for (int i = 0; i < maxLines; i++)
+                        {
+                            string locPart = i < locLines.Count ? locLines[i] : "";
+                            string descPart = i < descLines.Count ? descLines[i] : "";
+
+                            string q = i == 0 ? qtyStr : "";
+                            string u = i == 0 ? unitStr : "";
+                            string t = i == 0 ? forceStr : "";
+
+                            sb.AppendLine(string.Format(" | {0,-26} | {1,-30} | {2,-10} | {3,-12} | {4,12} |",
+                                locPart, descPart, q, u, t));
+                        }
                     }
 
                     sb.AppendLine(" ---------------------------------------------------------------------------------------------------------");
@@ -971,12 +1132,56 @@ namespace DTS_Engine.Core.Engines
             return sb.ToString();
         }
 
+        private List<string> SplitTextToWidth(string text, int width)
+        {
+            var lines = new List<string>();
+            if (string.IsNullOrEmpty(text)) return lines;
+
+            string[] words = text.Split(' ');
+            StringBuilder currentLine = new StringBuilder();
+
+            foreach (var word in words)
+            {
+                if (currentLine.Length + word.Length + (currentLine.Length > 0 ? 1 : 0) > width)
+                {
+                    if (currentLine.Length > 0)
+                    {
+                        lines.Add(currentLine.ToString());
+                        currentLine.Clear();
+                    }
+
+                    if (word.Length > width)
+                    {
+                        string remaining = word;
+                        while (remaining.Length > width)
+                        {
+                            lines.Add(remaining.Substring(0, width));
+                            remaining = remaining.Substring(width);
+                        }
+                        currentLine.Append(remaining);
+                    }
+                    else
+                    {
+                        currentLine.Append(word);
+                    }
+                }
+                else
+                {
+                    if (currentLine.Length > 0) currentLine.Append(" ");
+                    currentLine.Append(word);
+                }
+            }
+            if (currentLine.Length > 0) lines.Add(currentLine.ToString());
+
+            return lines;
+        }
+
         /// <summary>
         /// Translate load type display name to target language
         /// </summary>
         private string TranslateLoadTypeName(string original, bool toVietnamese)
         {
-            if (!toVietnamese) 
+            if (!toVietnamese)
             {
                 // Vietnamese to English
                 if (original.Contains("SÀN")) return "SLAB - AREA LOAD";
@@ -984,7 +1189,7 @@ namespace DTS_Engine.Core.Engines
                 if (original.Contains("NÚT")) return "NODE - POINT LOAD";
                 return original;
             }
-            
+
             // Already Vietnamese or default
             return original;
         }
