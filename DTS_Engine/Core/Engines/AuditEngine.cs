@@ -676,8 +676,8 @@ namespace DTS_Engine.Core.Engines
         private class PointAuditItem
         {
             public RawSapLoad Load { get; set; }
-            public string XName { get; set; }
-            public string YName { get; set; }
+            public String XName { get; set; }
+            public String YName { get; set; }
             public double RawX { get; set; }
             public double RawY { get; set; }
         }
@@ -820,25 +820,35 @@ namespace DTS_Engine.Core.Engines
 
         #endregion
 
-        #region Report Generation (With Unit Conversion)
+        #region Report Generation (With Unit Conversion & Bilingual Support)
 
-        public string GenerateTextReport(AuditReport report, string targetUnit = "kN")
+        /// <summary>
+        /// Generate text report with bilingual support (English/Vietnamese)
+        /// </summary>
+        /// <param name="report">Audit report data</param>
+        /// <param name="targetUnit">Target force unit (kN, Ton, kgf, lb)</param>
+        /// <param name="language">Report language: "English" or "Vietnamese" (default: English)</param>
+        /// <returns>Formatted text report</returns>
+        public string GenerateTextReport(AuditReport report, string targetUnit = "kN", string language = "English")
         {
             var sb = new StringBuilder();
             double forceFactor = 1.0;
-            
-            // Determine conversion factor
+
             if (string.IsNullOrWhiteSpace(targetUnit)) targetUnit = UnitManager.Info.ForceUnit;
             if (targetUnit.Equals("Ton", StringComparison.OrdinalIgnoreCase)) forceFactor = 1.0 / 9.81;
             else if (targetUnit.Equals("kgf", StringComparison.OrdinalIgnoreCase)) forceFactor = 101.97;
             else if (targetUnit.Equals("lb", StringComparison.OrdinalIgnoreCase)) forceFactor = 224.8;
-            else { targetUnit = "kN"; forceFactor = 1.0; } // Default kN
+            else { targetUnit = "kN"; forceFactor = 1.0; }
 
-            sb.AppendLine("=========================================================================================================");
-            sb.AppendLine("   BÁO CÁO KIỂM TOÁN TẢI TRỌNG - DTS ENGINE (PROFESSIONAL)");
-            sb.AppendLine($"   Ngày: {report.AuditDate:dd/MM/yyyy HH:mm} | Model: {report.ModelName}");
-            sb.AppendLine($"   Load Case: {report.LoadPattern} | Đơn vị lực báo cáo: {targetUnit}");
-            sb.AppendLine("=========================================================================================================");
+            bool isVietnamese = language.Equals("Vietnamese", StringComparison.OrdinalIgnoreCase);
+
+            // Header
+            sb.AppendLine("===========================================================================================================");
+            sb.AppendLine(isVietnamese ? "   BÁO CÁO KIỂM TOÁN TẢI TRỌNG (DTS ENGINE)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE)");
+            sb.AppendLine($"   {(isVietnamese ? "Model" : "Model")}    : {report.ModelName}");
+            sb.AppendLine($"   {(isVietnamese ? "Load Case" : "Load Case")}: {report.LoadPattern}  |  {(isVietnamese ? "Đơn vị" : "Unit")}: {targetUnit}");
+            sb.AppendLine($"   {(isVietnamese ? "Ngày" : "Date")}     : {report.AuditDate:yyyy-MM-dd HH:mm}");
+            sb.AppendLine("===========================================================================================================");
             sb.AppendLine();
 
             foreach (var story in report.Stories)
@@ -846,27 +856,39 @@ namespace DTS_Engine.Core.Engines
                 double elevM = UnitManager.ToMeter(story.Elevation);
                 double storyTotal = story.TotalForce * forceFactor;
 
-                sb.AppendLine($"---------------------------------------------------------------------------------------------------------");
-                sb.AppendLine($" TẦNG: {story.StoryName,-20} | Cao độ: {elevM,6:0.00}m | TỔNG LỰC TẦNG: {storyTotal,15:N2} {targetUnit}");
-                sb.AppendLine($"---------------------------------------------------------------------------------------------------------");
+                sb.AppendLine("-----------------------------------------------------------------------------------------------------------");
+                string storyLabel = isVietnamese ? "TẦNG" : "STORY";
+                sb.AppendLine($" {storyLabel}: {story.StoryName} (Z = {elevM:+0.00;-0.00}m)          |   {(isVietnamese ? "TỔNG LỰC TẦNG" : "TOTAL STORY FORCE")}: {storyTotal,12:N2} {targetUnit}");
+                sb.AppendLine("-----------------------------------------------------------------------------------------------------------");
+                sb.AppendLine();
 
                 foreach (var loadType in story.LoadTypes)
                 {
-                    sb.AppendLine();
-                    sb.AppendLine($"  >>> {loadType.LoadTypeName}");
-                    
-                    // Header Table
-                    sb.AppendLine("  " + new string('-', 103));
-                    sb.AppendLine(string.Format("  | {0,-30} | {1,-25} | {2,10} | {3,15} | {4,10} |",
-                        "Vị Trí (Trục/Range)", "Diễn Giải / Kích Thước", "Kh.Lượng", "Giá Trị Tải", $"Lực ({targetUnit})"));
-                    sb.AppendLine("  " + new string('-', 103));
+                    // Section header by type
+                    string typeHeader = TranslateLoadTypeName(loadType.LoadTypeName, isVietnamese);
+                    if (typeHeader.Contains("AREA")) typeHeader = isVietnamese ? "[1] TẢI DIỆN (SÀN)" : "[1] AREA LOADS (SLAB)";
+                    else if (typeHeader.Contains("FRAME")) typeHeader = isVietnamese ? "[2] TẢI THANH (DẦM/CỘT)" : "[2] FRAME LOADS (BEAM/COLUMN)";
+                    else if (typeHeader.Contains("POINT")) typeHeader = isVietnamese ? "[3] TẢI ĐIỂM (NÚT)" : "[3] POINT LOADS (NODE)";
+
+                    sb.AppendLine($" {typeHeader}");
+                    // Optional notes
+                    if (typeHeader.Contains("FRAME"))
+                        sb.AppendLine(isVietnamese ? " * Ghi chú: Khối lượng (Qty) là tổng chiều dài L của các phần tử chịu tải." : " * Note: Qty represents total length (L) of loaded elements.");
+                    if (typeHeader.Contains("POINT"))
+                        sb.AppendLine(isVietnamese ? " * Ghi chú: Khối lượng (Qty) là số lượng điểm (No.) có tải." : " * Note: Qty represents count (No.) of loaded points.");
+
+                    sb.AppendLine(" ---------------------------------------------------------------------------------------------------------");
+                    if (isVietnamese)
+                        sb.AppendLine($" | {"Vị Trí (Trục/Vùng)",-26} | {"Diễn Giải / Kích Thước (m)",-30} | {"Kh.Lượng",-10} | {"Giá Trị Tải",-12} | {"Tổng (" + targetUnit + ")",12} |");
+                    else
+                        sb.AppendLine($" | {"Location (Grid/Zone)",-26} | {"Calculation / Formula (m)",-30} | {"Qty",-10} | {"Unit Load",-12} | {"Total (" + targetUnit + ")",12} |");
+                    sb.AppendLine(" ---------------------------------------------------------------------------------------------------------");
 
                     foreach (var entry in loadType.Entries)
                     {
                         double displayForce = entry.TotalForce * forceFactor;
-                        double displayUnitLoad = entry.UnitLoad * forceFactor; // Convert load value to matching unit
-                        
-                        // Reconstruct Unit String based on target unit
+                        double displayUnitLoad = entry.UnitLoad * forceFactor;
+
                         string unitStr = entry.UnitLoadString;
                         if (forceFactor != 1.0)
                         {
@@ -875,63 +897,76 @@ namespace DTS_Engine.Core.Engines
                             else unitStr = $"{displayUnitLoad:0.00} {targetUnit}";
                         }
 
-                        // Truncate if too long
-                        string loc = entry.GridLocation.Length > 28 ? entry.GridLocation.Substring(0, 25) + "..." : entry.GridLocation;
-                        string desc = entry.Explanation.Length > 23 ? entry.Explanation.Substring(0, 20) + "..." : entry.Explanation;
+                        string loc = entry.GridLocation.Length > 24 ? entry.GridLocation.Substring(0, 22) + "..." : entry.GridLocation;
+                        string desc = entry.Explanation.Length > 28 ? entry.Explanation.Substring(0, 26) + "..." : entry.Explanation;
+                        string qtyStr = (entry.QuantityUnit?.ToLowerInvariant() ?? "").Contains("²")
+                            ? $"{entry.Quantity,8:0.00} m²"
+                            : (entry.QuantityUnit?.Equals("ea", StringComparison.OrdinalIgnoreCase) == true
+                                ? $"{entry.Quantity,8:0} No."
+                                : $"{entry.Quantity,8:0.00} m");
 
-                        sb.AppendLine(string.Format("  | {0,-30} | {1,-25} | {2,7:0.00} {3,-2} | {4,15} | {5,10:N2} |",
-                            loc, desc, entry.Quantity, entry.QuantityUnit, unitStr, displayForce));
+                        sb.AppendLine(string.Format(" | {0,-26} | {1,-30} | {2,-10} | {3,-12} | {4,12:N2} |",
+                            loc, desc, qtyStr, unitStr, displayForce));
                     }
-                    sb.AppendLine("  " + new string('-', 103));
+
+                    sb.AppendLine(" ---------------------------------------------------------------------------------------------------------");
                     double typeTotal = loadType.TotalForce * forceFactor;
-                    sb.AppendLine(string.Format("  | {0,87} | {1,10:N2} |", "TỔNG NHÓM:", typeTotal));
+                    string subTotalLabel = isVietnamese ? "TỔNG NHÓM:" : "SUB-TOTAL:";
+                    sb.AppendLine(string.Format(" {0,86} {1,12:N2}", subTotalLabel, typeTotal));
                     sb.AppendLine();
                 }
             }
 
-            // Summary
+            // Summary & evaluation
             double totalCalc = report.TotalCalculatedForce * forceFactor;
             double baseReact = report.SapBaseReaction * forceFactor;
             double diff = totalCalc - Math.Abs(baseReact);
 
-            sb.AppendLine("=========================================================================================================");
-            sb.AppendLine("   TỔNG HỢP & ĐÁNH GIÁ");
-            sb.AppendLine($"   1. TỔNG CỘNG TÍNH TOÁN (CAD):      {totalCalc,15:N2} {targetUnit}");
-            
+            sb.AppendLine("===========================================================================================================");
+            sb.AppendLine(isVietnamese ? "   TỔNG HỢP & ĐÁNH GIÁ" : "   SUMMARY & EVALUATION");
+            string calcLabel = isVietnamese ? "TỔNG CỘNG TÍNH TOÁN" : "TOTAL CALCULATED";
+            sb.AppendLine($"   1. {calcLabel}:  {totalCalc,12:N2} {targetUnit}");
+
             if (report.IsAnalyzed)
             {
-                sb.AppendLine($"   2. SAP2000 BASE REACTION (Z):      {baseReact,15:N2} {targetUnit}");
-                sb.AppendLine($"   3. SAI LỆCH (DIFF):                {diff,15:N2} {targetUnit} ({report.DifferencePercent:0.00}%)");
+                string reactLabel = isVietnamese ? "PHẢN LỰC ĐÁY (SAP2000)" : "SAP2000 BASE REACTION";
+                string diffLabel = isVietnamese ? "SAI LỆCH (DIFF)" : "DIFFERENCE (DIFF)";
+                sb.AppendLine($"   2. {reactLabel}:  {baseReact,12:N2} {targetUnit}");
+                sb.AppendLine($"   3. {diffLabel}:   {diff,12:N2} {targetUnit} ({report.DifferencePercent:0.00}%)");
                 sb.AppendLine();
                 if (Math.Abs(report.DifferencePercent) < 5.0)
-                    sb.AppendLine("   >>> KẾT LUẬN: ĐẠT YÊU CẦU (Sai số < 5%)");
+                    sb.AppendLine(isVietnamese ? "   >>> KẾT LUẬN: ĐẠT YÊU CẦU (Sai số < 5%)" : "   >>> CONCLUSION: OK (Error < 5%)");
                 else
-                    sb.AppendLine("   >>> KẾT LUẬN: CẦN KIỂM TRA LẠI (Sai số lớn)");
+                    sb.AppendLine(isVietnamese ? "   >>> KẾT LUẬN: CẦN KIỂM TRA LẠI (Sai số lớn)" : "   >>> CONCLUSION: REQUIRES REVIEW (Large error)");
             }
             else
             {
-                sb.AppendLine($"   2. SAP2000 BASE REACTION:          [CHƯA PHÂN TÍCH NỘI LỰC]");
-                sb.AppendLine("   >>> Vui lòng chạy Run Analysis trong SAP2000 để so sánh chính xác.");
+                string notAnalyzedLabel = isVietnamese ? "PHẢN LỰC ĐÁY (SAP2000): [CHƯA PHÂN TÍCH]" : "SAP2000 BASE REACTION: [NOT ANALYZED]";
+                sb.AppendLine($"   2. {notAnalyzedLabel}");
+                sb.AppendLine(isVietnamese ? "   >>> Vui lòng chạy Run Analysis trong SAP2000 để so sánh chính xác." :
+                                      "   >>> Please run Analysis in SAP2000 for accurate comparison.");
             }
-            sb.AppendLine("=========================================================================================================");
+            sb.AppendLine("===========================================================================================================");
 
             return sb.ToString();
         }
 
-        // Removed duplicate overload: GenerateTextReport(AuditReport, string) - use single method above with optional targetUnit
-
-        private double ConvertForce(double forceInKn)
+        /// <summary>
+        /// Translate load type display name to target language
+        /// </summary>
+        private string TranslateLoadTypeName(string original, bool toVietnamese)
         {
-            // Nội bộ là kN. Convert sang đơn vị trong UnitManager
-            string targetUnit = UnitManager.Info.ForceUnit.ToUpper();
-            switch (targetUnit)
+            if (!toVietnamese) 
             {
-                case "N": return forceInKn * 1000.0;
-                case "TON": return forceInKn / 9.81;
-                case "KGF": return forceInKn * 101.97;
-                case "LB": return forceInKn * 224.8;
-                default: return forceInKn; // kN
+                // Vietnamese to English
+                if (original.Contains("SÀN")) return "SLAB - AREA LOAD";
+                if (original.Contains("DẦM") || original.Contains("CỘT")) return "BEAM/COLUMN - FRAME LOAD";
+                if (original.Contains("NÚT")) return "NODE - POINT LOAD";
+                return original;
             }
+            
+            // Already Vietnamese or default
+            return original;
         }
 
         #endregion

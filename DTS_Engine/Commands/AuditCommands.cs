@@ -1,4 +1,4 @@
-using Autodesk.AutoCAD.EditorInput;
+﻿using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Engines;
@@ -13,22 +13,22 @@ using System.Text;
 namespace DTS_Engine.Commands
 {
     /// <summary>
-    /// C�c l?nh ki?m to�n t?i tr?ng SAP2000.
-    /// H? tr? xu?t b�o c�o th?ng k� chi ti?t theo t?ng, lo?i t?i v� v? tr�.
+    /// Các lệnh kiểm toán tải trọng SAP2000.
+    /// Hỗ trợ xuất báo cáo thống kê chi tiết theo tầng, loại tải và vị trí.
     ///
-    /// T�NH N?NG:
-    /// - ??c to�n b? t?i tr?ng t? SAP2000 (Frame, Area, Point)
-    /// - Nh�m theo t?ng v� lo?i t?i
-    /// - T�nh t?ng di?n t�ch/chi?u d�i
-    /// - So s�nh v?i ph?n l?c ?�y
+    /// TÍNH NĂNG:
+    /// - Đọc toàn bộ tải trọng từ SAP2000 (Frame, Area, Point)
+    /// - Nhóm theo tầng và loại tải
+    /// - Tính tổng diện tích/chiều dài
+    /// - So sánh với phản lực đáy
     /// </summary>
     public class AuditCommands : CommandBase
     {
         #region Main Audit Command
 
         /// <summary>
-        /// L?nh ch�nh ?? ki?m to�n t?i tr?ng SAP2000.
-        /// Nh?p c�c Load Pattern c?n ki?m tra, xu?t b�o c�o ra file text.
+        /// L?nh chính ?? ki?m toán t?i tr?ng SAP2000.
+        /// Nh?p các Load Pattern c?n ki?m tra, xu?t báo cáo ra file text.
         /// </summary>
         [CommandMethod("DTS_AUDIT_SAP2000")]
         public void DTS_AUDIT_SAP2000()
@@ -36,25 +36,33 @@ namespace DTS_Engine.Commands
             ExecuteSafe(() =>
             {
                 WriteMessage("\n==============================================");
-                WriteMessage("      DTS ENGINE - AUDIT T?I TR?NG SAP2000     ");
+                WriteMessage("      DTS ENGINE - AUDIT TẢI TRỌNG SAP2000     ");
                 WriteMessage("==============================================");
 
-                // 1. Ki?m tra k?t n?i SAP
+                var langOpt = new PromptKeywordOptions("\nChọn ngôn ngữ báo cáo [English/Vietnamese]: ");
+                langOpt.Keywords.Add("English");
+                langOpt.Keywords.Add("Vietnamese");
+                langOpt.Keywords.Default = "English";
+                langOpt.AllowNone = true;
+                var langRes = Ed.GetKeywords(langOpt);
+                string selectedLang = (langRes.Status == PromptStatus.OK) ? langRes.StringResult : "English";
+
+                // 2. Kiểm tra kết nối SAP
                 if (!EnsureSapConnection()) return;
 
-                // 2. L?y danh s�ch Pattern c� t?i (Smart Filter)
-                WriteMessage("\n?ang qu�t d? li?u Load Patterns...");
+                // 2. Lấy danh sách Pattern có tải (Smart Filter)
+                WriteMessage("\nĐang quét dữ liệu Load Patterns...");
                 var activePatterns = SapUtils.GetActiveLoadPatterns();
                 
-                // L?c b? pattern r?ng (Total = 0) n?u danh s�ch qu� d�i
+                // Lọc bỏ pattern rỗng (Total = 0) nếu danh sách quá dài
                 var nonEmptyPatterns = activePatterns.Where(p => p.TotalEstimatedLoad > 0.001).ToList();
                 if (nonEmptyPatterns.Count == 0) nonEmptyPatterns = activePatterns; // Fallback
 
-                // 3. X�y d?ng Menu ch?n
-                var pko = new PromptKeywordOptions("\nCh?n Load Pattern c?n ki?m to�n:");
+                // 3. Xây dựng Menu chọn
+                var pko = new PromptKeywordOptions("\nChọn Load Pattern cần kiểm toán:");
                 pko.AllowNone = true;
 
-                // Th�m 10 pattern n?ng nh?t v�o menu
+                // Thêm 10 pattern nặng nhất vào menu
                 int maxMenu = Math.Min(10, nonEmptyPatterns.Count);
                 for (int i = 0; i < maxMenu; i++)
                 {
@@ -63,10 +71,10 @@ namespace DTS_Engine.Commands
                 
                 if (nonEmptyPatterns.Count > maxMenu) pko.Keywords.Add("Other");
                 pko.Keywords.Add("All");
-                pko.Keywords.Default = nonEmptyPatterns[0].Name;
+                pko.Keywords.Default = maxMenu > 0 ? nonEmptyPatterns[0].Name : "All";
 
-                // Hi?n th? danh s�ch g?i �
-                WriteMessage("\nDanh s�ch Pattern c� t?i tr?ng l?n nh?t:");
+                // Hiển thị danh sách gợi ý
+                WriteMessage("\nDanh sách Pattern có tải trọng lớn nhất:");
                 for (int i = 0; i < maxMenu; i++)
                 {
                     WriteMessage($"  - {nonEmptyPatterns[i].Name} (Est: {nonEmptyPatterns[i].TotalEstimatedLoad:N0})");
@@ -75,7 +83,7 @@ namespace DTS_Engine.Commands
                 PromptResult res = Ed.GetKeywords(pko);
                 if (res.Status != PromptStatus.OK) return;
 
-                List<string> selectedPatterns = new List<string>();
+                var selectedPatterns = new List<string>();
 
                 if (res.StringResult == "All")
                 {
@@ -83,13 +91,16 @@ namespace DTS_Engine.Commands
                 }
                 else if (res.StringResult == "Other")
                 {
-                    var strOpt = new PromptStringOptions("\nNh?p t�n Load Pattern (c�ch nhau d?u ph?y): ");
+                    var strOpt = new PromptStringOptions("\nNhập tên Load Pattern (cách nhau bởi dấu phẩy, chấm phẩy hoặc khoảng trắng): ");
                     var strRes = Ed.GetString(strOpt);
-                    if (strRes.Status == PromptStatus.OK)
+                    if (strRes.Status == PromptStatus.OK && !string.IsNullOrWhiteSpace(strRes.StringResult))
                     {
-                        selectedPatterns = strRes.StringResult.Split(',')
+                        // ⚠️ FIX: Parse multiple delimiters and ensure distinct patterns
+                        selectedPatterns = strRes.StringResult
+                            .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
                             .Select(s => s.Trim())
                             .Where(s => !string.IsNullOrEmpty(s))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
                             .ToList();
                     }
                 }
@@ -98,62 +109,74 @@ namespace DTS_Engine.Commands
                     selectedPatterns.Add(res.StringResult);
                 }
 
-                if (selectedPatterns.Count == 0) return;
+                if (selectedPatterns.Count == 0)
+                {
+                    WriteWarning("Không có Pattern nào được chọn.");
+                    return;
+                }
 
-                // 4. Ch?n ??n v?
-                var unitOpt = new PromptKeywordOptions("\nCh?n ??n v? xu?t b�o c�o [Ton/kN/kgf/lb]: ");
+                // 5. Chọn đơn vị
+                var unitOpt = new PromptKeywordOptions("\nChọn đơn vị xuất báo cáo [Ton/kN/kgf/lb]: ");
                 unitOpt.Keywords.Add("Ton");
                 unitOpt.Keywords.Add("kN");
                 unitOpt.Keywords.Add("kgf");
                 unitOpt.Keywords.Add("lb");
-                unitOpt.Keywords.Default = "Ton"; // K? s? VN th�ch T?n
+                unitOpt.Keywords.Default = "Ton"; // Kỹ sư VN thích Tấn
                 var unitRes = Ed.GetKeywords(unitOpt);
                 if (unitRes.Status != PromptStatus.OK) return;
                 string selectedUnit = unitRes.StringResult;
 
-                // 5. Ch?y Audit
-                WriteMessage($"\n?ang x? l� {selectedPatterns.Count} patterns...");
+                // 5. Chạy Audit
+                WriteMessage($"\nĐang xử lý {selectedPatterns.Count} patterns...");
                 var engine = new AuditEngine();
                 
                 string tempFolder = Path.GetTempPath();
                 string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
                 var reportFiles = new List<string>();
 
+                int fileCounter = 0; // ⚠️ FIX: Add counter to prevent file overwrite
+
                 foreach (var pat in selectedPatterns)
                 {
-                    WriteMessage($"?ang x? l� {pat}...");
+                    WriteMessage($"Đang xử lý {pat}...");
                     var report = engine.RunSingleAudit(pat);
                     
                     if (report.Stories.Count == 0)
                     {
-                        WriteWarning($"  -> {pat}: Kh�ng t�m th?y d? li?u ho?c t?i tr?ng = 0.");
+                        WriteWarning($"  -> {pat}: Không tìm thấy dữ liệu hoặc tải trọng = 0.");
                         continue;
                     }
 
-                    string fileName = $"DTS_Audit_{report.ModelName}_{pat}_{timestamp}.txt";
+                    fileCounter++;
+                    string safeModel = string.IsNullOrWhiteSpace(report.ModelName) ? "Model" : Path.GetFileNameWithoutExtension(report.ModelName);
+                    string fileName = $"DTS_Audit_{safeModel}_{pat}_{timestamp}_{fileCounter:D2}.txt";
                     string filePath = Path.Combine(tempFolder, fileName);
-                    string content = engine.GenerateTextReport(report, selectedUnit);
+                    
+                    // ⚠️ NEW: Pass language to report generator
+                    string content = engine.GenerateTextReport(report, selectedUnit, selectedLang);
 
                     File.WriteAllText(filePath, content, Encoding.UTF8);
                     reportFiles.Add(filePath);
+                    
+                    WriteMessage($"  -> Tạo file: {fileName}");
                 }
 
-                // 6. K?t qu?
+                // 7. Kết quả
                 if (reportFiles.Count > 0)
                 {
-                    WriteSuccess($"?� t?o {reportFiles.Count} b�o c�o.");
+                    WriteSuccess($"Đã tạo {reportFiles.Count} báo cáo.");
                     
-                    // M? file ??u ti�n ngay l?p t?c (UX: Instant Feedback)
+                    // Mở file đầu tiên ngay lập tức (UX: Instant Feedback)
                     try 
                     { 
                         Process.Start(reportFiles[0]); 
-                        if(reportFiles.Count > 1) WriteMessage($"C�c file kh�c n?m t?i: {tempFolder}");
+                        if (reportFiles.Count > 1) WriteMessage($"Các file khác nằm tại: {tempFolder}");
                     } 
                     catch { }
                 }
                 else
                 {
-                    WriteWarning("Kh�ng t?o ???c b�o c�o n�o (Model tr?ng ho?c kh�ng c� t?i).");
+                    WriteWarning("Không tạo được báo cáo nào (Model trống hoặc không có tải).");
                 }
             });
         }
@@ -163,33 +186,33 @@ namespace DTS_Engine.Commands
         #region Quick Summary Command
 
         /// <summary>
-        /// L?nh xem t�m t?t nhanh t?i tr?ng theo Load Pattern
+        /// Lệnh xem tóm tắt nhanh tải trọng theo Load Pattern
         /// </summary>
         [CommandMethod("DTS_LOAD_SUMMARY")]
         public void DTS_LOAD_SUMMARY()
         {
             ExecuteSafe(() =>
             {
-                WriteMessage("\n=== T�M T?T T?I TR?NG SAP2000 ===");
+                WriteMessage("\n=== TÓM TẮT TẢI TRỌNG SAP2000 ===");
 
                 if (!EnsureSapConnection())
                     return;
 
-                // L?y t?t c? patterns
+                // Lấy tất cả patterns
                 var patterns = SapUtils.GetLoadPatterns();
                 if (patterns.Count == 0)
                 {
-                WriteError("Kh�ng t�m th?y Load Pattern n�o.");
+                WriteError("Không tìm thấy Load Pattern nào.");
                     return;
                 }
 
                 WriteMessage($"\nModel: {SapUtils.GetModelName()}");
-                WriteMessage($"??n v?: {UnitManager.Info}");
+                WriteMessage($"Đơn vị: {UnitManager.Info}");
                 WriteMessage($"\nLoad Patterns ({patterns.Count}):");
 
                 foreach (var pattern in patterns)
                 {
-                    // ??m s? t?i theo lo?i
+                    // Đếm số tải theo loại
                     int frameLoadCount = SapUtils.GetAllFrameDistributedLoads(pattern).Count;
                     int areaLoadCount = SapUtils.GetAllAreaUniformLoads(pattern).Count;
                     int pointLoadCount = SapUtils.GetAllPointLoads(pattern).Count;
@@ -202,11 +225,11 @@ namespace DTS_Engine.Commands
                     }
                     else
                     {
-                        WriteMessage($"  {pattern}: (kh�ng c� t?i)");
+                        WriteMessage($"  {pattern}: (không có tải)");
                     }
                 }
 
-                WriteMessage("\nD�ng l?nh DTS_AUDIT_SAP2000 ?? xem chi ti?t.");
+                WriteMessage("\nDùng lệnh DTS_AUDIT_SAP2000 để xem chi tiết.");
             });
         }
 
@@ -215,20 +238,20 @@ namespace DTS_Engine.Commands
         #region List Elements Command
 
         /// <summary>
-        /// Li?t k� ph?n t? c� t?i theo pattern
+        /// Liệt kê phần tử có tải theo pattern
         /// </summary>
         [CommandMethod("DTS_LIST_LOADED_ELEMENTS")]
         public void DTS_LIST_LOADED_ELEMENTS()
         {
             ExecuteSafe(() =>
             {
-                WriteMessage("\n=== DANH S�CH PH?N T? C� T?I ===");
+                WriteMessage("\n=== DANH SÁCH PHẦN TỬ CÓ TẢI ===");
 
                 if (!EnsureSapConnection())
                     return;
 
-                // Nh?p pattern
-                var patternOpt = new PromptStringOptions("\nNh?p Load Pattern: ");
+                // Nhập pattern
+                var patternOpt = new PromptStringOptions("\nNhập Load Pattern: ");
                 patternOpt.DefaultValue = "DL";
                 var patternRes = Ed.GetString(patternOpt);
 
@@ -239,11 +262,11 @@ namespace DTS_Engine.Commands
 
                 if (!SapUtils.LoadPatternExists(pattern))
                 {
-                    WriteError($"Load Pattern '{pattern}' kh�ng t?n t?i.");
+                    WriteError($"Load Pattern '{pattern}' không tồn tại.");
                     return;
                 }
 
-                // L?y t?i
+                // Lấy tải
                 var frameLoads = SapUtils.GetAllFrameDistributedLoads(pattern);
                 var areaLoads = SapUtils.GetAllAreaUniformLoads(pattern);
                 var pointLoads = SapUtils.GetAllPointLoads(pattern);
@@ -270,7 +293,7 @@ namespace DTS_Engine.Commands
                     foreach (var g in grouped.Take(10))
                     {
                         var names = g.Select(l => l.ElementName).Take(10);
-                        WriteMessage($"  {g.Key:0.00} kN/m�: {string.Join(", ", names)}{(g.Count() > 10 ? "..." : "")}");
+                        WriteMessage($"  {g.Key:0.00} kN/m²: {string.Join(", ", names)}{(g.Count() > 10 ? "..." : "")}");
                     }
                 }
 
@@ -287,7 +310,7 @@ namespace DTS_Engine.Commands
                 }
 
                 int total = frameLoads.Count + areaLoads.Count + pointLoads.Count;
-                WriteMessage($"\nT?ng: {total} b?n ghi t?i.");
+                WriteMessage($"\nTổng: {total} bản ghi tải.");
             });
         }
 
@@ -296,14 +319,14 @@ namespace DTS_Engine.Commands
         #region Reaction Check Command
 
         /// <summary>
-        /// Ki?m tra ph?n l?c ?�y cho c�c load case
+        /// Kiểm tra phản lực đáy cho các load case
         /// </summary>
         [CommandMethod("DTS_CHECK_REACTIONS")]
         public void DTS_CHECK_REACTIONS()
         {
             ExecuteSafe(() =>
             {
-                WriteMessage("\n=== KI?M TRA PH?N L?C ?�Y ===");
+                WriteMessage("\n=== KIỂM TRA PHẢN LỰC ĐÁY ===");
 
                 if (!EnsureSapConnection())
                     return;
@@ -328,8 +351,8 @@ namespace DTS_Engine.Commands
 
                 if (!hasAnyReaction)
                 {
-                    WriteWarning("\nKh�ng c� ph?n l?c n�o. Model c� th? ch?a ???c ph�n t�ch.");
-                    WriteMessage("Ch?y ph�n t�ch trong SAP2000 r?i th? l?i.");
+                    WriteWarning("\nKhông có phản lực nào. Model có thể chưa được phân tích.");
+                    WriteMessage("Chạy phân tích trong SAP2000 rồi thử lại.");
                 }
                 else
                 {
@@ -343,20 +366,20 @@ namespace DTS_Engine.Commands
         #region Export to CSV Command
 
         /// <summary>
-        /// Xu?t d? li?u t?i sang CSV ?? x? l� trong Excel
+        /// Xuất dữ liệu tải sang CSV để xử lý trong Excel
         /// </summary>
         [CommandMethod("DTS_EXPORT_LOADS_CSV")]
         public void DTS_EXPORT_LOADS_CSV()
         {
             ExecuteSafe(() =>
             {
-                WriteMessage("\n=== XU?T T?I TR?NG RA CSV ===");
+                WriteMessage("\n=== XUẤT TẢI TRỌNG RA CSV ===");
 
                 if (!EnsureSapConnection())
                     return;
 
-                // Nh?p pattern
-                var patternOpt = new PromptStringOptions("\nNh?p Load Pattern (ho?c * cho t?t c?): ");
+                // Nhập pattern
+                var patternOpt = new PromptStringOptions("\nNhập Load Pattern (hoặc * cho tất cả): ");
                 patternOpt.DefaultValue = "*";
                 var patternRes = Ed.GetString(patternOpt);
 
@@ -366,7 +389,7 @@ namespace DTS_Engine.Commands
                 string patternInput = patternRes.StringResult.Trim();
                 bool exportAll = patternInput == "*";
 
-                // Thu th?p d? li?u
+                // Thu thập dữ liệu
                 var allLoads = new List<RawSapLoad>();
 
                 if (exportAll)
@@ -384,7 +407,7 @@ namespace DTS_Engine.Commands
 
                 if (allLoads.Count == 0)
                 {
-                    WriteWarning("Kh�ng c� d? li?u t?i ?? xu?t.");
+                    WriteWarning("Không có dữ liệu tải để xuất.");
                     return;
                 }
 
@@ -402,7 +425,7 @@ namespace DTS_Engine.Commands
 
                 File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
 
-                WriteSuccess($"?� xu?t {allLoads.Count} b?n ghi ra:");
+                WriteSuccess($"Đã xuất {allLoads.Count} bản ghi ra:");
                 WriteMessage($"  {filePath}");
 
                 // M? file
@@ -419,14 +442,14 @@ namespace DTS_Engine.Commands
         #region Helper Methods
 
         /// <summary>
-        /// ??m b?o ?� k?t n?i SAP2000
+        /// Đảm bảo đã kết nối SAP2000
         /// </summary>
         private bool EnsureSapConnection()
         {
             if (SapUtils.IsConnected)
                 return true;
 
-            WriteMessage("?ang k?t n?i SAP2000...");
+            WriteMessage("Đang kết nối SAP2000...");
 
             if (!SapUtils.Connect(out string msg))
             {

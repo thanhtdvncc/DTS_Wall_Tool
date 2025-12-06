@@ -681,7 +681,7 @@ ref csys,
 
         /// <summary>
         /// Get list of Load Patterns that actually contain loads.
-        /// Improved logic to scan multiple tables and sum absolute values.
+        /// IMPROVED v2.5: Comprehensive scan of ALL load directions (F1, F2, F3, UX, UY, UZ) to detect lateral loads.
         /// </summary>
         public static List<PatternSummary> GetActiveLoadPatterns()
         {
@@ -691,17 +691,17 @@ ref csys,
 
             try
             {
-                // 1. Get all pattern names first
+                // Get all load pattern names
                 int count = 0;
                 string[] names = null;
                 model.LoadPatterns.GetNameList(ref count, ref names);
-                if (names == null) return result;
+                if (names == null || names.Length == 0) return result;
 
-                var loadSums = new Dictionary<string, double>();
-                foreach (var n in names) loadSums[n] = 0;
+                var loadSums = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                foreach (var n in names) loadSums[n] = 0.0;
 
-                // 2. Helper to scan a table and accumulate load
-                void ScanTable(string tableName, string patField, string[] valFields)
+                // Helper: scan table with given value fields (F*, M*, Load...), sum abs values per pattern
+                void ScanTable(string tableName, string patternFieldName, params string[] candidateValueFields)
                 {
                     try
                     {
@@ -709,69 +709,103 @@ ref csys,
                         string[] fields = null;
                         int numRec = 0;
                         string[] tableData = null;
-                        string[] input = new string[] { "" };
+                        string[] input = new[] { "" };
 
-                        int ret = model.DatabaseTables.GetTableForDisplayArray(tableName, ref input, "All", ref tableVer, ref fields, ref numRec, ref tableData);
+                        int ret = model.DatabaseTables.GetTableForDisplayArray(
+                            tableName, ref input, "All", ref tableVer, ref fields, ref numRec, ref tableData);
 
-                        if (ret == 0 && numRec > 0)
+                        if (ret != 0 || numRec <= 0 || fields == null || tableData == null) return;
+
+                        int idxPat = Array.IndexOf(fields, patternFieldName);
+                        if (idxPat < 0)
                         {
-                            int idxPat = Array.IndexOf(fields, patField);
-                            if (idxPat < 0) return;
+                            // Fallback: find by contains
+                            idxPat = Array.FindIndex(fields, f => !string.IsNullOrEmpty(f) &&
+                                                              f.Equals(patternFieldName, StringComparison.OrdinalIgnoreCase));
+                            if (idxPat < 0) idxPat = Array.FindIndex(fields, f => !string.IsNullOrEmpty(f) && f.ToLowerInvariant().Contains("loadpat"));
+                        }
+                        if (idxPat < 0) return;
 
-                            var valIndices = valFields.Select(v => Array.IndexOf(fields, v)).Where(i => i >= 0).ToList();
-                            if (valIndices.Count == 0) return;
+                        // Build list of numeric value field indices
+                        var valIndices = new List<int>();
+                        foreach (var vf in candidateValueFields)
+                        {
+                            int idx = Array.IndexOf(fields, vf);
+                            if (idx >= 0) valIndices.Add(idx);
+                        }
 
-                            int cols = fields.Length;
-                            for (int i = 0; i < numRec; i++)
+                        // Fallback: include any F*, M*, Load-like fields
+                        if (valIndices.Count == 0)
+                        {
+                            for (int i = 0; i < fields.Length; i++)
                             {
-                                string p = tableData[i * cols + idxPat];
-                                double rowSum = 0;
-                                
-                                foreach(var idx in valIndices)
-                                {
-                                    if (double.TryParse(tableData[i * cols + idx], NumberStyles.Any, CultureInfo.InvariantCulture, out double v))
-                                        rowSum += Math.Abs(v);
-                                }
+                                string fn = fields[i] ?? "";
+                                string fl = fn.ToLowerInvariant();
+                                bool looksNumeric =
+                                    fl.StartsWith("f") || fl.StartsWith("m") ||
+                                    fl.Contains("unif") || fl.Contains("uniform") ||
+                                    fl.Contains("load") || fl.Contains("force");
+                                if (looksNumeric) valIndices.Add(i);
+                            }
+                        }
+                        if (valIndices.Count == 0) return;
 
-                                if (string.IsNullOrWhiteSpace(p)) continue;
-                                p = p.Trim();
-                                if (!loadSums.ContainsKey(p)) loadSums[p] = 0;
+                        int cols = fields.Length;
+                        for (int r = 0; r < numRec; r++)
+                        {
+                            // Pattern name
+                            string p = tableData[r * cols + idxPat]?.Trim();
+                            if (string.IsNullOrEmpty(p)) continue;
+
+                            // Sum abs values across all candidate numeric fields
+                            double rowSum = 0.0;
+                            foreach (int vi in valIndices)
+                            {
+                                var cell = tableData[r * cols + vi];
+                                if (double.TryParse(cell, NumberStyles.Any, CultureInfo.InvariantCulture, out double v))
+                                    rowSum += Math.Abs(v);
+                            }
+
+                            if (rowSum > 0.0)
+                            {
+                                if (!loadSums.ContainsKey(p)) loadSums[p] = 0.0;
                                 loadSums[p] += rowSum;
                             }
                         }
                     }
-                    catch { }
-                }
-
-                // 3. Scan relevant tables
-                // Frame Distributed: Check Force per Length
-                ScanTable("Frame Loads - Distributed", "LoadPat", new[] { "FOverL", "FOverL1", "FOverL2" });
-                
-                // Frame Point: Check Force or Moment
-                ScanTable("Frame Loads - Point", "LoadPat", new[] { "Force", "Moment" });
-
-                // Area Uniform: Check Uniform Load
-                ScanTable("Area Loads - Uniform", "LoadPat", new[] { "UnifLoad" });
-                
-                // Area Uniform To Frame
-                ScanTable("Area Loads - Uniform To Frame", "LoadPat", new[] { "UnifLoad" });
-
-                // Joint Loads
-                ScanTable("Joint Loads - Force", "LoadPat", new[] { "F1", "F2", "F3", "M1", "M2", "M3" });
-
-                // 4. Build result
-                foreach (var kvp in loadSums)
-                {
-                    // Allow small tolerance, but if > 0 it exists
-                    if (kvp.Value > 0.0001)
+                    catch
                     {
-                        result.Add(new PatternSummary { Name = kvp.Key, TotalEstimatedLoad = kvp.Value });
+                        // swallow per-table errors
                     }
                 }
+
+                // Scan the 3 main tables comprehensively
+                // 1) Frame Loads - Distributed
+                ScanTable("Frame Loads - Distributed", "LoadPat",
+                    "FOverL", "FOverL1", "FOverL2", "FOverL3");
+
+                // 2) Area Loads - Uniform
+                ScanTable("Area Loads - Uniform", "LoadPat",
+                    "UnifLoad", "UniformLoad", "Load");
+
+                // 3) Joint Loads - Force (include lateral and gravity, plus moments)
+                ScanTable("Joint Loads - Force", "LoadPat",
+                    "F1", "F2", "F3", "M1", "M2", "M3");
+
+                // Build final results (keep any with tiny > tolerance)
+                foreach (var kvp in loadSums)
+                {
+                    if (kvp.Value > 0.0001)
+                        result.Add(new PatternSummary { Name = kvp.Key, TotalEstimatedLoad = kvp.Value });
+                }
+
+                // Fallback: if everything was zero, still return patterns
+                if (result.Count == 0 && names.Length > 0)
+                    result = names.Select(x => new PatternSummary { Name = x, TotalEstimatedLoad = 0 }).ToList();
             }
             catch
             {
-                // Fallback: return all names if scan fails
+                // Fallback on exception
                 int c = 0; string[] n = null;
                 model.LoadPatterns.GetNameList(ref c, ref n);
                 if (n != null) result = n.Select(x => new PatternSummary { Name = x, TotalEstimatedLoad = 0 }).ToList();
