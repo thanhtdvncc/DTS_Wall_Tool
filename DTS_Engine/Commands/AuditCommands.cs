@@ -53,8 +53,8 @@ namespace DTS_Engine.Commands
 
                 // 3. Lấy dữ liệu Pattern
                 WriteMessage("\nĐang quét dữ liệu Load Patterns...");
-                var activePatterns = SapUtils.GetActiveLoadPatterns(); // Danh sách có tải
-                var allPatterns = SapUtils.GetLoadPatterns();          // Toàn bộ danh sách
+                var activePatterns = SapUtils.GetActiveLoadPatterns(); // Danh sách có tải (để sắp xếp)
+                var allPatterns = SapUtils.GetLoadPatterns();          // Toàn bộ danh sách (để validate)
 
                 if (allPatterns.Count == 0)
                 {
@@ -62,136 +62,103 @@ namespace DTS_Engine.Commands
                     return;
                 }
 
-                // 4. Xây dựng Menu chọn thông minh
-                // FIX: Lấy TẤT CẢ patterns từ API, không chỉ những cái có tải
-                // Tạo lookup map để hiển thị thông tin tải
+                // Map pattern name -> estimated load để hiển thị
                 var loadSummaryMap = activePatterns.ToDictionary(p => p.Name, p => p.TotalEstimatedLoad, StringComparer.OrdinalIgnoreCase);
-                
-                // Merge: Lấy tất cả pattern + thông tin tải (nếu có)
-                var displayList = allPatterns.Select(name => new SapUtils.PatternSummary
-                {
-                    Name = name,
-                    TotalEstimatedLoad = loadSummaryMap.ContainsKey(name) ? loadSummaryMap[name] : 0
-                }).OrderByDescending(p => p.TotalEstimatedLoad).ToList();
 
-                WriteMessage("\n--- CÁC LOAD PATTERN TRONG MODEL ---");
-                
-                // FIX CRITICAL BUG: AutoCAD PromptKeywordOptions PARSE KEYWORDS TRONG CONSTRUCTOR!
-                // Không thể thêm keywords sau khi init → Phải build string trước
-                // Giới hạn: Chỉ top 5 patterns để tránh crash (string quá dài)
-                var topPatterns = displayList.Take(5).ToList();
-                var keywordList = new List<string>();
-                
-                foreach (var pat in topPatterns)
-                {
-                    if (string.IsNullOrWhiteSpace(pat.Name)) continue;
-                    
-                    // Sanitize: Replace _ with - (AutoCAD không chấp nhận _)
-                    string sanitized = pat.Name.Replace("_", "-").Replace(" ", "");
-                    if (!string.IsNullOrEmpty(sanitized) && sanitized.Length <= 31)
-                    {
-                        keywordList.Add(sanitized);
-                    }
-                }
-                
-                // Luôn thêm "All"
-                keywordList.Add("All");
-                
-                // Build keyword string: "kw1/kw2/kw3/All"
-                string keywordsStr = string.Join("/", keywordList);
-                
-                // FIX: Tạo PromptKeywordOptions với keywords trong constructor (không add sau!)
-                var pko = new PromptKeywordOptions($"\nNhập tên Load Pattern (hoặc chọn): [{keywordsStr}]");
-                pko.AllowArbitraryInput = true; // Cho phép nhập tên pattern khác ngoài menu
-                pko.AllowNone = false;
-                
-                // Hiển thị TẤT CẢ patterns trong console
-                foreach (var pat in displayList)
-                {
-                    string status = pat.TotalEstimatedLoad > 0.001 ? $"[Tải: ~{pat.TotalEstimatedLoad:N0}]" : "[Chưa gán]";
-                    WriteMessage($" - {pat.Name} {status}");
-                }
-                
-                WriteMessage($"\n(Hiển thị {displayList.Count} patterns. Nhập tên hoặc chọn từ menu)");
+                // Sắp xếp patterns: Có tải lên trước, sau đó sắp A-Z
+                var displayList = allPatterns.OrderByDescending(name =>
+                    loadSummaryMap.ContainsKey(name) ? loadSummaryMap[name] : -1).ToList();
 
-                // Thêm lựa chọn All
-                bool hasAllKeyword = false;
-                foreach (var kw in pko.Keywords)
+                // 4. Hiển thị Menu đánh số
+                WriteMessage("\n--- DANH SÁCH LOAD PATTERN ---");
+                int maxDisplay = 30;
+                for (int i = 0; i < displayList.Count; i++)
                 {
-                    if (string.Equals(kw.ToString(), "All", StringComparison.OrdinalIgnoreCase))
+                    if (i >= maxDisplay)
                     {
-                        hasAllKeyword = true;
+                        WriteMessage($" ... và {displayList.Count - maxDisplay} pattern khác (vẫn có thể chọn bằng tên)");
                         break;
                     }
+                    string patName = displayList[i];
+                    double loadVal = loadSummaryMap.ContainsKey(patName) ? loadSummaryMap[patName] : 0;
+                    string info = loadVal > 0.001 ? $"[~{loadVal:N0} kN]" : "[-]";
+                    WriteMessage($" {i + 1,2}. {patName,-15} {info}");
                 }
-                if (!hasAllKeyword) pko.Keywords.Add("All");
+                WriteMessage(" --------------------------------------------");
+                WriteMessage(" A. All (Chọn tất cả)");
+                WriteMessage(" 0. Cancel");
 
-                // 5. Lấy input từ người dùng
-                PromptResult res = Ed.GetKeywords(pko);
-                
-                if (res.Status != PromptStatus.OK) return;
+                // 5. Yêu cầu nhập (dùng string để tránh parser issues)
+                var pso = new PromptStringOptions("\nNhập số thứ tự (ví dụ: 1, 3) hoặc tên Pattern [All]: ");
+                pso.AllowSpaces = true;
+                pso.DefaultValue = "All";
+                pso.UseDefaultValue = true;
 
-                string inputResult = res.StringResult;
+                PromptResult pres = Ed.GetString(pso);
+                if (pres.Status != PromptStatus.OK) return;
+
+                string input = pres.StringResult.Trim();
                 var selectedPatterns = new List<string>();
 
-                // 6. Xử lý input (Keyword hoặc Chuỗi nhập tay)
-                if (string.Equals(inputResult, "All", StringComparison.OrdinalIgnoreCase))
+                var parts = input.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var part in parts)
                 {
-                    // FIX: Nếu chọn All -> Lấy TẤT CẢ patterns, không chỉ những cái có tải
-                    selectedPatterns = allPatterns.ToList();
-                }
-                else
-                {
-                    // Tự động tách chuỗi theo dấu phẩy, chấm phẩy hoặc khoảng trắng
-                    // Ví dụ: "DL, SDL" hoặc "DL SDL" đều được
-                    var parts = inputResult.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    
-                    foreach (var part in parts)
+                    string p = part.Trim();
+                    if (string.IsNullOrEmpty(p)) continue;
+
+                    if (p.Equals("All", StringComparison.OrdinalIgnoreCase) || p.Equals("A", StringComparison.OrdinalIgnoreCase))
                     {
-                        string cleanPat = part.Trim();
-                        if (string.IsNullOrEmpty(cleanPat)) continue;
-
-                        // FIX: Reverse sanitization - convert keyword back to original pattern name
-                        // User có thể nhập: "DL-AG" (sanitized) hoặc "DL_AG" (original)
-                        string originalName = cleanPat.Replace("-", "_");
-
-                        // Try to find canonical name from allPatterns (case-insensitive)
-                        var canonical = allPatterns.FirstOrDefault(a => 
-                            a.Equals(cleanPat, StringComparison.OrdinalIgnoreCase) ||
-                            a.Equals(originalName, StringComparison.OrdinalIgnoreCase));
-                        
-                        string useName = canonical ?? cleanPat;
-
-                        // Kiểm tra tồn tại trong SAP (không phân biệt hoa thường)
-                        if (SapUtils.LoadPatternExists(useName))
+                        selectedPatterns = allPatterns.ToList();
+                        break;
+                    }
+                    else if (int.TryParse(p, out int idx))
+                    {
+                        if (idx == 0) return; // cancel
+                        if (idx > 0 && idx <= displayList.Count)
                         {
-                            selectedPatterns.Add(useName);
+                            selectedPatterns.Add(displayList[idx - 1]);
                         }
                         else
                         {
-                            WriteWarning($"Pattern '{cleanPat}' không tồn tại trong SAP. Đã bỏ qua.");
+                            WriteWarning($"Số {idx} không hợp lệ (Max: {displayList.Count})");
+                        }
+                    }
+                    else
+                    {
+                        var match = allPatterns.FirstOrDefault(x => x.Equals(p, StringComparison.OrdinalIgnoreCase));
+                        if (match != null) selectedPatterns.Add(match);
+                        else
+                        {
+                            string sanitizedInput = p.Replace("-", "").Replace("_", "");
+                            var fuzzyMatch = allPatterns.FirstOrDefault(x => x.Replace("_", "").Replace("-", "").Equals(sanitizedInput, StringComparison.OrdinalIgnoreCase));
+                            if (fuzzyMatch != null) selectedPatterns.Add(fuzzyMatch);
+                            else WriteWarning($"Không tìm thấy pattern '{p}'");
                         }
                     }
                 }
 
                 if (selectedPatterns.Count == 0)
                 {
-                    WriteWarning("Không có Load Pattern hợp lệ nào được chọn.");
+                    WriteWarning("Không có Load Pattern nào được chọn.");
                     return;
                 }
 
-                // Loại bỏ trùng lặp
                 selectedPatterns = selectedPatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                WriteMessage($"\n>> Đã chọn {selectedPatterns.Count} patterns: {string.Join(", ", selectedPatterns.Take(5))}{(selectedPatterns.Count > 5 ? "..." : "")}\n");
 
-                // 7. Chọn đơn vị
-                var unitOpt = new PromptKeywordOptions("\nChọn đơn vị xuất báo cáo [Ton/kN/kgf]: ", "Ton kN kgf");
+                // 7. Chọn đơn vị (sử dụng Keywords.Add để tránh lỗi parser)
+                var unitOpt = new PromptKeywordOptions("\nChọn đơn vị xuất báo cáo [Ton/kN/kgf]: ");
+                unitOpt.AllowNone = false;
+                unitOpt.Keywords.Add("Ton");
+                unitOpt.Keywords.Add("kN");
+                unitOpt.Keywords.Add("kgf");
+                unitOpt.Keywords.Default = "kN";
                 var unitRes = Ed.GetKeywords(unitOpt);
                 string selectedUnit = (unitRes.Status == PromptStatus.OK) ? unitRes.StringResult : "kN";
 
                 // 8. Chạy Audit
-                WriteMessage($"\n>> Đang xử lý {selectedPatterns.Count} patterns...");
+                WriteMessage($"\n>> Đang xử lý...");
                 var engine = new AuditEngine();
-                
                 string tempFolder = Path.GetTempPath();
                 int fileCounter = 0;
                 string firstFilePath = null;
@@ -200,32 +167,22 @@ namespace DTS_Engine.Commands
                 {
                     WriteMessage($"\n   Processing: {pat}...");
                     var report = engine.RunSingleAudit(pat);
-                    
-                    // Tạo nội dung báo cáo
                     string content = engine.GenerateTextReport(report, selectedUnit, selectedLang);
 
-                    // Lưu file
                     fileCounter++;
                     string safeModel = string.IsNullOrWhiteSpace(report.ModelName) ? "Model" : Path.GetFileNameWithoutExtension(report.ModelName);
                     string fileName = $"DTS_Audit_{safeModel}_{pat}_{fileCounter:D2}.txt";
                     string filePath = Path.Combine(tempFolder, fileName);
-
                     File.WriteAllText(filePath, content, Encoding.UTF8);
-                    
+
                     WriteMessage($"   -> Done: {fileName}");
-                    
                     if (firstFilePath == null) firstFilePath = filePath;
                 }
 
-                // 9. Mở file kết quả đầu tiên
                 if (!string.IsNullOrEmpty(firstFilePath))
                 {
                     WriteSuccess($"\nHoàn thành! Đã tạo {fileCounter} báo cáo tại {tempFolder}");
-                    try { System.Diagnostics.Process.Start(firstFilePath); }
-                    catch (System.Exception ex)     
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Failed to open audit report: {ex}");
-                    }
+                    try { Process.Start(firstFilePath); } catch { }
                 }
             });
         }
