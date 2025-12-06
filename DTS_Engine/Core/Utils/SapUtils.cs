@@ -1443,23 +1443,24 @@ ref csys,
             }
         }
 
+
         /// <summary>
-        /// Lấy phản lực đáy theo Load Pattern (để đối chiếu)
+        /// Lấy phản lực đáy tổng cộng theo Load Pattern và Hướng.
+        /// Hỗ trợ kiểm tra tải trọng ngang (Gió/Động đất).
         /// </summary>
-        public static double GetBaseReactionZ(string loadPattern)
+        /// <param name="loadPattern">Tên Load Case/Pattern</param>
+        /// <param name="direction">Hướng: "X", "Y", "Z" (Mặc định Z)</param>
+        /// <returns>Giá trị phản lực (kN)</returns>
+        public static double GetBaseReaction(string loadPattern, string direction = "Z")
         {
             var model = GetModel();
             if (model == null) return 0;
 
             try
             {
-                // Deselect all cases first
                 model.Results.Setup.DeselectAllCasesAndCombosForOutput();
-
-                // Select specific load case
                 model.Results.Setup.SetCaseSelectedForOutput(loadPattern);
 
-                // Read from Database Tables - more reliable
                 int tableVer = 0;
                 string[] fields = null;
                 int numRec = 0;
@@ -1475,12 +1476,21 @@ ref csys,
                     int idxCase = Array.IndexOf(fields, "OutputCase");
                     if (idxCase < 0) idxCase = Array.FindIndex(fields, f => f != null && f.ToLowerInvariant().Contains("case"));
 
-                    int idxFz = Array.IndexOf(fields, "GlobalFZ");
-                    if (idxFz < 0) idxFz = Array.FindIndex(fields, f => f != null && (f.Contains("FZ") || f.Contains("GlobalZ")));
+                    // Xác định cột dữ liệu dựa trên hướng yêu cầu
+                    string targetField = "GlobalFZ"; // Default Z
+                    if (direction.ToUpper() == "X") targetField = "GlobalFX";
+                    if (direction.ToUpper() == "Y") targetField = "GlobalFY";
 
-                    if (idxCase >= 0 && idxFz >= 0)
+                    int idxForce = Array.IndexOf(fields, targetField);
+                    if (idxForce < 0) 
                     {
-                        double totalZ = 0;
+                        // Fallback tìm kiếm linh hoạt
+                        idxForce = Array.FindIndex(fields, f => f != null && (f.Contains(direction) && f.Contains("Global")));
+                    }
+
+                    if (idxCase >= 0 && idxForce >= 0)
+                    {
+                        double totalForce = 0;
                         int cols = fields.Length;
 
                         for (int r = 0; r < numRec; r++)
@@ -1488,15 +1498,19 @@ ref csys,
                             string rowCase = tableData[r * cols + idxCase];
                             if (rowCase != null && rowCase.Equals(loadPattern, StringComparison.OrdinalIgnoreCase))
                             {
-                                if (double.TryParse(tableData[r * cols + idxFz],
+                                // StepType thường là "Combination" hoặc "Max"/"Min" nếu là envelop
+                                // Ở đây ta cộng dồn hoặc lấy giá trị đầu tiên (Base Reaction thường chỉ có 1 dòng cho Static Load)
+                                if (double.TryParse(tableData[r * cols + idxForce],
                                     NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
                                 {
-                                    totalZ += val;
+                                    totalForce = val; // Base Reaction thường là tổng rồi, không cần cộng dồn nếu có nhiều dòng step
+                                    break; 
                                 }
                             }
                         }
 
-                        return ConvertForceToKn(totalZ);
+                        // Convert từ đơn vị SAP sang kN (Internal Standard)
+                        return ConvertForceToKn(totalForce);
                     }
                 }
             }
@@ -1504,6 +1518,9 @@ ref csys,
 
             return 0;
         }
+
+        // [Backward Compatibility Method]
+        public static double GetBaseReactionZ(string loadPattern) => GetBaseReaction(loadPattern, "Z");
 
         /// <summary>
         /// Lấy tên Model SAP2000 hiện tại

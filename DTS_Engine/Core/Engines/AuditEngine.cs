@@ -10,42 +10,30 @@ using System.Text;
 
 namespace DTS_Engine.Core.Engines
 {
+
     /// <summary>
-    /// Engine kiểm toán tải trọng từ SAP2000.
-    /// Tự động gom nhóm theo Tầng -> Loại tải -> Giá trị.
-    /// Sử dụng NetTopologySuite để union và slice geometry.
-    /// 
-    /// Quy trình xử lý:
-    /// 1. Data Extraction: Lấy toàn bộ tải trọng từ SAP2000 API
-    /// 2. Spatial Mapping: Xác định tầng và vị trí trục
-    /// 3. Grouping: Gom nhóm theo tầng, loại tải, giá trị
-    /// 4. Calculation: Tính diện tích/chiều dài và tổng lực
-    /// 5. Reporting: Xuất báo cáo định dạng kỹ sư
+    /// Engine kiểm toán tải trọng SAP2000 (Phiên bản v2.4 - Smart Grid & Union)
+    /// - Sử dụng NetTopologySuite để gộp (Union) hình học, tránh cắt nát phần tử.
+    /// - Định vị trục thông minh dựa trên BoundingBox (Range).
+    /// - Hỗ trợ đa đơn vị hiển thị qua UnitManager.
     /// </summary>
     public class AuditEngine
     {
-        #region Constants
+        #region Constants & Fields
 
-        /// <summary>Dung sai Z để xác định cùng tầng (mm)</summary>
-        private const double STORY_TOLERANCE = 500.0;
+        private const double STORY_TOLERANCE = 500.0; // mm
+        private const double GRID_SNAP_TOLERANCE = 500.0; // mm
 
-        /// <summary>Dung sai giá trị tải để gom nhóm (%)</summary>
-        private const double VALUE_TOLERANCE_PERCENT = 1.0;
-
-        /// <summary>Hệ số quy đổi mm² sang m²</summary>
-        private const double MM2_TO_M2 = 1.0 / 1000000.0;
-
-        /// <summary>Hệ số quy đổi mm sang m</summary>
-        private const double MM_TO_M = 1.0 / 1000.0;
-
-        #endregion
-
-        #region Fields
-
-        private List<SapUtils.GridLineRecord> _grids;
+        // Cache grids tách biệt X và Y để tìm kiếm nhanh
+        private List<SapUtils.GridLineRecord> _xGrids;
+        private List<SapUtils.GridLineRecord> _yGrids;
         private List<SapUtils.GridStoryItem> _stories;
+
+        // Geometry Caches
         private Dictionary<string, SapFrame> _frameGeometryCache;
         private Dictionary<string, SapArea> _areaGeometryCache;
+        
+        // NTS Factory
         private GeometryFactory _geometryFactory;
 
         #endregion
@@ -55,57 +43,56 @@ namespace DTS_Engine.Core.Engines
         public AuditEngine()
         {
             _geometryFactory = new GeometryFactory();
+            _frameGeometryCache = new Dictionary<string, SapFrame>();
+            _areaGeometryCache = new Dictionary<string, SapArea>();
 
-            // Cache grids và stories từ SAP
             if (SapUtils.IsConnected)
             {
-                _grids = SapUtils.GetGridLines();
+                var allGrids = SapUtils.GetGridLines();
+                // Phân loại Grid X và Y, sắp xếp tăng dần để binary search hoặc linear scan
+                _xGrids = allGrids.Where(g => g.Orientation == "X").OrderBy(g => g.Coordinate).ToList();
+                _yGrids = allGrids.Where(g => g.Orientation == "Y").OrderBy(g => g.Coordinate).ToList();
                 _stories = SapUtils.GetStories();
             }
             else
             {
-                _grids = new List<SapUtils.GridLineRecord>();
+                _xGrids = new List<SapUtils.GridLineRecord>();
+                _yGrids = new List<SapUtils.GridLineRecord>();
                 _stories = new List<SapUtils.GridStoryItem>();
             }
-
-            _frameGeometryCache = new Dictionary<string, SapFrame>();
-            _areaGeometryCache = new Dictionary<string, SapArea>();
         }
 
         #endregion
 
-        #region Main Audit Method
+        #region Main Audit Workflows
 
         /// <summary>
-        /// Chạy kiểm toán cho một hoặc nhiều Load Pattern.
+        /// Chạy kiểm toán cho danh sách Load Patterns
         /// </summary>
-        /// <param name="loadPatterns">Danh sách pattern cách nhau bằng dấu phẩy</param>
-        /// <returns>Danh sách báo cáo theo từng pattern</returns>
         public List<AuditReport> RunAudit(string loadPatterns)
         {
             var reports = new List<AuditReport>();
+            if (string.IsNullOrEmpty(loadPatterns)) return reports;
 
-            if (string.IsNullOrEmpty(loadPatterns))
-                return reports;
-
-            // Parse patterns
             var patterns = loadPatterns.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
                                        .Select(p => p.Trim().ToUpper())
                                        .Distinct()
                                        .ToList();
 
+            // Cache geometry một lần dùng chung
+            CacheGeometry();
+
             foreach (var pattern in patterns)
             {
                 var report = RunSingleAudit(pattern);
-                if (report != null)
-                    reports.Add(report);
+                if (report != null) reports.Add(report);
             }
 
             return reports;
         }
 
         /// <summary>
-        /// Chạy kiểm toán cho một Load Pattern
+        /// Chạy kiểm toán cho một Load Pattern cụ thể
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
@@ -117,10 +104,7 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
-            // 1. Cache geometry
-            CacheGeometry();
-
-            // 2. Thu thập tất cả các loại tải
+            // 1. Thu thập tải trọng từ SAP (đã quy đổi về kN, m, kN/m, kN/m2)
             var allLoads = new List<RawSapLoad>();
             allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads(loadPattern));
             allLoads.AddRange(SapUtils.GetAllFramePointLoads(loadPattern));
@@ -128,20 +112,15 @@ namespace DTS_Engine.Core.Engines
             allLoads.AddRange(SapUtils.GetAllAreaUniformToFrameLoads(loadPattern));
             allLoads.AddRange(SapUtils.GetAllPointLoads(loadPattern));
 
-            if (allLoads.Count == 0)
-            {
-                return report; // Không có tải -> báo cáo rỗng
-            }
+            if (allLoads.Count == 0) return report;
 
-            // 3. Xác định danh sách tầng (dựa trên Z của phần tử)
+            // 2. Xác định danh sách tầng dựa trên cao độ phần tử
             var storyElevations = DetermineStoryElevations(allLoads);
 
-            // 4. Nhóm theo t?ng
+            // 3. Xử lý từng tầng
             foreach (var storyInfo in storyElevations.OrderByDescending(s => s.Value))
             {
-                var storyLoads = allLoads.Where(l =>
-                    Math.Abs(l.ElementZ - storyInfo.Value) <= STORY_TOLERANCE).ToList();
-
+                var storyLoads = allLoads.Where(l => Math.Abs(l.ElementZ - storyInfo.Value) <= STORY_TOLERANCE).ToList();
                 if (storyLoads.Count == 0) continue;
 
                 var storyGroup = ProcessStory(storyInfo.Key, storyInfo.Value, storyLoads);
@@ -149,19 +128,29 @@ namespace DTS_Engine.Core.Engines
                     report.Stories.Add(storyGroup);
             }
 
-            // 5. Lấy phản lực đáy để đối chiếu
-            report.SapBaseReaction = SapUtils.GetBaseReactionZ(loadPattern);
+            // 4. Lấy phản lực đáy tổng cộng để so sánh (kiểm tra cân bằng lực)
+            // Lấy theo hướng chủ đạo của Load Pattern (thường là Gravity - Z)
+            // Tuy nhiên nếu là gió (X/Y), cần lấy FX/FY. Ở đây lấy vector tổng hoặc mặc định Z.
+            report.SapBaseReaction = SapUtils.GetBaseReaction(loadPattern, "Z"); 
+            
+            // Note: Nếu tải trọng ngang, người dùng nên check FX/FY. 
+            // Logic mở rộng: Check hướng tải trong allLoads để quyết định lấy Reaction hướng nào.
+            if (CheckIfLateralLoad(allLoads))
+            {
+                // Nếu chủ yếu là tải ngang, lấy reaction ngang lớn nhất
+                double rx = SapUtils.GetBaseReaction(loadPattern, "X");
+                double ry = SapUtils.GetBaseReaction(loadPattern, "Y");
+                if (Math.Abs(rx) > Math.Abs(report.SapBaseReaction)) report.SapBaseReaction = rx;
+                if (Math.Abs(ry) > Math.Abs(report.SapBaseReaction)) report.SapBaseReaction = ry;
+            }
 
             return report;
         }
 
         #endregion
 
-        #region Processing Methods
+        #region Core Processing Logic
 
-        /// <summary>
-        /// Xử lý một tầng
-        /// </summary>
         private AuditStoryGroup ProcessStory(string storyName, double elevation, List<RawSapLoad> loads)
         {
             var storyGroup = new AuditStoryGroup
@@ -170,7 +159,7 @@ namespace DTS_Engine.Core.Engines
                 Elevation = elevation
             };
 
-            // Nhóm theo lo?i t?i
+            // Gom nhóm theo loại tải (Area, Frame, Point)
             var loadTypeGroups = loads.GroupBy(l => l.LoadType);
 
             foreach (var typeGroup in loadTypeGroups)
@@ -183,9 +172,6 @@ namespace DTS_Engine.Core.Engines
             return storyGroup;
         }
 
-        /// <summary>
-        /// Xử lý một loại tải (Frame/Area/Point)
-        /// </summary>
         private AuditLoadTypeGroup ProcessLoadType(string loadType, List<RawSapLoad> loads)
         {
             var typeGroup = new AuditLoadTypeGroup
@@ -193,12 +179,32 @@ namespace DTS_Engine.Core.Engines
                 LoadTypeName = GetLoadTypeDisplayName(loadType)
             };
 
-            // Nhóm theo giá tr? t?i (v?i dung sai)
-            var valueGroups = GroupByValue(loads);
+            // Gom nhóm theo giá trị tải (Value1) và Hướng (Direction)
+            // Sử dụng Round để gom các giá trị xấp xỉ nhau
+            var valueGroups = loads.GroupBy(l => new { Val = Math.Round(l.Value1, 3), Dir = l.Direction });
 
-            foreach (var valGroup in valueGroups.OrderByDescending(g => g.Key))
+            foreach (var group in valueGroups.OrderByDescending(g => g.Key.Val))
             {
-                var valueResult = ProcessValueGroup(loadType, valGroup.Key, valGroup.ToList());
+                var valueResult = new AuditValueGroup
+                {
+                    LoadValue = group.Key.Val,
+                    Direction = group.Key.Dir
+                };
+
+                // Phân luồng xử lý hình học dựa trên loại tải
+                if (loadType.Contains("Area"))
+                {
+                    ProcessAreaLoads(group.ToList(), valueResult);
+                }
+                else if (loadType.Contains("Frame"))
+                {
+                    ProcessFrameLoads(group.ToList(), valueResult);
+                }
+                else
+                {
+                    ProcessPointLoads(group.ToList(), valueResult);
+                }
+
                 if (valueResult.Entries.Count > 0)
                     typeGroup.ValueGroups.Add(valueResult);
             }
@@ -206,593 +212,545 @@ namespace DTS_Engine.Core.Engines
             return typeGroup;
         }
 
-        /// <summary>
-        /// Xử lý nhóm cùng giá trị tải
-        /// </summary>
-        private AuditValueGroup ProcessValueGroup(string loadType, double loadValue, List<RawSapLoad> loads)
-        {
-            var valueGroup = new AuditValueGroup
-            {
-                LoadValue = loadValue,
-                Direction = loads.FirstOrDefault()?.Direction ?? "Gravity"
-            };
-
-            switch (loadType)
-            {
-                case "AreaUniform":
-                case "AreaUniformToFrame":
-                    ProcessAreaLoads(loads, valueGroup);
-                    break;
-
-                case "FrameDistributed":
-                    ProcessFrameDistributedLoads(loads, valueGroup);
-                    break;
-
-                case "FramePoint":
-                case "PointForce":
-                    ProcessPointLoads(loads, valueGroup);
-                    break;
-
-                default:
-                    ProcessGenericLoads(loads, valueGroup);
-                    break;
-            }
-
-            return valueGroup;
-        }
-
-        /// <summary>
-        /// Xử lý tải Area - Union geometry và tính diện tích
-        /// </summary>
+        // --- XỬ LÝ TẢI DIỆN TÍCH (AREA - SMART GEOMETRY RECOGNITION & DECOMPOSITION) ---
         private void ProcessAreaLoads(List<RawSapLoad> loads, AuditValueGroup valueGroup)
         {
-            // Nhóm theo vị trí trục
-            var gridGroups = loads.GroupBy(l => GetGridLocation(l.ElementName, "Area"));
-
-            foreach (var gridGroup in gridGroups.OrderBy(g => g.Key))
+            var polygons = new List<(Polygon Poly, string Name)>();
+            foreach (var load in loads)
             {
-                var elemNames = gridGroup.Select(l => l.ElementName).ToList();
-                var polygons = new List<Polygon>();
-
-                foreach (var elemName in elemNames)
+                if (_areaGeometryCache.TryGetValue(load.ElementName, out var area))
                 {
-                    if (_areaGeometryCache.TryGetValue(elemName, out var area))
-                    {
-                        var poly = CreateNtsPolygon(area.BoundaryPoints);
-                        if (poly != null && poly.IsValid)
-                            polygons.Add(poly);
-                    }
+                    var poly = CreateNtsPolygon(area.BoundaryPoints);
+                    if (poly != null && poly.IsValid)
+                        polygons.Add((poly, load.ElementName));
                 }
+            }
+            if (polygons.Count == 0) return;
 
-                if (polygons.Count == 0) continue;
+            // UNION: Gộp các tấm liền kề
+            var geometries = polygons.Select(p => p.Poly).Cast<Geometry>().ToList();
+            Geometry unionResult;
+            try
+            {
+                unionResult = UnaryUnionOp.Union(geometries);
+            }
+            catch
+            {
+                unionResult = _geometryFactory.CreateGeometryCollection(geometries.ToArray());
+            }
 
-                // Union để loại bỏ overlap
-                Geometry unioned;
-                try
-                {
-                    unioned = UnaryUnionOp.Union(polygons.Cast<Geometry>().ToList());
-                }
-                catch
-                {
-                    // Fallback n?u union fail
-                    unioned = polygons.First();
-                }
+            // Duyệt và phân tích hình học
+            for (int i = 0; i < unionResult.NumGeometries; i++)
+            {
+                var geom = unionResult.GetGeometryN(i);
+                double thresholdMm2 = 0.05 * 1e6;
+                if (geom.Area < thresholdMm2) continue;
 
-                // Tính diện tích và tạo diễn giải
-                double totalAreaMm2 = unioned.Area;
-                double totalAreaM2 = totalAreaMm2 * MM2_TO_M2;
-                double force = totalAreaM2 * valueGroup.LoadValue;
-
-                string explanation = FormatAreaExplanation(unioned, polygons.Count);
+                var strategy = AnalyzeShapeStrategy(geom);
+                double areaM2 = geom.Area / 1.0e6;
+                double force = areaM2 * valueGroup.LoadValue;
+                string location = GetGridRangeDescription(geom.EnvelopeInternal);
 
                 valueGroup.Entries.Add(new AuditEntry
                 {
-                    GridLocation = gridGroup.Key,
-                    Explanation = explanation,
-                    Quantity = totalAreaM2,
+                    GridLocation = location,
+                    Explanation = strategy.Formula,
+                    Quantity = areaM2,
                     Force = force,
-                    ElementList = elemNames
+                    ElementList = new List<string>()
                 });
             }
         }
 
-        /// <summary>
-        /// Xử lý tải Frame phân bố - Tính tổng chiều dài
-        /// </summary>
-        private void ProcessFrameDistributedLoads(List<RawSapLoad> loads, AuditValueGroup valueGroup)
+        // --- SMART SHAPE ANALYSIS ---
+        private struct DecompositionResult
         {
-            // Nhóm theo vị trí trục
-            var gridGroups = loads.GroupBy(l => GetGridLocation(l.ElementName, "Frame"));
+            public string Formula;
+            public int ComplexityScore;
+            public bool IsExact;
+        }
 
-            foreach (var gridGroup in gridGroups.OrderBy(g => g.Key))
+        private DecompositionResult AnalyzeShapeStrategy(Geometry geom)
+        {
+            // Priority 1: Detect basic shapes (Rect/Triangle)
+            if (IsRectangle(geom))
+                return new DecompositionResult 
+                { 
+                    Formula = FormatRect(geom.EnvelopeInternal), 
+                    ComplexityScore = 1, 
+                    IsExact = true 
+                };
+            
+            if (IsTriangle(geom))
+                return new DecompositionResult 
+                { 
+                    Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})", 
+                    ComplexityScore = 1, 
+                    IsExact = true 
+                };
+
+            // Priority 2 & 3: Try subtractive and additive decompositions
+            var subRes = EvaluateSubtractive(geom);
+            var addRes = EvaluateAdditive(geom);
+
+            // Choose simplest strategy (prefer subtractive if equal complexity)
+            if (subRes.IsExact && subRes.ComplexityScore <= addRes.ComplexityScore)
+                return subRes;
+            
+            return addRes;
+        }
+
+        // Subtractive: Envelope - rectangular holes
+        private DecompositionResult EvaluateSubtractive(Geometry geom)
+        {
+            var env = geom.EnvelopeInternal;
+            var envGeom = _geometryFactory.ToGeometry(env);
+            var voids = envGeom.Difference(geom);
+
+            if (voids.IsEmpty)
+                return new DecompositionResult 
+                { 
+                    Formula = FormatRect(env), 
+                    ComplexityScore = 1, 
+                    IsExact = true 
+                };
+
+            var voidTerms = new List<string>();
+            bool cleanVoids = true;
+            double thresholdMm2 = 0.05 * 1e6;
+
+            for (int i = 0; i < voids.NumGeometries; i++)
             {
-                var elemNames = gridGroup.Select(l => l.ElementName).ToList();
-                var lengths = new List<double>();
+                var v = voids.GetGeometryN(i);
+                if (v.Area < thresholdMm2) continue;
+                if (IsRectangle(v)) voidTerms.Add(FormatRect(v.EnvelopeInternal));
+                else { cleanVoids = false; break; }
+            }
 
-                foreach (var elemName in elemNames)
+            if (cleanVoids)
+            {
+                string formula = FormatRect(env);
+                foreach (var vTerm in voidTerms) formula += $" - {vTerm}";
+                return new DecompositionResult 
+                { 
+                    Formula = formula, 
+                    ComplexityScore = 1 + voidTerms.Count, 
+                    IsExact = true 
+                };
+            }
+
+            return new DecompositionResult 
+            { 
+                Formula = "Complex", 
+                ComplexityScore = 999, 
+                IsExact = false 
+            };
+        }
+
+        // Additive: Decompose into rects + triangles
+        private DecompositionResult EvaluateAdditive(Geometry geom)
+        {
+            var parts = new List<string>();
+            var workingGeom = geom.Copy();
+            int maxIterations = 6;
+            double thresholdMm2 = 0.05 * 1e6;
+
+            for (int iter = 0; iter < maxIterations; iter++)
+            {
+                if (workingGeom.IsEmpty || workingGeom.Area < thresholdMm2) break;
+
+                // Check if remaining is Rect or Triangle
+                if (IsRectangle(workingGeom))
                 {
-                    if (_frameGeometryCache.TryGetValue(elemName, out var frame))
-                    {
-                        lengths.Add(frame.Length2D);
-                    }
+                    parts.Add(FormatRect(workingGeom.EnvelopeInternal));
+                    workingGeom = _geometryFactory.CreatePolygon();
+                    break;
+                }
+                if (IsTriangle(workingGeom))
+                {
+                    parts.Add($"Tam giác({FormatRect(workingGeom.EnvelopeInternal)})");
+                    workingGeom = _geometryFactory.CreatePolygon();
+                    break;
                 }
 
-                if (lengths.Count == 0) continue;
+                // Extract largest bounding rectangle
+                var env = workingGeom.EnvelopeInternal;
+                if (env.Width > 0 && env.Height > 0)
+                {
+                    var rect = _geometryFactory.ToGeometry(env);
+                    if (rect.Area > thresholdMm2)
+                    {
+                        parts.Add(FormatRect(env));
+                        try { workingGeom = workingGeom.Difference(rect); }
+                        catch { break; }
+                        continue;
+                    }
+                }
+                break;
+            }
 
-                double totalLengthMm = lengths.Sum();
-                double totalLengthM = totalLengthMm * MM_TO_M;
-                double force = totalLengthM * valueGroup.LoadValue;
+            string formula = string.Join(" + ", parts);
+            bool isExact = true;
 
-                // Tạo diễn giải chiều dài
-                string explanation = FormatLengthExplanation(lengths);
+            if (!workingGeom.IsEmpty && workingGeom.Area > thresholdMm2)
+            {
+                double remArea = workingGeom.Area / 1.0e6;
+                formula += $" + Poly({remArea:0.00}m²)";
+                isExact = false;
+            }
+
+            return new DecompositionResult
+            {
+                Formula = formula,
+                ComplexityScore = parts.Count + (isExact ? 0 : 1),
+                IsExact = isExact
+            };
+        }
+
+        // Rectangle detection: area ≈ envelope area (within 1%)
+        private bool IsRectangle(Geometry g)
+        {
+            var env = g.EnvelopeInternal;
+            return Math.Abs(g.Area - env.Area) < (g.Area * 0.01);
+        }
+
+        // Triangle detection: NTS Polygon with 4 points (A,B,C,A)
+        private bool IsTriangle(Geometry g)
+        {
+            return g is Polygon p && p.NumPoints == 4;
+        }
+
+        // Format rectangle dimensions (m x m)
+        private string FormatRect(Envelope env)
+        {
+            return $"{env.Width / 1000.0:0.##}x{env.Height / 1000.0:0.##}";
+        }
+
+        // --- XỬ LÝ TẢI THANH (FRAME - LINE UNION) ---
+        private void ProcessFrameLoads(List<RawSapLoad> loads, AuditValueGroup valueGroup)
+        {
+            var lines = new List<(LineString Line, string Name)>();
+
+            foreach (var load in loads)
+            {
+                if (_frameGeometryCache.TryGetValue(load.ElementName, out var frame))
+                {
+                    var line = CreateNtsLineString(frame.StartPt, frame.EndPt);
+                    if (line != null && line.IsValid)
+                        lines.Add((line, load.ElementName));
+                }
+            }
+
+            if (lines.Count == 0) return;
+
+            // UNION LineString: Gộp các đoạn thẳng nối tiếp hoặc chồng lấn
+            var geometries = lines.Select(l => l.Line).Cast<Geometry>().ToList();
+            Geometry unionResult;
+            try
+            {
+                unionResult = UnaryUnionOp.Union(geometries);
+            }
+            catch
+            {
+                unionResult = _geometryFactory.CreateGeometryCollection(geometries.ToArray());
+            }
+
+            for (int i = 0; i < unionResult.NumGeometries; i++)
+            {
+                var geom = unionResult.GetGeometryN(i);
+                
+                // Chiều dài mm -> m
+                double lenM = geom.Length / 1000.0;
+                double force = lenM * valueGroup.LoadValue;
+
+                string location = GetGridRangeDescription(geom.EnvelopeInternal);
+                string explanation = $"L = {lenM:0.00}m";
+
+                // Trace elements
+                var containedElements = lines
+                    .Where(l => geom.Contains(l.Line) || geom.Intersects(l.Line))
+                    .Select(l => l.Name)
+                    .ToList();
 
                 valueGroup.Entries.Add(new AuditEntry
                 {
-                    GridLocation = gridGroup.Key,
+                    GridLocation = location,
                     Explanation = explanation,
-                    Quantity = totalLengthM,
+                    Quantity = lenM,
                     Force = force,
-                    ElementList = elemNames
+                    ElementList = containedElements
                 });
             }
         }
 
-        /// <summary>
-        /// Xử lý tải tập trung
-        /// </summary>
+        // --- XỬ LÝ TẢI ĐIỂM (POINT) ---
         private void ProcessPointLoads(List<RawSapLoad> loads, AuditValueGroup valueGroup)
         {
-            // Nhóm theo vị trí trục
-            var gridGroups = loads.GroupBy(l => GetGridLocation(l.ElementName, "Point"));
+            // Gom nhóm các điểm trùng vị trí (nếu có)
+            var groups = loads.GroupBy(l => GetGridLocationForPoint(l.ElementName));
 
-            foreach (var gridGroup in gridGroups.OrderBy(g => g.Key))
+            foreach (var g in groups)
             {
-                var elemNames = gridGroup.Select(l => l.ElementName).ToList();
-                double totalForce = gridGroup.Sum(l => l.Value1);
-                int count = gridGroup.Count();
-
-                string explanation = count == 1
-                    ? $"P = {totalForce:0.00} kN"
-                    : $"{count} điểm × avg = {totalForce:0.00} kN";
+                double totalForce = g.Sum(l => l.Value1);
+                int count = g.Count();
 
                 valueGroup.Entries.Add(new AuditEntry
                 {
-                    GridLocation = gridGroup.Key,
-                    Explanation = explanation,
+                    GridLocation = g.Key,
+                    Explanation = $"{count} vị trí",
                     Quantity = count,
                     Force = totalForce,
-                    ElementList = elemNames
-                });
-            }
-        }
-
-        /// <summary>
-        /// Xử lý tải generic (fallback)
-        /// </summary>
-        private void ProcessGenericLoads(List<RawSapLoad> loads, AuditValueGroup valueGroup)
-        {
-            var gridGroups = loads.GroupBy(l => GetGridLocation(l.ElementName, "Unknown"));
-
-            foreach (var gridGroup in gridGroups)
-            {
-                var elemNames = gridGroup.Select(l => l.ElementName).ToList();
-                double totalValue = gridGroup.Sum(l => l.Value1);
-
-                valueGroup.Entries.Add(new AuditEntry
-                {
-                    GridLocation = gridGroup.Key,
-                    Explanation = $"{gridGroup.Count()} phần tử",
-                    Quantity = gridGroup.Count(),
-                    Force = totalValue,
-                    ElementList = elemNames
+                    ElementList = g.Select(l => l.ElementName).ToList()
                 });
             }
         }
 
         #endregion
 
-        #region Helper Methods
+        #region Smart Grid Detection Logic
 
         /// <summary>
-        /// Cache geometry từ SAP
+        /// Tạo mô tả trục dạng Range (VD: Trục 1-5 / A-B) dựa trên Bounding Box
         /// </summary>
+        private string GetGridRangeDescription(Envelope env)
+        {
+            // Tìm khoảng trục X
+            string xRange = FindAxisRange(env.MinX, env.MaxX, _xGrids);
+            // Tìm khoảng trục Y
+            string yRange = FindAxisRange(env.MinY, env.MaxY, _yGrids);
+
+            if (string.IsNullOrEmpty(xRange) && string.IsNullOrEmpty(yRange)) return "No Grid";
+            if (string.IsNullOrEmpty(xRange)) return $"Trục {yRange}";
+            if (string.IsNullOrEmpty(yRange)) return $"Trục {xRange}";
+
+            return $"Trục {xRange} x {yRange}";
+        }
+
+        private string FindAxisRange(double minVal, double maxVal, List<SapUtils.GridLineRecord> grids)
+        {
+            if (grids == null || grids.Count == 0) return "?";
+
+            // Tìm trục gần Min nhất
+            var startGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - minVal)).First();
+            double startDiff = minVal - startGrid.Coordinate;
+
+            // Tìm trục gần Max nhất
+            var endGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - maxVal)).First();
+            double endDiff = maxVal - endGrid.Coordinate;
+
+            string startName = FormatGridWithOffset(startGrid.Name, startDiff);
+
+            // Nếu cùng một trục (hoặc khoảng cách rất nhỏ)
+            if (startGrid.Name == endGrid.Name || Math.Abs(maxVal - minVal) < GRID_SNAP_TOLERANCE)
+            {
+                return startName;
+            }
+
+            string endName = FormatGridWithOffset(endGrid.Name, endDiff);
+            return $"{startName}-{endName}";
+        }
+
+        private string FormatGridWithOffset(string name, double offsetMm)
+        {
+            if (Math.Abs(offsetMm) < GRID_SNAP_TOLERANCE) return name;
+            
+            double offsetM = offsetMm / 1000.0;
+            string sign = offsetM > 0 ? "+" : "";
+            return $"{name}({sign}{offsetM:0.#}m)";
+        }
+
+        private string GetGridLocationForPoint(string elementName)
+        {
+            var pt = SapUtils.GetAllPoints().FirstOrDefault(p => p.Name == elementName);
+            if (pt == null) return elementName;
+
+            string x = FindAxisRange(pt.X, pt.X, _xGrids);
+            string y = FindAxisRange(pt.Y, pt.Y, _yGrids);
+            return $"({x}, {y})";
+        }
+
+        #endregion
+
+        #region Geometry Helpers
+
         private void CacheGeometry()
         {
             _frameGeometryCache.Clear();
             _areaGeometryCache.Clear();
 
-            // Cache frames
             var frames = SapUtils.GetAllFramesGeometry();
-            foreach (var f in frames)
-            {
-                _frameGeometryCache[f.Name] = f;
-            }
+            foreach (var f in frames) _frameGeometryCache[f.Name] = f;
 
-            // Cache areas
             var areas = SapUtils.GetAllAreasGeometry();
-            foreach (var a in areas)
-            {
-                _areaGeometryCache[a.Name] = a;
-            }
+            foreach (var a in areas) _areaGeometryCache[a.Name] = a;
         }
 
-        /// <summary>
-        /// Xác định danh sách tầng từ cao độ phần tử
-        /// </summary>
-        private Dictionary<string, double> DetermineStoryElevations(List<RawSapLoad> loads)
-        {
-            var result = new Dictionary<string, double>();
-
-            // Lấy tất cả Z từ loads
-            var allZ = loads.Select(l => l.ElementZ).Distinct().OrderByDescending(z => z).ToList();
-
-            // Nhóm Z gần nhau thành một tầng
-            var zGroups = new List<List<double>>();
-            foreach (var z in allZ)
-            {
-                var existingGroup = zGroups.FirstOrDefault(g => Math.Abs(g.Average() - z) <= STORY_TOLERANCE);
-                if (existingGroup != null)
-                {
-                    existingGroup.Add(z);
-                }
-                else
-                {
-                    zGroups.Add(new List<double> { z });
-                }
-            }
-
-            // Map với story từ Grid nếu có
-            var zStories = _stories.Where(s => s.IsElevation).OrderByDescending(s => s.Elevation).ToList();
-            int storyIndex = 1;
-
-            foreach (var group in zGroups.OrderByDescending(g => g.Average()))
-            {
-                double avgZ = group.Average();
-
-                // Tìm story gần nhất
-                var matchingStory = zStories.FirstOrDefault(s => Math.Abs(s.Elevation - avgZ) <= STORY_TOLERANCE);
-
-                string storyName;
-                if (matchingStory != null)
-                {
-                    storyName = matchingStory.Name;
-                }
-                else
-                {
-                    storyName = $"Z={avgZ / 1000.0:0.0}m";
-                }
-
-                if (!result.ContainsKey(storyName))
-                {
-                    result[storyName] = avgZ;
-                }
-
-                storyIndex++;
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Nhóm loads theo giá tr? (v?i dung sai)
-        /// </summary>
-        private IEnumerable<IGrouping<double, RawSapLoad>> GroupByValue(List<RawSapLoad> loads)
-        {
-            // Round giá tr? ?? gom nhóm
-            return loads.GroupBy(l => Math.Round(l.Value1, 2));
-        }
-
-        /// <summary>
-        /// Xác định vị trí theo trục
-        /// </summary>
-        private string GetGridLocation(string elementName, string elementType)
-        {
-            Point2D center = Point2D.Origin;
-
-            if (elementType == "Frame" && _frameGeometryCache.TryGetValue(elementName, out var frame))
-            {
-                center = frame.Midpoint;
-            }
-            else if (elementType == "Area" && _areaGeometryCache.TryGetValue(elementName, out var area))
-            {
-                center = area.Centroid;
-            }
-            else if (elementType == "Point")
-            {
-                var points = SapUtils.GetAllPoints();
-                var pt = points.FirstOrDefault(p => p.Name == elementName);
-                if (pt != null)
-                {
-                    center = new Point2D(pt.X, pt.Y);
-                }
-            }
-
-            // Tìm trục gần nhất
-            string xGrid = FindNearestGrid(center.X, "X");
-            string yGrid = FindNearestGrid(center.Y, "Y");
-
-            if (!string.IsNullOrEmpty(xGrid) && !string.IsNullOrEmpty(yGrid))
-            {
-                return $"Trục {xGrid} / {yGrid}";
-            }
-            else if (!string.IsNullOrEmpty(xGrid))
-            {
-                return $"Trục {xGrid}";
-            }
-            else if (!string.IsNullOrEmpty(yGrid))
-            {
-                return $"Trục {yGrid}";
-            }
-
-            return $"({center.X / 1000:0.0}, {center.Y / 1000:0.0})";
-        }
-
-        /// <summary>
-        /// Tìm tr?c g?n nh?t
-        /// </summary>
-        private string FindNearestGrid(double coord, string axis)
-        {
-            var grids = _grids.Where(g =>
-                g.Orientation.Equals(axis, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(g => Math.Abs(g.Coordinate - coord))
-                .ToList();
-
-            if (grids.Count == 0) return null;
-
-            var nearest = grids.First();
-            if (Math.Abs(nearest.Coordinate - coord) > 5000) // > 5m thì không match
-                return null;
-
-            return nearest.Name;
-        }
-
-        /// <summary>
-        /// Tạo polygon NTS từ danh sách điểm
-        /// </summary>
         private Polygon CreateNtsPolygon(List<Point2D> pts)
         {
             if (pts == null || pts.Count < 3) return null;
-
             try
             {
-                var coords = new List<Coordinate>();
-                foreach (var p in pts)
-                {
-                    coords.Add(new Coordinate(p.X, p.Y));
-                }
-
-                // Đóng polygon
-                if (!pts[0].Equals(pts.Last()))
-                {
-                    coords.Add(new Coordinate(pts[0].X, pts[0].Y));
-                }
-
+                var coords = pts.Select(p => new Coordinate(p.X, p.Y)).ToList();
+                if (!pts[0].Equals(pts.Last())) coords.Add(new Coordinate(pts[0].X, pts[0].Y));
                 var ring = _geometryFactory.CreateLinearRing(coords.ToArray());
                 return _geometryFactory.CreatePolygon(ring);
             }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
         }
 
-        /// <summary>
-        /// Tạo diễn giải diện tích
-        /// </summary>
-        private string FormatAreaExplanation(Geometry geom, int originalCount)
+        private LineString CreateNtsLineString(Point2D p1, Point2D p2)
         {
-            if (geom == null) return "N/A";
-
-            // Kiểm tra nếu là rectangle
-            if (geom is Polygon poly && IsApproximateRectangle(poly))
+            try
             {
-                var env = poly.EnvelopeInternal;
-                double w = env.Width * MM_TO_M;
-                double h = env.Height * MM_TO_M;
-                return $"{w:0.0} x {h:0.0}";
+                var coords = new[] { new Coordinate(p1.X, p1.Y), new Coordinate(p2.X, p2.Y) };
+                return _geometryFactory.CreateLineString(coords);
             }
-
-            // Polygon phức tạp
-            double areaM2 = geom.Area * MM2_TO_M2;
-            if (originalCount > 1)
-            {
-                return $"Union({originalCount}) = {areaM2:0.00}m²";
-            }
-
-            return $"Poly = {areaM2:0.00}m²";
+            catch { return null; }
         }
 
-        /// <summary>
-        /// Tạo diễn giải chiều dài
-        /// </summary>
-        private string FormatLengthExplanation(List<double> lengths)
+        private Dictionary<string, double> DetermineStoryElevations(List<RawSapLoad> loads)
         {
-            if (lengths.Count == 0) return "N/A";
+            var result = new Dictionary<string, double>();
+            var allZ = loads.Select(l => l.ElementZ).Distinct().OrderByDescending(z => z).ToList();
+            var zGroups = new List<List<double>>();
 
-            if (lengths.Count == 1)
+            foreach (var z in allZ)
             {
-                return $"L = {lengths[0] * MM_TO_M:0.0}m";
+                var existingGroup = zGroups.FirstOrDefault(g => Math.Abs(g.Average() - z) <= STORY_TOLERANCE);
+                if (existingGroup != null) existingGroup.Add(z);
+                else zGroups.Add(new List<double> { z });
             }
 
-            // Hi?n th? t?i ?a 5 chi?u dài
-            var display = lengths.Take(5).Select(l => $"{l * MM_TO_M:0.0}").ToList();
-            string result = string.Join(" + ", display);
+            var stories = _stories.Where(s => s.IsElevation).OrderByDescending(s => s.Elevation).ToList();
 
-            if (lengths.Count > 5)
+            foreach (var group in zGroups)
             {
-                result += $" +...({lengths.Count - 5})";
+                double avgZ = group.Average();
+                var match = stories.FirstOrDefault(s => Math.Abs(s.Elevation - avgZ) <= STORY_TOLERANCE);
+                string name = match != null ? match.Name : $"Z={avgZ / 1000.0:0.0}m";
+                
+                if (!result.ContainsKey(name)) result[name] = avgZ;
             }
-
             return result;
         }
 
-        /// <summary>
-        /// Kiểm tra polygon có gần như hình chữ nhật không
-        /// </summary>
-        private bool IsApproximateRectangle(Polygon poly)
+        private bool CheckIfLateralLoad(List<RawSapLoad> loads)
         {
-            if (poly.NumPoints != 5) return false; // 4 đỉnh + 1 điểm đóng
-
-            var env = poly.EnvelopeInternal;
-            double envArea = env.Area;
-            double polyArea = poly.Area;
-
-            // Nếu diện tích gần bằng envelope -> là HCN
-            return Math.Abs(envArea - polyArea) / envArea < 0.05; // 5% tolerance
+            int lateralCount = loads.Count(l => l.Direction == "X" || l.Direction == "Y");
+            return lateralCount > loads.Count * 0.5; // > 50% là tải ngang
         }
 
-        /// <summary>
-        /// Lấy tên hiển thị cho loại tải
-        /// </summary>
         private string GetLoadTypeDisplayName(string loadType)
         {
-            switch (loadType)
-            {
-                case "AreaUniform": return "SÀN - UNIFORM LOAD (kN/m²)";
-                case "AreaUniformToFrame": return "SÀN - UNIFORM TO FRAME (kN/m²)";
-                case "FrameDistributed": return "DẦM/TƯỜNG - DISTRIBUTED (kN/m)";
-                case "FramePoint": return "DẦM - POINT LOAD (kN)";
-                case "PointForce": return "ĐIỂM - POINT FORCE (kN)";
-                case "JointMass": return "KHỐI LƯỢNG - JOINT MASS";
-                default: return loadType.ToUpper();
-            }
+            if (loadType.Contains("Area")) return "SÀN - AREA LOAD";
+            if (loadType.Contains("Frame")) return "DẦM/CỘT - FRAME LOAD";
+            if (loadType.Contains("Point")) return "NÚT - POINT LOAD";
+            return loadType.ToUpper();
         }
 
         #endregion
 
-        #region Report Generation
+        #region Report Generation (With Unit Conversion)
 
-        /// <summary>
-        /// Tạo báo cáo dạng text
-        /// </summary>
         public string GenerateTextReport(AuditReport report)
         {
             var sb = new StringBuilder();
+            var uInfo = UnitManager.Info; // Lấy thông tin đơn vị hiển thị
 
             sb.AppendLine("===================================================================");
             sb.AppendLine("   BÁO CÁO KIỂM TOÁN TẢI TRỌNG - DTS ENGINE");
             sb.AppendLine($"   Ngày: {report.AuditDate:dd/MM/yyyy HH:mm}");
             sb.AppendLine($"   Model: {report.ModelName}");
             sb.AppendLine($"   Load Case: {report.LoadPattern}");
-            sb.AppendLine($"   Đơn vị: {report.UnitInfo}");
+            sb.AppendLine($"   Đơn vị hiển thị: {uInfo.ForceUnit}, {uInfo.LengthUnit}");
             sb.AppendLine("===================================================================");
             sb.AppendLine();
 
             foreach (var story in report.Stories)
             {
-                sb.AppendLine($"--- TẦNG: {story.StoryName} (Z = {story.Elevation / 1000.0:0.0}m) ---");
+                // Convert cao độ sang mét cho dễ đọc
+                double elevM = UnitManager.ToMeter(story.Elevation);
+                sb.AppendLine($"--- TẦNG: {story.StoryName} (Z = {elevM:0.00}m) ---");
                 sb.AppendLine();
 
                 foreach (var loadType in story.LoadTypeGroups)
                 {
                     sb.AppendLine($"[{loadType.LoadTypeName}]");
-                    sb.AppendLine();
 
                     foreach (var valGroup in loadType.ValueGroups)
                     {
-                        sb.AppendLine($"    > Nhóm giá trị: {valGroup.LoadValue:0.00} ({valGroup.Direction})");
-                        sb.AppendLine(new string('-', 95));
-                        sb.AppendLine(string.Format("    | {0,-22} | {1,-32} | {2,10} | {3,12} |",
-                            "Vị trí (Trục)", "Diễn giải", "SL/DT", "Lực (kN)"));
-                        sb.AppendLine(new string('-', 95));
+                        // Convert giá trị tải sang đơn vị hiển thị (ví dụ kN -> Tấn)
+                        // Lưu ý: Giá trị gốc trong AuditValueGroup đang là kN/m2 hoặc kN/m
+                        // Chỉ cần format lại string đơn vị, giá trị có thể giữ nguyên hoặc convert nếu cần.
+                        // Ở đây ta giả định hiển thị LoadValue theo đơn vị lực User chọn / mét.
+                        
+                        string unitStr = loadType.LoadTypeName.Contains("AREA") ? $"{uInfo.ForceUnit}/m²" :
+                                         loadType.LoadTypeName.Contains("FRAME") ? $"{uInfo.ForceUnit}/m" : uInfo.ForceUnit;
+
+                        double displayLoadVal = ConvertForce(valGroup.LoadValue);
+
+                        sb.AppendLine($"    > Nhóm giá trị: {displayLoadVal:0.00} {unitStr} ({valGroup.Direction})");
+                        sb.AppendLine(new string('-', 105));
+                        sb.AppendLine(string.Format("    | {0,-35} | {1,-30} | {2,12} | {3,12} |",
+                            "Vị trí (Trục)", "Diễn giải", "SL/DT(m/m2)", $"Lực ({uInfo.ForceUnit})"));
+                        sb.AppendLine(new string('-', 105));
 
                         foreach (var entry in valGroup.Entries)
                         {
-                            string loc = entry.GridLocation.Length > 22
-                                ? entry.GridLocation.Substring(0, 19) + "..."
-                                : entry.GridLocation;
+                            // Convert lực tổng (đang là kN) sang đơn vị hiển thị (Tấn, Kgf...)
+                            double displayForce = ConvertForce(entry.Force);
 
-                            string exp = entry.Explanation.Length > 32
-                                ? entry.Explanation.Substring(0, 29) + "..."
-                                : entry.Explanation;
+                            string loc = entry.GridLocation.Length > 35 ? entry.GridLocation.Substring(0, 32) + "..." : entry.GridLocation;
+                            string exp = entry.Explanation.Length > 30 ? entry.Explanation.Substring(0, 27) + "..." : entry.Explanation;
 
-                            sb.AppendLine(string.Format("    | {0,-22} | {1,-32} | {2,10:0.00} | {3,12:0.00} |",
-                                loc, exp, entry.Quantity, entry.Force));
+                            sb.AppendLine(string.Format("    | {0,-35} | {1,-30} | {2,12:0.00} | {3,12:0.00} |",
+                                loc, exp, entry.Quantity, displayForce));
                         }
 
-                        sb.AppendLine(new string('-', 95));
-                        sb.AppendLine(string.Format("    | {0,-57} | {1,10:0.00} | {2,12:0.00} |",
-                            $"TỔNG NHÓM {valGroup.LoadValue:0.00}",
-                            valGroup.TotalQuantity, valGroup.TotalForce));
-                        sb.AppendLine(new string('-', 95));
+                        double groupTotalForce = ConvertForce(valGroup.TotalForce);
+                        sb.AppendLine(new string('-', 105));
+                        sb.AppendLine(string.Format("    | {0,-81} | {1,12:n2} |", "TỔNG NHÓM", groupTotalForce));
                         sb.AppendLine();
                     }
                 }
 
-                sb.AppendLine($">>> TỔNG TẦNG {story.StoryName}: {story.SubTotalForce:n2} kN");
+                double storyTotal = ConvertForce(story.SubTotalForce);
+                sb.AppendLine($">>> TỔNG TẦNG {story.StoryName}: {storyTotal:n2} {uInfo.ForceUnit}");
                 sb.AppendLine();
             }
 
+            // Tổng kết
+            double totalCalc = ConvertForce(report.TotalCalculatedForce);
+            double baseReact = ConvertForce(report.SapBaseReaction);
+            double diff = totalCalc - Math.Abs(baseReact);
+
             sb.AppendLine("===================================================================");
-            sb.AppendLine($"TỔNG CỘNG TÍNH TOÁN: {report.TotalCalculatedForce:n2} kN");
-
-            if (Math.Abs(report.SapBaseReaction) > 0.01)
-            {
-                sb.AppendLine($"SAP2000 BASE REACTION (Z): {report.SapBaseReaction:n2} kN");
-                sb.AppendLine($"SAI LỆCH: {report.Difference:n2} kN ({report.DifferencePercent:0.00}%)");
-
-                if (Math.Abs(report.DifferencePercent) < 1.0)
-                {
-                    sb.AppendLine(">>> KIỂM TRA: OK (sai lệch < 1%)");
-                }
-                else if (Math.Abs(report.DifferencePercent) < 5.0)
-                {
-                    sb.AppendLine(">>> KIỂM TRA: CHẤP NHẬN (sai lệch < 5%)");
-                }
-                else
-                {
-                    sb.AppendLine(">>> KIỂM TRA: CẦN XEM XÉT (sai lệch > 5%)");
-                }
-            }
+            sb.AppendLine($"TỔNG CỘNG TÍNH TOÁN: {totalCalc:n2} {uInfo.ForceUnit}");
+            sb.AppendLine($"SAP2000 BASE REACTION: {baseReact:n2} {uInfo.ForceUnit}");
+            sb.AppendLine($"SAI LỆCH: {diff:n2} {uInfo.ForceUnit} ({report.DifferencePercent:0.00}%)");
+            
+            if (Math.Abs(report.DifferencePercent) < 5.0)
+                sb.AppendLine(">>> ĐÁNH GIÁ: OK / CHẤP NHẬN ĐƯỢC");
             else
-            {
-                sb.AppendLine("SAP2000 BASE REACTION: Chưa có (model chưa chạy phân tích)");
-            }
-
+                sb.AppendLine(">>> ĐÁNH GIÁ: CẦN KIỂM TRA LẠI (> 5%)");
+            
             sb.AppendLine("===================================================================");
 
             return sb.ToString();
         }
 
-        /// <summary>
-        /// T?o báo cáo chi ti?t bao g?m danh sách ph?n t?
-        /// </summary>
-        public string GenerateDetailedReport(AuditReport report)
+        private double ConvertForce(double forceInKn)
         {
-            var sb = new StringBuilder();
-
-            sb.AppendLine(GenerateTextReport(report));
-            sb.AppendLine();
-            sb.AppendLine("=== CHI TIẾT PHẦN TỬ ===");
-            sb.AppendLine();
-
-            foreach (var story in report.Stories)
+            // Nội bộ là kN. Convert sang đơn vị trong UnitManager
+            string targetUnit = UnitManager.Info.ForceUnit.ToUpper();
+            switch (targetUnit)
             {
-                sb.AppendLine($"--- {story.StoryName} ---");
-
-                foreach (var loadType in story.LoadTypeGroups)
-                {
-                    foreach (var valGroup in loadType.ValueGroups)
-                    {
-                        foreach (var entry in valGroup.Entries)
-                        {
-                            if (entry.ElementList.Count > 0)
-                            {
-                                sb.AppendLine($"  {entry.GridLocation}:");
-                                sb.AppendLine($"    Phần tử: {string.Join(", ", entry.ElementList.Take(20))}");
-                                if (entry.ElementList.Count > 20)
-                                {
-                                    sb.AppendLine($"    ... và {entry.ElementList.Count - 20} phần tử khác");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                sb.AppendLine();
+                case "N": return forceInKn * 1000.0;
+                case "TON": return forceInKn / 9.81;
+                case "KGF": return forceInKn * 101.97;
+                case "LB": return forceInKn * 224.8;
+                default: return forceInKn; // kN
             }
-
-            return sb.ToString();
         }
 
         #endregion
