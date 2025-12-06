@@ -23,6 +23,8 @@ namespace DTS_Engine.Core.Engines
 
         private const double STORY_TOLERANCE = 500.0; // mm
         private const double GRID_SNAP_TOLERANCE = 500.0; // mm
+        // Minimum area to consider (m^2)
+        private const double MIN_AREA_THRESHOLD_M2 = 0.05; // 0.05 m2
 
         // Cache grids tách biệt X và Y để tìm kiếm nhanh
         private List<SapUtils.GridLineRecord> _xGrids;
@@ -274,29 +276,37 @@ namespace DTS_Engine.Core.Engines
         {
             // Priority 1: Detect basic shapes (Rect/Triangle)
             if (IsRectangle(geom))
-                return new DecompositionResult 
-                { 
-                    Formula = FormatRect(geom.EnvelopeInternal), 
-                    ComplexityScore = 1, 
-                    IsExact = true 
+            {
+                return new DecompositionResult
+                {
+                    Formula = FormatRect(geom.EnvelopeInternal),
+                    ComplexityScore = 1,
+                    IsExact = true
                 };
-            
+            }
+
             if (IsTriangle(geom))
-                return new DecompositionResult 
-                { 
-                    Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})", 
-                    ComplexityScore = 1, 
-                    IsExact = true 
+            {
+                return new DecompositionResult
+                {
+                    Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})",
+                    ComplexityScore = 1,
+                    IsExact = true
                 };
+            }
 
             // Priority 2 & 3: Try subtractive and additive decompositions
             var subRes = EvaluateSubtractive(geom);
             var addRes = EvaluateAdditive(geom);
 
-            // Choose simplest strategy (prefer subtractive if equal complexity)
-            if (subRes.IsExact && subRes.ComplexityScore <= addRes.ComplexityScore)
+            // If both failed to produce exact decomposition -> return additive (may contain Poly(...))
+            if (!subRes.IsExact && !addRes.IsExact)
+                return addRes;
+
+            // Prefer subtractive when complexity is similar (engineer's preference for envelope minus holes)
+            if (subRes.IsExact && subRes.ComplexityScore <= addRes.ComplexityScore + 1)
                 return subRes;
-            
+
             return addRes;
         }
 
@@ -310,20 +320,21 @@ namespace DTS_Engine.Core.Engines
             if (voids.IsEmpty)
                 return new DecompositionResult 
                 { 
-                    Formula = FormatRect(env), 
-                    ComplexityScore = 1, 
-                    IsExact = true 
+                    Formula = FormatRect(env),
+                    ComplexityScore = 1,
+                    IsExact = true
                 };
 
             var voidTerms = new List<string>();
             bool cleanVoids = true;
-            double thresholdMm2 = 0.05 * 1e6;
+            double thresholdMm2 = MIN_AREA_THRESHOLD_M2 * 1e6;
 
             for (int i = 0; i < voids.NumGeometries; i++)
             {
                 var v = voids.GetGeometryN(i);
                 if (v.Area < thresholdMm2) continue;
                 if (IsRectangle(v)) voidTerms.Add(FormatRect(v.EnvelopeInternal));
+                else if (IsTriangle(v)) voidTerms.Add($"Tam giác({FormatRect(v.EnvelopeInternal)})");
                 else { cleanVoids = false; break; }
             }
 
@@ -331,19 +342,19 @@ namespace DTS_Engine.Core.Engines
             {
                 string formula = FormatRect(env);
                 foreach (var vTerm in voidTerms) formula += $" - {vTerm}";
-                return new DecompositionResult 
-                { 
-                    Formula = formula, 
-                    ComplexityScore = 1 + voidTerms.Count, 
-                    IsExact = true 
+                return new DecompositionResult
+                {
+                    Formula = formula,
+                    ComplexityScore = 1 + voidTerms.Count,
+                    IsExact = true
                 };
             }
 
-            return new DecompositionResult 
-            { 
-                Formula = "Complex", 
-                ComplexityScore = 999, 
-                IsExact = false 
+            return new DecompositionResult
+            {
+                Formula = "Complex",
+                ComplexityScore = 999,
+                IsExact = false
             };
         }
 
@@ -352,14 +363,14 @@ namespace DTS_Engine.Core.Engines
         {
             var parts = new List<string>();
             var workingGeom = geom.Copy();
-            int maxIterations = 6;
-            double thresholdMm2 = 0.05 * 1e6;
+            int maxIterations = 12; // allow deeper recursion for complex shapes
+            double thresholdMm2 = MIN_AREA_THRESHOLD_M2 * 1e6;
 
             for (int iter = 0; iter < maxIterations; iter++)
             {
                 if (workingGeom.IsEmpty || workingGeom.Area < thresholdMm2) break;
 
-                // Check if remaining is Rect or Triangle
+                // If remaining is simple
                 if (IsRectangle(workingGeom))
                 {
                     parts.Add(FormatRect(workingGeom.EnvelopeInternal));
@@ -373,19 +384,70 @@ namespace DTS_Engine.Core.Engines
                     break;
                 }
 
-                // Extract largest bounding rectangle
+                // Use envelope as approximation rectangle (largest axis-aligned inscribed rect is expensive)
                 var env = workingGeom.EnvelopeInternal;
-                if (env.Width > 0 && env.Height > 0)
+                var rect = _geometryFactory.ToGeometry(env);
+
+                if (rect != null && !rect.IsEmpty && rect.Area > thresholdMm2)
                 {
-                    var rect = _geometryFactory.ToGeometry(env);
-                    if (rect.Area > thresholdMm2)
+                    parts.Add(FormatRect(env));
+                    try
                     {
-                        parts.Add(FormatRect(env));
-                        try { workingGeom = workingGeom.Difference(rect); }
-                        catch { break; }
+                        var remainder = workingGeom.Difference(rect);
+                        // If difference didn't reduce area significantly, stop to avoid infinite loop
+                        if (Math.Abs(remainder.Area - workingGeom.Area) < (thresholdMm2 * 0.01)) break;
+                        workingGeom = remainder;
+                        continue;
+                    }
+                    catch { break; }
+                }
+
+                // Can't extract simple rect/tri -> attempt to split by subdividing envelope into quadrants
+                try
+                {
+                    var bbox2 = workingGeom.EnvelopeInternal;
+                    double midX = (bbox2.MinX + bbox2.MaxX) / 2.0;
+                    double midY = (bbox2.MinY + bbox2.MaxY) / 2.0;
+
+                    var quadEnvs = new[] {
+                        new Envelope(bbox2.MinX, midX, bbox2.MinY, midY),
+                        new Envelope(midX, bbox2.MaxX, bbox2.MinY, midY),
+                        new Envelope(bbox2.MinX, midX, midY, bbox2.MaxY),
+                        new Envelope(midX, bbox2.MaxX, midY, bbox2.MaxY)
+                    };
+
+                    var pieces = new List<Geometry>();
+                    foreach (var qe in quadEnvs)
+                    {
+                        if (qe.Width <= 0 || qe.Height <= 0) continue;
+                        var qg = _geometryFactory.ToGeometry(qe);
+                        var inter = workingGeom.Intersection(qg);
+                        if (inter != null && !inter.IsEmpty && inter.Area > 0) pieces.Add(inter);
+                    }
+
+                    if (pieces.Count > 1)
+                    {
+                        double largestArea = 0; int largestIdx = 0;
+                        for (int k = 0; k < pieces.Count; k++)
+                        {
+                            var gk = pieces[k];
+                            if (gk.Area > largestArea) { largestArea = gk.Area; largestIdx = k; }
+                        }
+
+                        for (int k = 0; k < pieces.Count; k++)
+                        {
+                            if (k == largestIdx) continue;
+                            double a = pieces[k].Area / 1.0e6;
+                            if (a > MIN_AREA_THRESHOLD_M2) parts.Add($"Poly({a:0.00}m²)");
+                        }
+
+                        workingGeom = pieces[largestIdx];
                         continue;
                     }
                 }
+                catch { }
+
+                // Give up decomposition
                 break;
             }
 
@@ -395,13 +457,14 @@ namespace DTS_Engine.Core.Engines
             if (!workingGeom.IsEmpty && workingGeom.Area > thresholdMm2)
             {
                 double remArea = workingGeom.Area / 1.0e6;
-                formula += $" + Poly({remArea:0.00}m²)";
+                if (!string.IsNullOrEmpty(formula)) formula += " + ";
+                formula += $"Poly({remArea:0.00}m²)";
                 isExact = false;
             }
 
             return new DecompositionResult
             {
-                Formula = formula,
+                Formula = string.IsNullOrEmpty(formula) ? "Poly(0.00m²)" : formula,
                 ComplexityScore = parts.Count + (isExact ? 0 : 1),
                 IsExact = isExact
             };
@@ -728,6 +791,99 @@ namespace DTS_Engine.Core.Engines
             sb.AppendLine($"TỔNG CỘNG TÍNH TOÁN: {totalCalc:n2} {uInfo.ForceUnit}");
             sb.AppendLine($"SAP2000 BASE REACTION: {baseReact:n2} {uInfo.ForceUnit}");
             sb.AppendLine($"SAI LỆCH: {diff:n2} {uInfo.ForceUnit} ({report.DifferencePercent:0.00}%)");
+            
+            if (Math.Abs(report.DifferencePercent) < 5.0)
+                sb.AppendLine(">>> ĐÁNH GIÁ: OK / CHẤP NHẬN ĐƯỢC");
+            else
+                sb.AppendLine(">>> ĐÁNH GIÁ: CẦN KIỂM TRA LẠI (> 5%)");
+            
+            sb.AppendLine("===================================================================");
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Generate text report with target force unit override (kN, Ton, kgf, lb)
+        /// </summary>
+        public string GenerateTextReport(AuditReport report, string targetUnit)
+        {
+            var sb = new StringBuilder();
+            double forceFactor = 1.0;
+            // Normalize
+            if (string.IsNullOrWhiteSpace(targetUnit)) targetUnit = "kN";
+            targetUnit = targetUnit.Trim();
+
+            switch (targetUnit)
+            {
+                case "Ton": forceFactor = 1.0 / 9.81; break;
+                case "kgf": forceFactor = 101.97; break;
+                case "lb": forceFactor = 224.8; break;
+                default: targetUnit = "kN"; forceFactor = 1.0; break;
+            }
+
+            sb.AppendLine("===================================================================");
+            sb.AppendLine("   BÁO CÁO KIỂM TOÁN TẢI TRỌNG - DTS ENGINE");
+            sb.AppendLine($"   Ngày: {report.AuditDate:dd/MM/yyyy HH:mm}");
+            sb.AppendLine($"   Model: {report.ModelName}");
+            sb.AppendLine($"   Load Case: {report.LoadPattern}");
+            sb.AppendLine($"   Đơn vị hiển thị: {targetUnit}");
+            sb.AppendLine("===================================================================");
+            sb.AppendLine();
+
+            foreach (var story in report.Stories)
+            {
+                double elevM = UnitManager.ToMeter(story.Elevation);
+                sb.AppendLine($"--- TẦNG: {story.StoryName} (Z = {elevM:0.00}m) ---");
+                sb.AppendLine();
+
+                foreach (var loadType in story.LoadTypeGroups)
+                {
+                    sb.AppendLine($"[{loadType.LoadTypeName}]");
+
+                    foreach (var valGroup in loadType.ValueGroups)
+                    {
+                        string unitStr = loadType.LoadTypeName.Contains("AREA") ? $"{targetUnit}/m²" :
+                                         loadType.LoadTypeName.Contains("FRAME") ? $"{targetUnit}/m" : targetUnit;
+
+                        double displayLoadVal = valGroup.LoadValue * forceFactor;
+
+                        sb.AppendLine($"    > Nhóm giá trị: {displayLoadVal:0.00} {unitStr} ({valGroup.Direction})");
+                        sb.AppendLine(new string('-', 105));
+                        sb.AppendLine(string.Format("    | {0,-35} | {1,-30} | {2,12} | {3,12} |",
+                            "Vị trí (Trục)", "Diễn giải", "SL/DT(m/m2)", $"Lực ({targetUnit})"));
+                        sb.AppendLine(new string('-', 105));
+
+                        foreach (var entry in valGroup.Entries)
+                        {
+                            double displayForce = entry.Force * forceFactor;
+
+                            string loc = entry.GridLocation.Length > 35 ? entry.GridLocation.Substring(0, 32) + "..." : entry.GridLocation;
+                            string exp = entry.Explanation.Length > 30 ? entry.Explanation.Substring(0, 27) + "..." : entry.Explanation;
+
+                            sb.AppendLine(string.Format("    | {0,-35} | {1,-30} | {2,12:0.00} | {3,12:0.00} |",
+                                loc, exp, entry.Quantity, displayForce));
+                        }
+
+                        double groupTotalForce = valGroup.TotalForce * forceFactor;
+                        sb.AppendLine(new string('-', 105));
+                        sb.AppendLine(string.Format("    | {0,-81} | {1,12:n2} |", "TỔNG NHÓM", groupTotalForce));
+                        sb.AppendLine();
+                    }
+                }
+
+                double storyTotal = story.SubTotalForce * forceFactor;
+                sb.AppendLine($">>> TỔNG TẦNG {story.StoryName}: {storyTotal:n2} {targetUnit}");
+                sb.AppendLine();
+            }
+
+            double totalCalc = report.TotalCalculatedForce * forceFactor;
+            double baseReact = report.SapBaseReaction * forceFactor;
+            double diff = totalCalc - Math.Abs(baseReact);
+
+            sb.AppendLine("===================================================================");
+            sb.AppendLine($"TỔNG CỘNG TÍNH TOÁN: {totalCalc:n2} {targetUnit}");
+            sb.AppendLine($"SAP2000 BASE REACTION: {baseReact:n2} {targetUnit}");
+            sb.AppendLine($"SAI LỆCH: {diff:n2} {targetUnit} ({report.DifferencePercent:0.00}%)");
             
             if (Math.Abs(report.DifferencePercent) < 5.0)
                 sb.AppendLine(">>> ĐÁNH GIÁ: OK / CHẤP NHẬN ĐƯỢC");

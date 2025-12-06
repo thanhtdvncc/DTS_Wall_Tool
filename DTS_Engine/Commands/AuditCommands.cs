@@ -87,7 +87,18 @@ namespace DTS_Engine.Commands
                     return;
                 }
 
-                // 5. Ch?y ki?m toán
+                // 5. Ch?n ??n v? xu?t báo cáo
+                var unitOpt = new PromptKeywordOptions("\nCh?n ??n v? xu?t báo cáo [kN/Ton/kgf/lb]: ");
+                unitOpt.Keywords.Add("kN");
+                unitOpt.Keywords.Add("Ton");
+                unitOpt.Keywords.Add("kgf");
+                unitOpt.Keywords.Add("lb");
+                unitOpt.Keywords.Default = "kN";
+                var unitRes = Ed.GetKeywords(unitOpt);
+                if (unitRes.Status != PromptStatus.OK) return;
+                string selectedUnit = unitRes.StringResult;
+
+                // 6. Ch?y ki?m toán
                 WriteMessage($"\n?ang trích xu?t d? li?u cho: {string.Join(", ", validPatterns)}...");
                 WriteMessage("(Quá trình này có th? m?t vài giây tùy kích th??c model)");
 
@@ -110,7 +121,7 @@ namespace DTS_Engine.Commands
                     string fileName = $"DTS_Audit_{report.LoadPattern}_{timestamp}.txt";
                     string filePath = Path.Combine(tempFolder, fileName);
 
-                    string reportContent = engine.GenerateTextReport(report);
+                    string reportContent = engine.GenerateTextReport(report, selectedUnit);
 
                     File.WriteAllText(filePath, reportContent, Encoding.UTF8);
                     reportFiles.Add(filePath);
@@ -118,11 +129,22 @@ namespace DTS_Engine.Commands
                     // Hi?n th? tóm t?t
                     WriteMessage($"\n--- {report.LoadPattern} ---");
                     WriteMessage($"  S? t?ng: {report.Stories.Count}");
-                    WriteMessage($"  T?ng tính toán: {report.TotalCalculatedForce:n2} kN");
+                    // Hi?n th? tóm t?t (quy ??i theo ??n v? user ch?n)
+                    double factor = 1.0;
+                    string unitLabel = selectedUnit;
+                    switch (selectedUnit)
+                    {
+                        case "Ton": factor = 1.0 / 9.81; break;
+                        case "kgf": factor = 101.97; break;
+                        case "lb": factor = 224.8; break;
+                        default: factor = 1.0; unitLabel = "kN"; break;
+                    }
+
+                    WriteMessage($"  T?ng tính toán: {report.TotalCalculatedForce * factor:n2} {unitLabel}");
 
                     if (Math.Abs(report.SapBaseReaction) > 0.01)
                     {
-                        WriteMessage($"  Base Reaction: {report.SapBaseReaction:n2} kN");
+                        WriteMessage($"  Base Reaction: {report.SapBaseReaction * factor:n2} {unitLabel}");
                         WriteMessage($"  Sai l?ch: {report.DifferencePercent:0.00}%");
 
                         if (Math.Abs(report.DifferencePercent) < 1.0)
