@@ -804,9 +804,29 @@ namespace DTS_Engine.Core.Engines
             return result;
         }
 
-        private bool CheckIfLateralLoad(List<RawSapLoad> loads)
+        public bool CheckIfLateralLoad(List<RawSapLoad> loads)
         {
-            int lateralCount = loads.Count(l => l.Direction == "X" || l.Direction == "Y");
+            if (loads == null || loads.Count == 0) return false;
+
+            // Count anything that indicates X/Y direction.
+            // Some sources use "X", "Y" while others use "Global X", "X Projected", etc.
+            int lateralCount = loads.Count(l =>
+            {
+                if (string.IsNullOrEmpty(l.Direction)) return false;
+                var d = l.Direction.ToUpperInvariant();
+
+                // Ignore obvious Z/gravity-only directions
+                if (d.Contains("Z") && !d.Contains("X") && !d.Contains("Y")) return false;
+
+                // Treat any direction string containing 'X' or 'Y' as lateral
+                if (d.Contains("X") || d.Contains("Y")) return true;
+
+                // Some tables may use words like 'LATERAL' or 'SHEAR X' etc.
+                if (d.Contains("LATERAL") || d.Contains("SHEAR")) return true;
+
+                return false;
+            });
+
             return lateralCount > loads.Count * 0.5; // > 50% là tải ngang
         }
 

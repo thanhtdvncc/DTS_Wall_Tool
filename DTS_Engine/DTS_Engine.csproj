@@ -159,6 +159,7 @@
     <Compile Include="Models\CenterLine.cs" />
     <Compile Include="Models\WallSegment.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Tests\AuditEngineTests.cs" />
     <Compile Include="UI\FormLauncher.cs" />
     <Compile Include="UI\Form\AutoLoadTab.cs">
       <SubType>UserControl</SubType>

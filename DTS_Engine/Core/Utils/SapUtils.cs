@@ -110,8 +110,9 @@ namespace DTS_Engine.Core.Utils
                 int ret = model.SetPresentUnits(sapUnit);
                 return ret == 0;
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"SyncUnits failed: {ex}");
                 return false;
             }
         }
@@ -128,8 +129,9 @@ namespace DTS_Engine.Core.Utils
             {
                 return model.GetPresentUnits();
             }
-            catch
+            catch (Exception ex)
             {
+                System.Diagnostics.Debug.WriteLine($"GetSapCurrentUnit failed: {ex}");
                 return eUnits.kN_mm_C;
             }
         }
@@ -248,59 +250,42 @@ namespace DTS_Engine.Core.Utils
 
             try
             {
-                int numberItems = 0;
-                string[] frameNames = null;
-                string[] loadPatterns = null;
-                int[] myTypes = null;
-                string[] csys = null;
-                int[] dirs = null;
-                double[] rd1 = null, rd2 = null;
-                double[] dist1 = null, dist2 = null;
-                double[] val1 = null, val2 = null;
+                var rows = GetSapTableData("Frame Loads - Distributed", loadPattern);
+                if (rows == null || rows.Count == 0) return loads;
 
-                int ret = model.FrameObj.GetLoadDistributed(
-         frameName,
-    ref numberItems,
-          ref frameNames,
-    ref loadPatterns,
-              ref myTypes,
-ref csys,
-   ref dirs,
-  ref rd1, ref rd2,
-        ref dist1, ref dist2,
-       ref val1, ref val2,
-         eItemType.Objects
-                );
-
-                if (ret != 0 || numberItems == 0) return loads;
-
-                for (int i = 0; i < numberItems; i++)
+                foreach (var row in rows)
                 {
-                    // Lọc theo pattern nếu có
-                    if (!string.IsNullOrEmpty(loadPattern) &&
-                                !loadPatterns[i].Equals(loadPattern, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
+                    if (!row.ContainsKey("Frame")) continue;
+                    var fName = row["Frame"];
+                    if (!string.Equals(fName, frameName, StringComparison.OrdinalIgnoreCase)) continue;
 
-                    // Quy đổi đơn vị: kN/mm -> kN/m (nếu đang dùng mm)
-                    double loadValueKnPerM = ConvertLoadToKnPerM(val1[i]);
+                    double val = 0;
+                    val = ParseDouble(TryGetRowValue(row, "FOverLA") ?? TryGetRowValue(row, "FOverLB") ?? TryGetRowValue(row, "FOverL"));
 
-                    var loadInfo = new SapLoadInfo
+                    val = ConvertLoadToKnPerM(val);
+
+                    double distI = ParseDouble(TryGetRowValue(row, "AbsDistA") ?? TryGetRowValue(row, "RelDistA") ?? "0");
+                    double distJ = ParseDouble(TryGetRowValue(row, "AbsDistB") ?? TryGetRowValue(row, "RelDistB") ?? "0");
+
+                    string pattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty;
+                    string dir = TryGetRowValue(row, "Dir") ?? TryGetRowValue(row, "Direction") ?? "Gravity";
+
+                    loads.Add(new SapLoadInfo
                     {
-                        FrameName = frameNames[i],
-                        LoadPattern = loadPatterns[i],
-                        LoadValue = loadValueKnPerM,
-                        DistanceI = dist1[i],
-                        DistanceJ = dist2[i],
-                        Direction = GetDirectionName(dirs[i]),
+                        FrameName = fName,
+                        LoadPattern = pattern,
+                        LoadValue = val,
+                        DistanceI = distI,
+                        DistanceJ = distJ,
+                        Direction = dir,
                         LoadType = "Distributed"
-                    };
-
-                    loads.Add(loadInfo);
+                    });
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetFrameDistributedLoads failed: {ex}");
+            }
 
             return loads;
         }
@@ -364,57 +349,38 @@ ref csys,
 
             try
             {
-                int numberItems = 0;
-                string[] frameNames = null;
-                string[] loadPatterns = null;
-                int[] myTypes = null;
-                string[] csys = null;
-                int[] dirs = null;
-                double[] rd1 = null, rd2 = null;
-                double[] dist1 = null, dist2 = null;
-                double[] val1 = null, val2 = null;
+                var rows = GetSapTableData("Frame Loads - Distributed");
+                if (rows == null || rows.Count == 0) return result;
 
-                int ret = model.FrameObj.GetLoadDistributed(
-              frameName,
-                   ref numberItems,
-                     ref frameNames,
-               ref loadPatterns,
-                  ref myTypes,
-                 ref csys,
-                        ref dirs,
-                   ref rd1, ref rd2,
-              ref dist1, ref dist2,
-                     ref val1, ref val2,
-                        eItemType.Objects
-                );
-
-                if (ret != 0 || numberItems == 0) return result;
-
-                for (int i = 0; i < numberItems; i++)
+                foreach (var row in rows)
                 {
-                    string pattern = loadPatterns[i];
-                    double value = ConvertLoadToKnPerM(val1[i]);
-                    double iPos = dist1[i];
-                    double jPos = dist2[i];
-                    string dirStr = GetDirectionName(dirs[i]);
+                    if (!row.ContainsKey("Frame")) continue;
+                    if (!string.Equals(row["Frame"], frameName, StringComparison.OrdinalIgnoreCase)) continue;
+                    string pattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty;
+                    double val = ParseDouble(TryGetRowValue(row, "FOverLA") ?? TryGetRowValue(row, "FOverLB") ?? TryGetRowValue(row, "FOverL") ?? "0");
+                    val = ConvertLoadToKnPerM(val);
+
+                    double iPos = ParseDouble(TryGetRowValue(row, "AbsDistA") ?? TryGetRowValue(row, "RelDistA") ?? "0");
+                    double jPos = ParseDouble(TryGetRowValue(row, "AbsDistB") ?? TryGetRowValue(row, "RelDistB") ?? "0");
+                    string dir = TryGetRowValue(row, "Dir") ?? TryGetRowValue(row, "Direction") ?? "Gravity";
 
                     var entry = new LoadEntry
                     {
                         Pattern = pattern,
-                        Value = value,
-                        Direction = dirStr,
+                        Value = val,
+                        Direction = dir,
                         LoadType = "Distributed",
-                        Segments = new List<LoadSegment>
-            {
-          new LoadSegment { I = iPos, J = jPos }
- }
+                        Segments = new List<LoadSegment> { new LoadSegment { I = iPos, J = jPos } }
                     };
 
                     if (!result.ContainsKey(pattern)) result[pattern] = new List<LoadEntry>();
                     result[pattern].Add(entry);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetFrameDistributedLoadsDetailed failed: {ex}");
+            }
 
             return result;
         }
@@ -671,7 +637,96 @@ ref csys,
 
         #endregion
 
-        #region Audit Helpers
+        #region ROBUST DATABASE TABLE READER (NEW CORE)
+
+        /// <summary>
+        /// Helper class để đọc bảng SAP an toàn, không sợ sai index cột.
+        /// </summary>
+        private class SapTableReader
+        {
+            private string[] _fields;
+            private string[] _data;
+            private int _numRecs;
+            private int _colCount;
+            private Dictionary<string, int> _colMap;
+
+            public int RecordCount => _numRecs;
+
+            public SapTableReader(cSapModel model, string tableName, string loadPatternFilter = null)
+            {
+                _colMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                int tableVer = 0;
+                string[] input = new string[] { };
+                
+                // Reset arrays
+                _fields = null;
+                _data = null;
+                _numRecs = 0;
+
+                // Cố gắng đọc bảng
+                try
+                {
+                    // Group "All" lấy toàn bộ, hoặc lọc theo Selection nếu cần
+                    // Ở đây ta dùng chiến lược: Đọc hết rồi lọc bằng C# để kiểm soát tốt hơn
+                    int ret = model.DatabaseTables.GetTableForDisplayArray(
+                        tableName, ref input, "All", ref tableVer, ref _fields, ref _numRecs, ref _data);
+                    if (ret == 0 && _numRecs > 0 && _fields != null && _data != null)
+                    {
+                        _colCount = _fields.Length;
+                        // Map tên cột sang index (trim và bỏ rỗng)
+                        for (int i = 0; i < _colCount; i++)
+                        {
+                            var f = _fields[i];
+                            if (!string.IsNullOrEmpty(f))
+                            {
+                                f = f.Trim();
+                                if (!_colMap.ContainsKey(f))
+                                    _colMap[f] = i;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"SapTableReader: failed reading table '{tableName}': {ex.Message}");
+                }
+            }
+
+            /// <summary>
+            /// Kiểm tra xem cột có tồn tại không
+            /// </summary>
+            public bool HasColumn(string colName) => _colMap.ContainsKey(colName);
+
+            /// <summary>
+            /// Lấy giá trị chuỗi tại dòng row, cột colName
+            /// </summary>
+            public string GetString(int row, string colName)
+            {
+                if (row < 0 || row >= _numRecs) return null;
+                if (_data == null || _colCount <= 0) return null;
+                if (string.IsNullOrEmpty(colName)) return null;
+                if (!_colMap.TryGetValue(colName, out int colIdx)) return null;
+                int idx = row * _colCount + colIdx;
+                if (idx < 0 || idx >= _data.Length) return null;
+                return _data[idx];
+            }
+
+            /// <summary>
+            /// Lấy giá trị double tại dòng row, cột colName. Trả về 0 nếu lỗi/rỗng.
+            /// </summary>
+            public double GetDouble(int row, string colName)
+            {
+                string val = GetString(row, colName);
+                if (string.IsNullOrEmpty(val)) return 0.0;
+                if (double.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
+                    return result;
+                return 0.0;
+            }
+        }
+
+        #endregion
+
+        #region AUDIT: Load Pattern Detection (FIXED)
 
         public class PatternSummary
         {
@@ -680,8 +735,8 @@ ref csys,
         }
 
         /// <summary>
-        /// Get list of Load Patterns that actually contain loads.
-        /// IMPROVED v2.5: Comprehensive scan of ALL load directions (F1, F2, F3, UX, UY, UZ) to detect lateral loads.
+        /// Quét toàn bộ tải trọng (dọc, ngang, momen) để xác định Pattern nào đang hoạt động.
+        /// Fix lỗi: Đã bao gồm F1, F2 (ngang) và M1, M2, M3 (momen).
         /// </summary>
         public static List<PatternSummary> GetActiveLoadPatterns()
         {
@@ -689,129 +744,61 @@ ref csys,
             var model = GetModel();
             if (model == null) return result;
 
-            try
+            var loadSums = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
+            // 1. Quét bảng Joint Loads (Quan trọng nhất cho tải ngang/gió/động đất gán vào tâm)
+            // Cột cần quét: F1, F2, F3, M1, M2, M3
+            ScanTableSums(model, "Joint Loads - Force", new[] { "F1", "F2", "F3", "M1", "M2", "M3" }, loadSums);
+
+            // 2. Quét bảng Frame Loads - Distributed
+            // Cột cần quét: FOverLA, FOverLB (và các biến thể tên cột nếu SAP đổi version)
+            ScanTableSums(model, "Frame Loads - Distributed", new[] { "FOverLA", "FOverLB", "FOverL" }, loadSums);
+
+            // 3. Quét bảng Frame Loads - Point
+            // Cột cần quét: Force, F1, F2...
+            ScanTableSums(model, "Frame Loads - Point", new[] { "Force", "F1", "F2", "F3" }, loadSums);
+
+            // 4. Quét bảng Area Loads
+            ScanTableSums(model, "Area Loads - Uniform", new[] { "UnifLoad" }, loadSums);
+            ScanTableSums(model, "Area Loads - Uniform To Frame", new[] { "UnifLoad" }, loadSums);
+
+            // Chuyển dictionary thành list kết quả
+            foreach (var kvp in loadSums)
             {
-                // Get all load pattern names
-                int count = 0;
-                string[] names = null;
-                model.LoadPatterns.GetNameList(ref count, ref names);
-                if (names == null || names.Length == 0) return result;
-
-                var loadSums = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-                foreach (var n in names) loadSums[n] = 0.0;
-
-                // Helper: scan table with given value fields (F*, M*, Load...), sum abs values per pattern
-                void ScanTable(string tableName, string patternFieldName, params string[] candidateValueFields)
-                {
-                    try
-                    {
-                        int tableVer = 0;
-                        string[] fields = null;
-                        int numRec = 0;
-                        string[] tableData = null;
-                        string[] input = new[] { "" };
-
-                        int ret = model.DatabaseTables.GetTableForDisplayArray(
-                            tableName, ref input, "All", ref tableVer, ref fields, ref numRec, ref tableData);
-
-                        if (ret != 0 || numRec <= 0 || fields == null || tableData == null) return;
-
-                        int idxPat = Array.IndexOf(fields, patternFieldName);
-                        if (idxPat < 0)
-                        {
-                            // Fallback: find by contains
-                            idxPat = Array.FindIndex(fields, f => !string.IsNullOrEmpty(f) &&
-                                                              f.Equals(patternFieldName, StringComparison.OrdinalIgnoreCase));
-                            if (idxPat < 0) idxPat = Array.FindIndex(fields, f => !string.IsNullOrEmpty(f) && f.ToLowerInvariant().Contains("loadpat"));
-                        }
-                        if (idxPat < 0) return;
-
-                        // Build list of numeric value field indices
-                        var valIndices = new List<int>();
-                        foreach (var vf in candidateValueFields)
-                        {
-                            int idx = Array.IndexOf(fields, vf);
-                            if (idx >= 0) valIndices.Add(idx);
-                        }
-
-                        // Fallback: include any F*, M*, Load-like fields
-                        if (valIndices.Count == 0)
-                        {
-                            for (int i = 0; i < fields.Length; i++)
-                            {
-                                string fn = fields[i] ?? "";
-                                string fl = fn.ToLowerInvariant();
-                                bool looksNumeric =
-                                    fl.StartsWith("f") || fl.StartsWith("m") ||
-                                    fl.Contains("unif") || fl.Contains("uniform") ||
-                                    fl.Contains("load") || fl.Contains("force");
-                                if (looksNumeric) valIndices.Add(i);
-                            }
-                        }
-                        if (valIndices.Count == 0) return;
-
-                        int cols = fields.Length;
-                        for (int r = 0; r < numRec; r++)
-                        {
-                            // Pattern name
-                            string p = tableData[r * cols + idxPat]?.Trim();
-                            if (string.IsNullOrEmpty(p)) continue;
-
-                            // Sum abs values across all candidate numeric fields
-                            double rowSum = 0.0;
-                            foreach (int vi in valIndices)
-                            {
-                                var cell = tableData[r * cols + vi];
-                                if (double.TryParse(cell, NumberStyles.Any, CultureInfo.InvariantCulture, out double v))
-                                    rowSum += Math.Abs(v);
-                            }
-
-                            if (rowSum > 0.0)
-                            {
-                                if (!loadSums.ContainsKey(p)) loadSums[p] = 0.0;
-                                loadSums[p] += rowSum;
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        // swallow per-table errors
-                    }
-                }
-
-                // Scan the 3 main tables comprehensively
-                // 1) Frame Loads - Distributed
-                ScanTable("Frame Loads - Distributed", "LoadPat",
-                    "FOverL", "FOverL1", "FOverL2", "FOverL3");
-
-                // 2) Area Loads - Uniform
-                ScanTable("Area Loads - Uniform", "LoadPat",
-                    "UnifLoad", "UniformLoad", "Load");
-
-                // 3) Joint Loads - Force (include lateral and gravity, plus moments)
-                ScanTable("Joint Loads - Force", "LoadPat",
-                    "F1", "F2", "F3", "M1", "M2", "M3");
-
-                // Build final results (keep any with tiny > tolerance)
-                foreach (var kvp in loadSums)
-                {
-                    if (kvp.Value > 0.0001)
-                        result.Add(new PatternSummary { Name = kvp.Key, TotalEstimatedLoad = kvp.Value });
-                }
-
-                // Fallback: if everything was zero, still return patterns
-                if (result.Count == 0 && names.Length > 0)
-                    result = names.Select(x => new PatternSummary { Name = x, TotalEstimatedLoad = 0 }).ToList();
-            }
-            catch
-            {
-                // Fallback on exception
-                int c = 0; string[] n = null;
-                model.LoadPatterns.GetNameList(ref c, ref n);
-                if (n != null) result = n.Select(x => new PatternSummary { Name = x, TotalEstimatedLoad = 0 }).ToList();
+                if (kvp.Value > 0.001) // Chỉ lấy pattern có tải đáng kể
+                    result.Add(new PatternSummary { Name = kvp.Key, TotalEstimatedLoad = kvp.Value });
             }
 
             return result.OrderByDescending(p => p.TotalEstimatedLoad).ToList();
+        }
+
+        private static void ScanTableSums(cSapModel model, string tableName, string[] valueCols, Dictionary<string, double> accumulator)
+        {
+            var reader = new SapTableReader(model, tableName);
+            if (reader.RecordCount == 0) return;
+
+            // Xác định tên cột chứa Load Pattern (thường là "LoadPat" hoặc "OutputCase")
+            string patCol = reader.HasColumn("LoadPat") ? "LoadPat" : (reader.HasColumn("OutputCase") ? "OutputCase" : null);
+            if (patCol == null) return;
+
+            for (int r = 0; r < reader.RecordCount; r++)
+            {
+                string pat = reader.GetString(r, patCol);
+                if (string.IsNullOrEmpty(pat)) continue;
+
+                double rowSum = 0;
+                foreach (var col in valueCols)
+                {
+                    // Lấy trị tuyệt đối để cộng dồn mức độ "hoạt động"
+                    rowSum += Math.Abs(reader.GetDouble(r, col));
+                }
+
+                if (rowSum > 0)
+                {
+                    if (!accumulator.ContainsKey(pat)) accumulator[pat] = 0;
+                    accumulator[pat] += rowSum;
+                }
+            }
         }
 
         #endregion
@@ -1008,12 +995,18 @@ ref csys,
 
                                 result.Add(new SapPoint { Name = name, X = x, Y = y, Z = z });
                             }
-                            catch { }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"GetAllPoints: row parse failed: {ex}");
+                            }
                         }
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetAllPoints failed: {ex}");
+            }
 
             return result;
         }
@@ -1112,7 +1105,20 @@ ref csys,
                     return results;
 
                 int colCount = fields.Length;
-                
+
+                // Support multi-pattern filter: split by comma/semicolon/space and use HashSet for fast lookup
+                HashSet<string> patternSet = null;
+                if (!string.IsNullOrWhiteSpace(loadPatternFilter) && loadPatternFilter != "*")
+                {
+                    var parts = loadPatternFilter.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                        .Select(s => s.Trim())
+                        .Where(s => !string.IsNullOrEmpty(s))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    if (parts.Length > 0)
+                        patternSet = new HashSet<string>(parts, StringComparer.OrdinalIgnoreCase);
+                }
+
                 // Pre-calculate index of LoadPat to filter early if needed
                 int loadPatIdx = Array.IndexOf(fields, "LoadPat");
                 if (loadPatIdx < 0) loadPatIdx = Array.IndexOf(fields, "OutputCase"); // Some tables use OutputCase
@@ -1120,18 +1126,19 @@ ref csys,
                 for (int r = 0; r < numRecords; r++)
                 {
                     // Filter by Pattern if requested and column exists
-                    if (!string.IsNullOrEmpty(loadPatternFilter) && loadPatIdx >= 0)
+                    if (patternSet != null && loadPatIdx >= 0)
                     {
-                        string rowPat = tableData[r * colCount + loadPatIdx];
-                        if (!string.Equals(rowPat, loadPatternFilter, StringComparison.OrdinalIgnoreCase))
+                        string rowPat = tableData[r * colCount + loadPatIdx]?.Trim();
+                        if (string.IsNullOrEmpty(rowPat) || !patternSet.Contains(rowPat))
                             continue;
                     }
 
-                    var rowDict = new Dictionary<string, string>();
+                    var rowDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                     for (int c = 0; c < colCount; c++)
                     {
-                        string key = fields[c];
+                        string key = fields[c]?.Trim();
                         string val = tableData[r * colCount + c];
+                        if (key == null) key = string.Empty;
                         rowDict[key] = val;
                     }
                     results.Add(rowDict);
@@ -1139,8 +1146,7 @@ ref csys,
             }
             catch (Exception ex)
             {
-                // Silent fail or log
-                System.Diagnostics.Debug.WriteLine($"Error reading table {tableName}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"GetSapTableData: failed reading table '{tableName}': {ex}");
             }
 
             return results;
@@ -1152,6 +1158,27 @@ ref csys,
             if (double.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out double res))
                 return res;
             return 0.0;
+        }
+
+        /// <summary>
+        /// Safe helper to try multiple keys from a row dictionary.
+        /// </summary>
+        private static string TryGetRowValue(Dictionary<string, string> row, params string[] keys)
+        {
+            if (row == null || keys == null) return null;
+            foreach (var k in keys)
+            {
+                if (string.IsNullOrEmpty(k)) continue;
+                if (row.TryGetValue(k, out var v) && !string.IsNullOrEmpty(v)) return v;
+                // fallback: case-insensitive search
+                var match = row.Keys.FirstOrDefault(x => !string.IsNullOrEmpty(x) && x.Equals(k, StringComparison.OrdinalIgnoreCase));
+                if (match != null)
+                {
+                    var vv = row[match];
+                    if (!string.IsNullOrEmpty(vv)) return vv;
+                }
+            }
+            return null;
         }
 
         #endregion
@@ -1185,12 +1212,10 @@ ref csys,
                 if (!row.ContainsKey("Frame") || !row.ContainsKey("LoadPat")) continue;
 
                 string frameName = row["Frame"];
-                string pattern = row["LoadPat"];
-                
-                // Value từ cột FOverLA (Force Over Length at point A)
-                double val1 = 0;
-                if (row.ContainsKey("FOverLA")) val1 = ParseDouble(row["FOverLA"]);
-                else if (row.ContainsKey("FOverLB")) val1 = ParseDouble(row["FOverLB"]); // Fallback
+                    string pattern = TryGetRowValue(row, "LoadPat") ?? string.Empty;
+
+                    // Value từ cột FOverLA (Force Over Length at point A)
+                    double val1 = ParseDouble(TryGetRowValue(row, "FOverLA") ?? TryGetRowValue(row, "FOverLB") ?? TryGetRowValue(row, "FOverL") ?? "0");
 
                 // Convert Unit (Table returns values in Present Units - typically kN/mm)
                 val1 = ConvertLoadToKnPerM(val1);
@@ -1207,12 +1232,12 @@ ref csys,
                 {
                     ElementName = frameName,
                     LoadPattern = pattern,
-                    Value1 = Math.Abs(val1), // Use Abs for magnitude
+                    Value1 = Math.Abs(ConvertLoadToKnPerM(val1)), // Use Abs for magnitude and convert
                     LoadType = "FrameDistributed",
-                    Direction = row.ContainsKey("Dir") ? row["Dir"] : "Gravity",
+                    Direction = TryGetRowValue(row, "Dir") ?? TryGetRowValue(row, "Direction") ?? "Gravity",
                     DistStart = distA,
                     DistEnd = distB,
-                    CoordSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "GLOBAL",
+                    CoordSys = TryGetRowValue(row, "CoordSys") ?? TryGetRowValue(row, "Coord. Sys.") ?? "GLOBAL",
                     ElementZ = z,
                     IsRelative = isRelative
                 });
@@ -1288,7 +1313,10 @@ ref csys,
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetAllFramePointLoads failed: {ex}");
+            }
 
             return results;
         }
@@ -1311,22 +1339,29 @@ ref csys,
 
             foreach (var row in rows)
             {
-                if (!row.ContainsKey("Area")) continue;
-
-                // Cột "UnifLoad" chứa giá trị tải (kN/mm²)
-                double val = row.ContainsKey("UnifLoad") ? ParseDouble(row["UnifLoad"]) : 0;
-                val = ConvertLoadToKnPerM2(val);
-
-                loads.Add(new RawSapLoad
+                try
                 {
-                    ElementName = row["Area"],
-                    LoadPattern = row["LoadPat"],
-                    Value1 = Math.Abs(val),
-                    LoadType = "AreaUniform",
-                    Direction = row.ContainsKey("Dir") ? row["Dir"] : "Gravity",
-                    CoordSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "Local",
-                    ElementZ = areaGeomMap.ContainsKey(row["Area"]) ? areaGeomMap[row["Area"]] : 0
-                });
+                    if (!row.ContainsKey("Area")) continue;
+
+                    // Cột "UnifLoad" chứa giá trị tải (kN/mm²)
+                    double val = ParseDouble(TryGetRowValue(row, "UnifLoad") ?? "0");
+                    val = ConvertLoadToKnPerM2(val);
+
+                    loads.Add(new RawSapLoad
+                    {
+                        ElementName = TryGetRowValue(row, "Area") ?? string.Empty,
+                        LoadPattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty,
+                        Value1 = Math.Abs(val),
+                        LoadType = "AreaUniform",
+                        Direction = TryGetRowValue(row, "Dir") ?? "Gravity",
+                        CoordSys = TryGetRowValue(row, "CoordSys") ?? "Local",
+                        ElementZ = areaGeomMap.ContainsKey(TryGetRowValue(row, "Area") ?? string.Empty) ? areaGeomMap[TryGetRowValue(row, "Area")] : 0
+                    });
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"GetAllAreaUniformLoads: row parse failed: {ex}");
+                }
             }
             return loads;
         }
@@ -1349,22 +1384,29 @@ ref csys,
 
             foreach (var row in rows)
             {
-                if (!row.ContainsKey("Area")) continue;
-
-                double val = row.ContainsKey("UnifLoad") ? ParseDouble(row["UnifLoad"]) : 0;
-                val = ConvertLoadToKnPerM2(val);
-
-                loads.Add(new RawSapLoad
+                try
                 {
-                    ElementName = row["Area"],
-                    LoadPattern = row["LoadPat"],
-                    Value1 = Math.Abs(val),
-                    LoadType = "AreaUniformToFrame",
-                    Direction = row.ContainsKey("Dir") ? row["Dir"] : "Gravity",
-                    DistributionType = row.ContainsKey("DistType") ? row["DistType"] : "Two way",
-                    CoordSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "GLOBAL",
-                    ElementZ = areaGeomMap.ContainsKey(row["Area"]) ? areaGeomMap[row["Area"]] : 0
-                });
+                    if (!row.ContainsKey("Area")) continue;
+
+                    double val = ParseDouble(TryGetRowValue(row, "UnifLoad") ?? "0");
+                    val = ConvertLoadToKnPerM2(val);
+
+                    loads.Add(new RawSapLoad
+                    {
+                        ElementName = TryGetRowValue(row, "Area") ?? string.Empty,
+                        LoadPattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty,
+                        Value1 = Math.Abs(val),
+                        LoadType = "AreaUniformToFrame",
+                        Direction = TryGetRowValue(row, "Dir") ?? "Gravity",
+                        DistributionType = TryGetRowValue(row, "DistType") ?? "Two way",
+                        CoordSys = TryGetRowValue(row, "CoordSys") ?? "GLOBAL",
+                        ElementZ = areaGeomMap.ContainsKey(TryGetRowValue(row, "Area") ?? string.Empty) ? areaGeomMap[TryGetRowValue(row, "Area")] : 0
+                    });
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"GetAllAreaUniformToFrameLoads: row parse failed: {ex}");
+                }
             }
             return loads;
         }
@@ -1377,8 +1419,10 @@ ref csys,
         public static List<RawSapLoad> GetAllPointLoads(string patternFilter = null)
         {
             var loads = new List<RawSapLoad>();
-            var rows = GetSapTableData("Joint Loads - Force", patternFilter);
+            var model = GetModel();
+            if (model == null) return loads;
 
+            var rows = GetSapTableData("Joint Loads - Force", patternFilter);
             var pointGeomMap = new Dictionary<string, double>();
             if (rows.Count > 0)
             {
@@ -1386,18 +1430,33 @@ ref csys,
                 foreach (var p in points) pointGeomMap[p.Name] = p.Z;
             }
 
+            // Cache load patterns once for existence checking
+            HashSet<string> existingPatterns = null;
+            try
+            {
+                existingPatterns = new HashSet<string>(GetLoadPatterns(), StringComparer.OrdinalIgnoreCase);
+            }
+            catch { existingPatterns = null; }
+
             foreach (var row in rows)
             {
-                if (!row.ContainsKey("Joint")) continue;
-                string joint = row["Joint"];
-                string pattern = row["LoadPat"];
-                string cSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "GLOBAL";
-                double z = pointGeomMap.ContainsKey(joint) ? pointGeomMap[joint] : 0;
-
-                // Check F1 (X direction)
-                if (row.ContainsKey("F1"))
+                try
                 {
-                    double f1 = ParseDouble(row["F1"]);
+                    if (!row.ContainsKey("Joint")) continue;
+                    string joint = TryGetRowValue(row, "Joint");
+                    string pattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty;
+                    if (!string.IsNullOrEmpty(patternFilter) && !pattern.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Any(p => p.Equals(patternFilter, StringComparison.OrdinalIgnoreCase))) continue;
+
+                    if (existingPatterns != null && !existingPatterns.Contains(pattern)) continue;
+
+                    string cSys = TryGetRowValue(row, "CoordSys") ?? "GLOBAL";
+                    double z = pointGeomMap.ContainsKey(joint) ? pointGeomMap[joint] : 0;
+
+                    // Read components
+                    double f1 = ParseDouble(TryGetRowValue(row, "F1") ?? "0");
+                    double f2 = ParseDouble(TryGetRowValue(row, "F2") ?? "0");
+                    double f3 = ParseDouble(TryGetRowValue(row, "F3") ?? "0");
+
                     if (Math.Abs(f1) > 0.001)
                     {
                         loads.Add(new RawSapLoad
@@ -1406,17 +1465,12 @@ ref csys,
                             LoadPattern = pattern,
                             Value1 = Math.Abs(ConvertForceToKn(f1)),
                             LoadType = "PointForce",
-                            Direction = "Global X",
+                            Direction = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "Local-1 (X)" : "Global X",
                             CoordSys = cSys,
                             ElementZ = z
                         });
                     }
-                }
 
-                // Check F2 (Y direction)
-                if (row.ContainsKey("F2"))
-                {
-                    double f2 = ParseDouble(row["F2"]);
                     if (Math.Abs(f2) > 0.001)
                     {
                         loads.Add(new RawSapLoad
@@ -1425,17 +1479,12 @@ ref csys,
                             LoadPattern = pattern,
                             Value1 = Math.Abs(ConvertForceToKn(f2)),
                             LoadType = "PointForce",
-                            Direction = "Global Y",
+                            Direction = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "Local-2 (Y)" : "Global Y",
                             CoordSys = cSys,
                             ElementZ = z
                         });
                     }
-                }
 
-                // Check F3 (Z/Gravity)
-                if (row.ContainsKey("F3"))
-                {
-                    double f3 = ParseDouble(row["F3"]);
                     if (Math.Abs(f3) > 0.001)
                     {
                         loads.Add(new RawSapLoad
@@ -1444,13 +1493,18 @@ ref csys,
                             LoadPattern = pattern,
                             Value1 = Math.Abs(ConvertForceToKn(f3)),
                             LoadType = "PointForce",
-                            Direction = "Gravity/Z",
+                            Direction = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "Local-3 (Z)" : "Gravity",
                             CoordSys = cSys,
                             ElementZ = z
                         });
                     }
                 }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"GetAllPointLoads: row parse failed: {ex}");
+                }
             }
+
             return loads;
         }
 
