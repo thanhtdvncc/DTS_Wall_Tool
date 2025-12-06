@@ -132,6 +132,7 @@
     <Compile Include="Core\Engines\AuditEngine.cs" />
     <Compile Include="Core\Engines\LoadCalculator.cs" />
     <Compile Include="Core\Engines\MappingEngine.cs" />
+    <Compile Include="Core\Engines\ModelInventory.cs" />
     <Compile Include="Core\Engines\SyncEngine.cs" />
     <Compile Include="Core\Engines\WallSegmentProcessor.cs" />
     <Compile Include="Core\GeoAlgo.cs" />
@@ -146,6 +147,7 @@
     <Compile Include="Core\Primitives\LineSegment2D.cs" />
     <Compile Include="Core\Primitives\Point2D.cs" />
     <Compile Include="Core\Primitives\GeometryResults.cs" />
+    <Compile Include="Core\Primitives\Vector3D.cs" />
     <Compile Include="Core\Utils\AcadUtils.cs" />
     <Compile Include="Core\Utils\LabelPlotter.cs" />
     <Compile Include="Core\Utils\LabelUtils.cs" />

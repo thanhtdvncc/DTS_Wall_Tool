@@ -1,4 +1,5 @@
-﻿using System;
+﻿using DTS_Engine.Core.Primitives;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -67,6 +68,35 @@ namespace DTS_Engine.Core.Data
         public bool IsGlobalX => !string.IsNullOrEmpty(GlobalAxis) && GlobalAxis.Equals("X", StringComparison.OrdinalIgnoreCase);
         public bool IsGlobalY => !string.IsNullOrEmpty(GlobalAxis) && GlobalAxis.Equals("Y", StringComparison.OrdinalIgnoreCase);
         public bool IsGlobalZ => !string.IsNullOrEmpty(GlobalAxis) && GlobalAxis.Equals("Z", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Tạo Vector3D từ các component global
+        /// </summary>
+        public Vector3D GetForceVector()
+        {
+            return new Vector3D(DirectionX, DirectionY, DirectionZ);
+        }
+
+        /// <summary>
+        /// Gán các component global từ Vector3D
+        /// </summary>
+        public void SetForceVector(Vector3D forceVector)
+        {
+            DirectionX = forceVector.X;
+            DirectionY = forceVector.Y;
+            DirectionZ = forceVector.Z;
+
+            // Auto-update GlobalAxis và Sign
+            string primaryAxis = forceVector.GetPrimaryAxis();
+            GlobalAxis = primaryAxis;
+
+            switch (primaryAxis)
+            {
+                case "X": DirectionSign = Math.Sign(forceVector.X); break;
+                case "Y": DirectionSign = Math.Sign(forceVector.Y); break;
+                case "Z": DirectionSign = Math.Sign(forceVector.Z); break;
+            }
+        }
 
         public override string ToString() => $"{LoadPattern}|{ElementName}|{LoadType}|{Value1:0.00}|{GlobalAxis ?? Direction}";
     }

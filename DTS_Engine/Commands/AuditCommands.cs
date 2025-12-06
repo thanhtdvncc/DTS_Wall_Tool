@@ -158,6 +158,8 @@ namespace DTS_Engine.Commands
 
                 // 8. Chạy Audit
                 WriteMessage($"\n>> Đang xử lý...");
+                WriteMessage($">> [NEW] Sử dụng Vector-based approach với Model Inventory");
+                
                 var engine = new AuditEngine();
                 string tempFolder = Path.GetTempPath();
                 int fileCounter = 0;
@@ -182,6 +184,11 @@ namespace DTS_Engine.Commands
                 if (!string.IsNullOrEmpty(firstFilePath))
                 {
                     WriteSuccess($"\nHoàn thành! Đã tạo {fileCounter} báo cáo tại {tempFolder}");
+                    WriteMessage("\n⚠️ LƯU Ý QUAN TRỌNG:");
+                    WriteMessage("Base Reaction KHÔNG được tự động tính nữa.");
+                    WriteMessage("Vui lòng so sánh Vector trong báo cáo với Base Reactions trong SAP2000.");
+                    WriteMessage("Đường dẫn: Display > Show Tables > Analysis Results > Base Reactions");
+                    
                     try { Process.Start(firstFilePath); } catch { }
                 }
             });
@@ -317,53 +324,6 @@ namespace DTS_Engine.Commands
 
                 int total = frameLoads.Count + areaLoads.Count + pointLoads.Count;
                 WriteMessage($"\nTổng: {total} bản ghi tải.");
-            });
-        }
-
-        #endregion
-
-        #region Reaction Check Command
-
-        /// <summary>
-        /// Kiểm tra phản lực đáy cho các load case
-        /// </summary>
-        [CommandMethod("DTS_CHECK_REACTIONS")]
-        public void DTS_CHECK_REACTIONS()
-        {
-            ExecuteSafe(() =>
-            {
-                WriteMessage("\n=== KIỂM TRA PHẢN LỰC ĐÁY ===");
-
-                if (!EnsureSapConnection())
-                    return;
-
-                var patterns = SapUtils.GetLoadPatterns();
-
-                WriteMessage($"\nModel: {SapUtils.GetModelName()}");
-                WriteMessage("\nBase Reaction Z theo Load Pattern:");
-                WriteMessage(new string('-', 50));
-
-                bool hasAnyReaction = false;
-
-                foreach (var pattern in patterns)
-                {
-                    double reaction = SapUtils.GetBaseReactionZ(pattern);
-                    if (Math.Abs(reaction) > 0.01)
-                    {
-                        hasAnyReaction = true;
-                        WriteMessage($"  {pattern,-15}: {reaction,15:n2} kN");
-                    }
-                }
-
-                if (!hasAnyReaction)
-                {
-                    WriteWarning("\nKhông có phản lực nào. Model có thể chưa được phân tích.");
-                    WriteMessage("Chạy phân tích trong SAP2000 rồi thử lại.");
-                }
-                else
-                {
-                    WriteMessage(new string('-', 50));
-                }
             });
         }
 

@@ -911,6 +911,95 @@ namespace DTS_Engine.Core.Utils
 
         #endregion
 
+        #region Transformation Matrix & Local Axes API
+
+        /// <summary>
+        /// Kết quả GetElementVectors: 3 Vector trục địa phương trong hệ Global
+        /// </summary>
+        public struct ElementVectors
+        {
+            public Vector3D L1; // Local Axis 1
+            public Vector3D L2; // Local Axis 2
+            public Vector3D L3; // Local Axis 3
+        }
+
+        /// <summary>
+        /// Lấy 3 vector trục địa phương của phần tử (Frame/Area/Point) trong hệ tọa độ Global.
+        /// 
+        /// CHIẾN LƯỢC:
+        /// - Gọi API GetTransformationMatrix để lấy ma trận 3x3
+        /// - Trích xuất 3 cột (mỗi cột = 1 vector trục)
+        /// - Trả về ElementVectors chứa L1, L2, L3
+        /// 
+        /// SỬ DỤNG:
+        /// - ModelInventory gọi hàm này 1 lần cho mỗi phần tử khi Build()
+        /// - Cache kết quả để không phải gọi lại
+        /// </summary>
+        public static ElementVectors? GetElementVectors(string elementName)
+        {
+            var model = GetModel();
+            if (model == null || string.IsNullOrEmpty(elementName))
+                return null;
+
+            try
+            {
+                double[] matrix = new double[9];
+                int ret = -1;
+
+                // Thử gọi API theo thứ tự: Frame -> Area -> Point
+                // Frame
+                try
+                {
+                    ret = model.FrameObj.GetTransformationMatrix(elementName, ref matrix, true);
+                }
+                catch { }
+
+                // Area
+                if (ret != 0)
+                {
+                    try
+                    {
+                        ret = model.AreaObj.GetTransformationMatrix(elementName, ref matrix, true);
+                    }
+                    catch { }
+                }
+
+                // Point
+                if (ret != 0)
+                {
+                    try
+                    {
+                        ret = model.PointObj.GetTransformationMatrix(elementName, ref matrix, true);
+                    }
+                    catch { }
+                }
+
+                if (ret != 0 || matrix == null || matrix.Length < 9)
+                    return null;
+
+                // Ma trận SAP2000 lưu theo hàng (row-major):
+                // [L1x, L2x, L3x,
+                //  L1y, L2y, L3y,
+                //  L1z, L2z, L3z]
+                //
+                // Mỗi CỘT là 1 vector trục địa phương trong hệ Global
+
+                return new ElementVectors
+                {
+                    L1 = new Vector3D(matrix[0], matrix[3], matrix[6]),
+                    L2 = new Vector3D(matrix[1], matrix[4], matrix[7]),
+                    L3 = new Vector3D(matrix[2], matrix[5], matrix[8])
+                };
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"GetElementVectors failed for '{elementName}': {ex.Message}");
+                return null;
+            }
+        }
+
+        #endregion
+
         #region Load Patterns & Stories
 
         public static bool LoadPatternExists(string patternName)
@@ -1678,84 +1767,6 @@ namespace DTS_Engine.Core.Utils
             }
         }
 
-
-        /// <summary>
-        /// Lấy phản lực đáy tổng cộng theo Load Pattern và Hướng.
-        /// Hỗ trợ kiểm tra tải trọng ngang (Gió/Động đất).
-        /// </summary>
-        /// <param name="loadPattern">Tên Load Case/Pattern</param>
-        /// <param name="direction">Hướng: "X", "Y", "Z" (Mặc định Z)</param>
-        /// <returns>Giá trị phản lực (kN)</returns>
-        public static double GetBaseReaction(string loadPattern, string direction = "Z")
-        {
-            var model = GetModel();
-            if (model == null) return 0;
-
-            try
-            {
-                model.Results.Setup.DeselectAllCasesAndCombosForOutput();
-                model.Results.Setup.SetCaseSelectedForOutput(loadPattern);
-
-                int tableVer = 0;
-                string[] fields = null;
-                int numRec = 0;
-                string[] tableData = null;
-                string[] input = new string[] { "" };
-
-                int ret = model.DatabaseTables.GetTableForDisplayArray(
-                    "Base Reactions",
-                    ref input, "All", ref tableVer, ref fields, ref numRec, ref tableData);
-
-                if (ret == 0 && numRec > 0 && fields != null && tableData != null)
-                {
-                    int idxCase = Array.IndexOf(fields, "OutputCase");
-                    if (idxCase < 0) idxCase = Array.FindIndex(fields, f => f != null && f.ToLowerInvariant().Contains("case"));
-
-                    // Xác định cột dữ liệu dựa trên hướng yêu cầu
-                    string targetField = "GlobalFZ"; // Default Z
-                    if (direction.ToUpper() == "X") targetField = "GlobalFX";
-                    if (direction.ToUpper() == "Y") targetField = "GlobalFY";
-
-                    int idxForce = Array.IndexOf(fields, targetField);
-                    if (idxForce < 0) 
-                    {
-                        // Fallback tìm kiếm linh hoạt
-                        idxForce = Array.FindIndex(fields, f => f != null && (f.Contains(direction) && f.Contains("Global")));
-                    }
-
-                    if (idxCase >= 0 && idxForce >= 0)
-                    {
-                        double totalForce = 0;
-                        int cols = fields.Length;
-
-                        for (int r = 0; r < numRec; r++)
-                        {
-                            string rowCase = tableData[r * cols + idxCase];
-                            if (rowCase != null && rowCase.Equals(loadPattern, StringComparison.OrdinalIgnoreCase))
-                            {
-                                // StepType thường là "Combination" hoặc "Max"/"Min" nếu là envelop
-                                // Ở đây ta cộng dồn hoặc lấy giá trị đầu tiên (Base Reaction thường chỉ có 1 dòng cho Static Load)
-                                if (double.TryParse(tableData[r * cols + idxForce],
-                                    NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
-                                {
-                                    totalForce = val; // Base Reaction thường là tổng rồi, không cần cộng dồn nếu có nhiều dòng step
-                                    break; 
-                                }
-                            }
-                        }
-
-                        // Convert từ đơn vị SAP sang kN (Internal Standard)
-                        return ConvertForceToKn(totalForce);
-                    }
-                }
-            }
-            catch { }
-
-            return 0;
-        }
-
-        // [Backward Compatibility Method]
-        public static double GetBaseReactionZ(string loadPattern) => GetBaseReaction(loadPattern, "Z");
 
         /// <summary>
         /// Lấy tên Model SAP2000 hiện tại

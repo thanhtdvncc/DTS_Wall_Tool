@@ -38,6 +38,9 @@ namespace DTS_Engine.Core.Engines
         // NTS Factory
         private GeometryFactory _geometryFactory;
 
+        // NEW: Model Inventory for Vector-based load resolution
+        private ModelInventory _inventory;
+
         #endregion
 
         #region Constructor
@@ -94,7 +97,7 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Chạy kiểm toán cho một Load Pattern cụ thể
-        /// Uses SapDatabaseReader to get robust direction resolution and global components
+        /// REFACTORED: Uses ModelInventory for vector-based load resolution
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
@@ -109,22 +112,33 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
-            var dbReader = new SapDatabaseReader(SapUtils.GetModel());
+            // BƯỚC 1: BUILD INVENTORY (1 lần duy nhất)
+            if (_inventory == null)
+            {
+                _inventory = new ModelInventory();
+                _inventory.Build();
+                System.Diagnostics.Debug.WriteLine($"[AuditEngine] {_inventory.GetStatistics()}");
+            }
 
-            // ⚠️ FIX BUG #1 + #2: CHỊ DÙNG SapDatabaseReader (không gọi SapUtils trực tiếp)
-            // Read all loads ONCE using upgraded reader
-            var allLoads = dbReader.ReadAllLoadsWithBaseReaction(loadPattern, out double baseReaction);
-            
-            // Set base reaction trực tiếp từ reader (không cần tính lại)
-            report.SapBaseReaction = baseReaction;
+            // BƯỚC 2: READ LOADS với SapDatabaseReader (truyền Inventory)
+            var dbReader = new SapDatabaseReader(SapUtils.GetModel(), _inventory);
+            var allLoads = dbReader.ReadAllLoads(loadPattern);
             
             if (allLoads.Count == 0) 
             {
-                report.IsAnalyzed = Math.Abs(baseReaction) >= 0.001;
+                report.IsAnalyzed = false;
+                report.SapBaseReaction = 0; // User will check manually
                 return report;
             }
 
-            // Group and process by story
+            // BƯỚC 3: TỔNG HỢP VECTOR - Tính tổng các component
+            double totalFx = allLoads.Sum(l => l.DirectionX);
+            double totalFy = allLoads.Sum(l => l.DirectionY);
+            double totalFz = allLoads.Sum(l => l.DirectionZ);
+
+            System.Diagnostics.Debug.WriteLine($"[AuditEngine] Total Force Vector: Fx={totalFx:F2}, Fy={totalFy:F2}, Fz={totalFz:F2} kN");
+
+            // BƯỚC 4: Group and process by story
             var storyBuckets = GroupLoadsByStory(allLoads);
             foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
@@ -133,7 +147,9 @@ namespace DTS_Engine.Core.Engines
                     report.Stories.Add(storyGroup);
             }
 
-            if (Math.Abs(report.SapBaseReaction) < 0.001) report.IsAnalyzed = false;
+            // Base Reaction = 0 (người dùng check thủ công)
+            report.SapBaseReaction = 0;
+            report.IsAnalyzed = false; // Mark as "not compared with SAP"
 
             return report;
         }
@@ -935,32 +951,6 @@ namespace DTS_Engine.Core.Engines
             return result;
         }
 
-        public bool CheckIfLateralLoad(List<RawSapLoad> loads)
-        {
-            if (loads == null || loads.Count == 0) return false;
-
-            // Count anything that indicates X/Y direction.
-            // Some sources use "X", "Y" while others use "Global X", "X Projected", etc.
-            int lateralCount = loads.Count(l =>
-            {
-                if (string.IsNullOrEmpty(l.Direction)) return false;
-                var d = l.Direction.ToUpperInvariant();
-
-                // Ignore obvious Z/gravity-only directions
-                if (d.Contains("Z") && !d.Contains("X") && !d.Contains("Y")) return false;
-
-                // Treat any direction string containing 'X' or 'Y' as lateral
-                if (d.Contains("X") || d.Contains("Y")) return true;
-
-                // Some tables may use words like 'LATERAL' or 'SHEAR X' etc.
-                if (d.Contains("LATERAL") || d.Contains("SHEAR")) return true;
-
-                return false;
-            });
-
-            return lateralCount > loads.Count * 0.5; // > 50% là tải ngang
-        }
-
         private string GetLoadTypeDisplayName(string loadType)
         {
             if (loadType.Contains("Area")) return "SÀN - AREA LOAD";
@@ -1090,16 +1080,50 @@ namespace DTS_Engine.Core.Engines
 
             // Summary & evaluation
             double totalCalc = report.TotalCalculatedForce * forceFactor;
-            double baseReact = report.SapBaseReaction * forceFactor;
-            double diff = totalCalc - Math.Abs(baseReact);
+
+            // NEW: Hiển thị Vector components
+            double totalFx = 0, totalFy = 0, totalFz = 0;
+            foreach (var story in report.Stories)
+            {
+                foreach (var loadType in story.LoadTypes)
+                {
+                    foreach (var entry in loadType.Entries)
+                    {
+                        // Tính lại từ magnitude và direction (approximation)
+                        // Lưu ý: Entry không có trực tiếp DirectionX/Y/Z, chỉ có Direction string
+                        // Vì vậy ta cộng dồn TotalForce theo trục dominant
+                        if (entry.Direction != null && entry.Direction.ToUpperInvariant().Contains("X"))
+                            totalFx += entry.TotalForce;
+                        else if (entry.Direction != null && entry.Direction.ToUpperInvariant().Contains("Y"))
+                            totalFy += entry.TotalForce;
+                        else
+                            totalFz += entry.TotalForce;
+                    }
+                }
+            }
+
+            totalFx *= forceFactor;
+            totalFy *= forceFactor;
+            totalFz *= forceFactor;
 
             sb.AppendLine("===========================================================================================================");
             sb.AppendLine(isVietnamese ? "   TỔNG HỢP & ĐÁNH GIÁ" : "   SUMMARY & EVALUATION");
+            
             string calcLabel = isVietnamese ? "TỔNG CỘNG TÍNH TOÁN" : "TOTAL CALCULATED";
             sb.AppendLine($"   1. {calcLabel}:  {totalCalc,12:N2} {targetUnit}");
+            
+            // NEW: Hiển thị Vector breakdown
+            string vectorLabel = isVietnamese ? "      Phân tích Vector" : "      Vector Breakdown";
+            sb.AppendLine($"   {vectorLabel}:");
+            sb.AppendLine($"      - Fx (X-direction): {totalFx,12:N2} {targetUnit}");
+            sb.AppendLine($"      - Fy (Y-direction): {totalFy,12:N2} {targetUnit}");
+            sb.AppendLine($"      - Fz (Z-direction): {totalFz,12:N2} {targetUnit}");
 
             if (report.IsAnalyzed)
             {
+                double baseReact = report.SapBaseReaction * forceFactor;
+                double diff = totalCalc - Math.Abs(baseReact);
+                
                 string reactLabel = isVietnamese ? "PHẢN LỰC ĐÁY (SAP2000)" : "SAP2000 BASE REACTION";
                 string diffLabel = isVietnamese ? "SAI LỆCH (DIFF)" : "DIFFERENCE (DIFF)";
                 sb.AppendLine($"   2. {reactLabel}:  {baseReact,12:N2} {targetUnit}");
@@ -1112,10 +1136,14 @@ namespace DTS_Engine.Core.Engines
             }
             else
             {
-                string notAnalyzedLabel = isVietnamese ? "PHẢN LỰC ĐÁY (SAP2000): [CHƯA PHÂN TÍCH]" : "SAP2000 BASE REACTION: [NOT ANALYZED]";
-                sb.AppendLine($"   2. {notAnalyzedLabel}");
-                sb.AppendLine(isVietnamese ? "   >>> Vui lòng chạy Run Analysis trong SAP2000 để so sánh chính xác." :
-                                      "   >>> Please run Analysis in SAP2000 for accurate comparison.");
+                string notAnalyzedLabel = isVietnamese 
+                    ? "   2. KIỂM TRA THỦ CÔNG: Vui lòng so sánh Vector trên với Base Reactions trong SAP2000" 
+                    : "   2. MANUAL CHECK: Please compare Vector above with Base Reactions in SAP2000";
+                sb.AppendLine(notAnalyzedLabel);
+                sb.AppendLine();
+                sb.AppendLine(isVietnamese 
+                    ? "   >>> Để xem Base Reactions: SAP2000 > Display > Show Tables > Analysis Results > Base Reactions"
+                    : "   >>> To view Base Reactions: SAP2000 > Display > Show Tables > Analysis Results > Base Reactions");
             }
             sb.AppendLine("===========================================================================================================");
 

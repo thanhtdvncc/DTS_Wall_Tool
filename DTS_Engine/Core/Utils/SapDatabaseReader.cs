@@ -1,4 +1,6 @@
 using DTS_Engine.Core.Data;
+using DTS_Engine.Core.Engines; // NEW: For ModelInventory
+using DTS_Engine.Core.Primitives; // NEW: For Vector3D
 using SAP2000v1;
 using System;
 using System.Collections.Generic;
@@ -25,11 +27,13 @@ namespace DTS_Engine.Core.Utils
         private const double COMPONENT_NEAR_ZERO_ABS = 1e-6;
         private readonly cSapModel _model;
         private readonly Dictionary<string, TableSchema> _schemaCache;
+        private readonly ModelInventory _inventory; // NEW: Inventory reference
 
-        public SapDatabaseReader(cSapModel model)
+        public SapDatabaseReader(cSapModel model, ModelInventory inventory = null)
         {
             _model = model ?? throw new ArgumentNullException(nameof(model));
             _schemaCache = new Dictionary<string, TableSchema>();
+            _inventory = inventory; // Có th? null n?u dùng fallback mode
         }
 
         #region Schema Detection
@@ -150,330 +154,124 @@ namespace DTS_Engine.Core.Utils
 
         #endregion
 
-        #region Load Direction Resolver (UPGRADED)
+        #region Vector-Based Direction Resolution (NEW STRATEGY)
 
         /// <summary>
-        /// UPGRADED: Resolved Load Direction with full global components
+        /// STRATEGY CHUY?N ??I: Parse Direction String thành Local Axis Number
+        /// 
+        /// INPUT EXAMPLES:
+        /// - "Local-1", "Local1", "1" -> 1
+        /// - "Local-2", "Local2", "2" -> 2
+        /// - "Local-3", "Local3", "3", "Gravity" -> 3
+        /// 
+        /// OUTPUT: S? th? t? tr?c ??a ph??ng (1, 2, ho?c 3)
         /// </summary>
-        public class ResolvedDirection
+        private int ParseDirectionString(string direction)
         {
-            public string GlobalAxis { get; set; } // Dominant: "X", "Y", "Z"
-            public double Sign { get; set; } // Overall sign: +1 or -1
+            if (string.IsNullOrEmpty(direction))
+                return 3; // Default: Gravity
 
-            // NEW: Full global components
-            public double Gx { get; set; }
-            public double Gy { get; set; }
-            public double Gz { get; set; }
+            string dir = direction.ToUpperInvariant().Trim();
 
-            public string Description { get; set; }
-
-            public override string ToString() => GlobalAxis;
-        }
-
-        /// <summary>
-        /// UPGRADED: Full transformation from Local to Global
-        /// </summary>
-        public ResolvedDirection ResolveDirection(string elementName, string elementType, string direction, string coordSys)
-        {
-            var result = new ResolvedDirection();
-
-            // Parse direction string to get local axis number
-            int localAxis = ParseDirectionToAxis(direction);
-
-            // Case 1: GLOBAL CoordSys - Direct mapping
-            if (string.Equals(coordSys, "GLOBAL", StringComparison.OrdinalIgnoreCase))
-            {
-                if (string.Equals(direction, "Gravity", StringComparison.OrdinalIgnoreCase) || localAxis == 3)
-                {
-                    result.Gx = 0; result.Gy = 0; result.Gz = -1.0;
-                    result.GlobalAxis = "Z";
-                    result.Sign = -1.0;
-                    result.Description = "Global Gravity";
-                }
-                else if (localAxis == 1 || direction.Contains("X"))
-                {
-                    result.Gx = 1.0; result.Gy = 0; result.Gz = 0;
-                    result.GlobalAxis = "X";
-                    result.Sign = 1.0;
-                    result.Description = "Global X";
-                }
-                else if (localAxis == 2 || direction.Contains("Y"))
-                {
-                    result.Gx = 0; result.Gy = 1.0; result.Gz = 0;
-                    result.GlobalAxis = "Y";
-                    result.Sign = 1.0;
-                    result.Description = "Global Y";
-                }
-                else
-                {
-                    result.Gx = 0; result.Gy = 0; result.Gz = -1.0;
-                    result.GlobalAxis = "Z";
-                    result.Sign = -1.0;
-                    result.Description = "Global Z (default)";
-                }
-
-                return result;
-            }
-
-            // Case 2: LOCAL CoordSys - Need transformation
-            LocalAxesInfo axes = null;
-
-            if (elementType == "Frame")
-                axes = GetFrameLocalAxes(elementName);
-            else if (elementType == "Area")
-                axes = GetAreaLocalAxes(elementName);
-
-            // Transform local axis to global
-            if (axes != null && axes.LocalToGlobal != null)
-            {
-                var (gx, gy, gz) = TransformLocalToGlobal(axes.LocalToGlobal, localAxis);
-                result.Gx = gx;
-                result.Gy = gy;
-                result.Gz = gz;
-
-                // Determine dominant axis
-                double absX = Math.Abs(gx);
-                double absY = Math.Abs(gy);
-                double absZ = Math.Abs(gz);
-
-                if (absX > absY && absX > absZ)
-                {
-                    result.GlobalAxis = "X";
-                    result.Sign = Math.Sign(gx);
-                }
-                else if (absY > absX && absY > absZ)
-                {
-                    result.GlobalAxis = "Y";
-                    result.Sign = Math.Sign(gy);
-                }
-                else
-                {
-                    result.GlobalAxis = "Z";
-                    result.Sign = Math.Sign(gz);
-                }
-
-                result.Description = $"Local {localAxis} ? Global ({gx:F2}, {gy:F2}, {gz:F2})";
-            }
-            else
-            {
-                // Fallback: Assume Local 3 = Gravity
-                if (localAxis == 3 || string.Equals(direction, "Gravity", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Gx = 0; result.Gy = 0; result.Gz = -1.0;
-                    result.GlobalAxis = "Z";
-                    result.Sign = -1.0;
-                    result.Description = "Local 3 (fallback Gravity)";
-                }
-                else
-                {
-                    result.Gx = 0; result.Gy = 0; result.Gz = -1.0;
-                    result.GlobalAxis = "Z";
-                    result.Sign = -1.0;
-                    result.Description = "Unknown (default Gravity)";
-                }
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// NEW: Parse direction string to axis number (1, 2, or 3)
-        /// </summary>
-        private int ParseDirectionToAxis(string direction)
-        {
-            if (string.IsNullOrEmpty(direction)) return 3;
-
-            direction = direction.ToUpperInvariant().Trim();
-
-            if (direction == "1" || direction.Contains("LOCAL-1") || direction.Contains("LOCAL1"))
+            // Check explicit numbers
+            if (dir == "1" || dir.Contains("LOCAL-1") || dir.Contains("LOCAL1"))
                 return 1;
-            if (direction == "2" || direction.Contains("LOCAL-2") || direction.Contains("LOCAL2"))
+            if (dir == "2" || dir.Contains("LOCAL-2") || dir.Contains("LOCAL2"))
                 return 2;
-            if (direction == "3" || direction.Contains("LOCAL-3") || direction.Contains("LOCAL3"))
+            if (dir == "3" || dir.Contains("LOCAL-3") || dir.Contains("LOCAL3"))
                 return 3;
 
-            // Gravity = Local 3
-            if (direction.Contains("GRAVITY") || direction.Contains("GRAV"))
+            // Check keywords
+            if (dir.Contains("GRAVITY") || dir.Contains("GRAV"))
                 return 3;
 
-            return 3; // Default
+            // Default to Gravity for unknown
+            return 3;
         }
 
         /// <summary>
-        /// NEW: Transform local axis to global coordinates
+        /// CORE FUNCTION: Tính Vector l?c t? magnitude và direction string
+        /// 
+        /// LOGIC:
+        /// 1. N?u CoordSys = "GLOBAL": Map tr?c ti?p
+        ///    - "Gravity"/"Z" -> (0, 0, -magnitude)
+        ///    - "X" -> (magnitude, 0, 0)
+        ///    - "Y" -> (0, magnitude, 0)
+        /// 
+        /// 2. N?u CoordSys = "LOCAL": Dùng Inventory
+        ///    - Parse direction string -> Axis number (1, 2, or 3)
+        ///    - Lookup element trong Inventory
+        ///    - Get LocalAxis vector
+        ///    - Multiply: magnitude * LocalAxisVector
+        /// 
+        /// RETURN: Vector3D (Global coordinates)
         /// </summary>
-        private (double X, double Y, double Z) TransformLocalToGlobal(double[] matrix, int localAxis)
+        private Vector3D CalculateForceVector(
+            string elementName, 
+            string elementType, 
+            double magnitude, 
+            string direction, 
+            string coordSys)
         {
-            if (matrix == null || matrix.Length < 9)
-                return (0, 0, -1);
+            // Default to gravity if missing
+            if (string.IsNullOrEmpty(direction))
+                direction = "Gravity";
 
-            // Extract column (localAxis-1) from transformation matrix
-            int col = localAxis - 1;
+            string cs = coordSys?.ToUpperInvariant() ?? "GLOBAL";
 
-            return (matrix[col], matrix[3 + col], matrix[6 + col]);
+            // CASE 1: GLOBAL COORDINATE SYSTEM
+            if (cs.Contains("GLOBAL"))
+            {
+                string dir = direction.ToUpperInvariant();
+
+                if (dir.Contains("GRAVITY") || dir.Contains("GRAV") || dir.Contains("Z"))
+                    return new Vector3D(0, 0, -Math.Abs(magnitude)); // Gravity downward
+
+                if (dir.Contains("X"))
+                    return new Vector3D(magnitude, 0, 0);
+
+                if (dir.Contains("Y"))
+                    return new Vector3D(0, magnitude, 0);
+
+                // Default: Gravity
+                return new Vector3D(0, 0, -Math.Abs(magnitude));
+            }
+
+            // CASE 2: LOCAL COORDINATE SYSTEM - Need Inventory
+            if (_inventory == null)
+            {
+                // FALLBACK: Assume Gravity
+                System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] No inventory, fallback to Gravity for {elementName}");
+                return new Vector3D(0, 0, -Math.Abs(magnitude));
+            }
+
+            // Parse direction to axis number
+            int axisNumber = ParseDirectionString(direction);
+
+            // Lookup element
+            var localAxis = _inventory.GetLocalAxis(elementName, axisNumber);
+            if (!localAxis.HasValue)
+            {
+                // FALLBACK: Element not found in inventory
+                System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Element '{elementName}' not in inventory, fallback to Gravity");
+                return new Vector3D(0, 0, -Math.Abs(magnitude));
+            }
+
+            // Calculate: Force = magnitude * LocalAxisVector
+            return magnitude * localAxis.Value;
         }
 
         #endregion
 
-        // --- Upgraded Local Axes Support ---
-        #region Local Axes Support (UPGRADED)
+        #region High-Level Load Readers (REFACTORED)
 
         /// <summary>
-        /// Local Axes Information - UPGRADED with geometry analysis
-        /// </summary>
-        public class LocalAxesInfo
-        {
-            public string ElementName { get; set; }
-            public string ElementType { get; set; } // "Frame", "Area", "Point"
-            public double Angle { get; set; } // Rotation angle (deg)
-            public bool IsAdvanced { get; set; }
-
-            // NEW: Normal vector for Area (to detect vertical walls)
-            public Vector3D Normal { get; set; }
-
-            // NEW: Transformation matrix [3x3] stored as [0..8]
-            public double[] LocalToGlobal { get; set; }
-
-            // Quick helpers
-            public bool IsVertical => Normal != null && Math.Abs(Normal.Z) < 0.1;
-            public bool IsHorizontal => Normal != null && Math.Abs(Normal.Z) > 0.9;
-        }
-
-        /// <summary>
-        /// Simple 3D vector helper used for axis computations
-        /// </summary>
-        public class Vector3D
-        {
-            public double X, Y, Z;
-            public Vector3D(double x, double y, double z) { X = x; Y = y; Z = z; }
-            public double Length => Math.Sqrt(X * X + Y * Y + Z * Z);
-            public Vector3D Normalize()
-            {
-                double l = Length;
-                if (l < 1e-9) return new Vector3D(0, 0, 1);
-                return new Vector3D(X / l, Y / l, Z / l);
-            }
-            public static Vector3D Cross(Vector3D a, Vector3D b)
-            {
-                return new Vector3D(
-                    a.Y * b.Z - a.Z * b.Y,
-                    a.Z * b.X - a.X * b.Z,
-                    a.X * b.Y - a.Y * b.X);
-            }
-        }
-
-        // Simple cache
-        private Dictionary<string, LocalAxesInfo> _axesCache = new Dictionary<string, LocalAxesInfo>();
-
-        /// <summary>
-        /// UPGRADED: Get Frame Local Axes with transformation matrix built from geometry
-        /// </summary>
-        public LocalAxesInfo GetFrameLocalAxes(string frameName)
-        {
-            if (_axesCache.TryGetValue($"F:{frameName}", out var cached)) return cached;
-            try
-            {
-                double ang = 0; bool advanced = false;
-                int ret = _model.FrameObj.GetLocalAxes(frameName, ref ang, ref advanced);
-                if (ret == 0)
-                {
-                    var info = new LocalAxesInfo
-                    {
-                        ElementName = frameName,
-                        ElementType = "Frame",
-                        Angle = ang,
-                        IsAdvanced = advanced,
-                        LocalToGlobal = BuildFrameTransform(frameName, ang)
-                    };
-                    _axesCache[$"F:{frameName}"] = info;
-                    return info;
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        /// <summary>
-        /// UPGRADED: Get Area Local Axes (compute normal from geometry)
-        /// </summary>
-        public LocalAxesInfo GetAreaLocalAxes(string areaName)
-        {
-            if (_axesCache.TryGetValue($"A:{areaName}", out var cached)) return cached;
-            try
-            {
-                double ang = 0; bool advanced = false;
-                int ret = _model.AreaObj.GetLocalAxes(areaName, ref ang, ref advanced);
-                if (ret == 0)
-                {
-                    var info = new LocalAxesInfo { ElementName = areaName, ElementType = "Area", Angle = ang, IsAdvanced = advanced };
-                    var geom = SapUtils.GetAreaGeometry(areaName);
-                    if (geom != null && geom.BoundaryPoints != null && geom.BoundaryPoints.Count >= 3 && geom.ZValues != null && geom.ZValues.Count >= 3)
-                    {
-                        var p0 = new Vector3D(geom.BoundaryPoints[0].X, geom.BoundaryPoints[0].Y, geom.ZValues[0]);
-                        var p1 = new Vector3D(geom.BoundaryPoints[1].X, geom.BoundaryPoints[1].Y, geom.ZValues[1]);
-                        var p2 = new Vector3D(geom.BoundaryPoints[2].X, geom.BoundaryPoints[2].Y, geom.ZValues[2]);
-                        var v1 = new Vector3D(p1.X - p0.X, p1.Y - p0.Y, p1.Z - p0.Z);
-                        var v2 = new Vector3D(p2.X - p0.X, p2.Y - p0.Y, p2.Z - p0.Z);
-                        info.Normal = Vector3D.Cross(v1, v2).Normalize();
-                        info.LocalToGlobal = BuildAreaTransform(info.Normal, ang);
-                    }
-                    _axesCache[$"A:{areaName}"] = info;
-                    return info;
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        /// <summary>
-        /// Build a simplified transform for a frame using geometry orientation and local angle
-        /// Returns a 3x3 matrix stored row-major [r0c0, r0c1, r0c2, r1c0, ...]
-        /// </summary>
-        private double[] BuildFrameTransform(string frameName, double angleDeg)
-        {
-            var frame = SapUtils.GetFrameGeometry(frameName);
-            if (frame == null) return new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-            double dx = frame.EndPt.X - frame.StartPt.X;
-            double dy = frame.EndPt.Y - frame.StartPt.Y;
-            double dz = frame.Z2 - frame.Z1;
-            double len = Math.Sqrt(dx * dx + dy * dy + dz * dz);
-            if (len < 1e-6) return new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-            double l1x = dx / len, l1y = dy / len, l1z = dz / len;
-            double rad = angleDeg * Math.PI / 180.0; double cos = Math.Cos(rad); double sin = Math.Sin(rad);
-            // Build approximate in-plane vectors
-            double l2x = -l1y * cos, l2y = l1x * cos, l2z = 0;
-            double l3x = -l1y * sin, l3y = l1x * sin, l3z = 1.0;
-            double len2 = Math.Sqrt(l2x * l2x + l2y * l2y + l2z * l2z);
-            double len3 = Math.Sqrt(l3x * l3x + l3y * l3y + l3z * l3z);
-            if (len2 > 1e-6) { l2x /= len2; l2y /= len2; l2z /= len2; }
-            if (len3 > 1e-6) { l3x /= len3; l3y /= len3; l3z /= len3; }
-            return new double[] { l1x, l2x, l3x, l1y, l2y, l3y, l1z, l2z, l3z };
-        }
-
-        /// <summary>
-        /// Build transform for area based on normal and rotation
-        /// </summary>
-        private double[] BuildAreaTransform(Vector3D normal, double angleDeg)
-        {
-            // local3 = normal
-            if (normal == null) return new double[] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-            Vector3D n = normal.Normalize();
-            Vector3D local1;
-            if (Math.Abs(n.Z) > 0.9) local1 = new Vector3D(1, 0, 0);
-            else local1 = Vector3D.Cross(new Vector3D(0, 0, 1), n).Normalize();
-            Vector3D local2 = Vector3D.Cross(n, local1).Normalize();
-            double rad = angleDeg * Math.PI / 180.0; double cos = Math.Cos(rad); double sin = Math.Sin(rad);
-            Vector3D rot1 = new Vector3D(local1.X * cos - local2.X * sin, local1.Y * cos - local2.Y * sin, local1.Z * cos - local2.Z * sin);
-            Vector3D rot2 = new Vector3D(local1.X * sin + local2.X * cos, local1.Y * sin + local2.Y * cos, local1.Z * sin + local2.Z * cos);
-            return new double[] { rot1.X, rot2.X, n.X, rot1.Y, rot2.Y, n.Y, rot1.Z, rot2.Z, n.Z };
-        }
-
-        #endregion
-
-        #region High-Level Load Readers
-
-        /// <summary>
-        /// ??c Frame Distributed Loads v?i Direction ?ã resolve
+        /// ??c Frame Distributed Loads v?i VECTOR-BASED APPROACH
+        /// 
+        /// STRATEGY:
+        /// 1. ??c b?ng d? li?u thô (magnitude, direction string, coordSys)
+        /// 2. G?i CalculateForceVector() ?? tính Vector l?c
+        /// 3. L?u vào RawSapLoad v?i DirectionX/Y/Z ?ã tính s?n
         /// </summary>
         public List<RawSapLoad> ReadFrameDistributedLoads(string patternFilter = null)
         {
@@ -514,37 +312,31 @@ namespace DTS_Engine.Core.Utils
                         continue;
                 }
 
-                double val = schema.GetDouble(r, colFOverLA);
-                val = SapUtils.ConvertLoadToKnPerM(val);
+                // Read raw value
+                double rawVal = schema.GetDouble(r, colFOverLA);
+                double magnitude = Math.Abs(SapUtils.ConvertLoadToKnPerM(rawVal));
 
                 string dir = schema.GetString(r, colDir) ?? "Gravity";
                 string coordSys = schema.GetString(r, colCoordSys) ?? "GLOBAL";
 
-                // Resolve direction
-                var resolved = ResolveDirection(frameName, "Frame", dir, coordSys);
+                // NEW: Calculate Force Vector
+                var forceVector = CalculateForceVector(frameName, "Frame", magnitude, dir, coordSys);
 
                 var raw = new RawSapLoad
                 {
                     ElementName = frameName,
                     LoadPattern = pattern,
-                    Value1 = Math.Abs(val),
+                    Value1 = magnitude,
                     LoadType = "FrameDistributed",
-                    Direction = resolved.ToString(),
-                    GlobalAxis = resolved.GlobalAxis,
-                    DirectionSign = resolved.Sign,
+                    Direction = dir,
                     CoordSys = coordSys,
                     DistStart = schema.GetDouble(r, colAbsDistA),
                     DistEnd = schema.GetDouble(r, colAbsDistB),
-                    ElementZ = frameGeomMap.ContainsKey(frameName) ? frameGeomMap[frameName] : 0,
-
-                    // Global components
-                    DirectionX = val * resolved.Gx,
-                    DirectionY = val * resolved.Gy,
-                    DirectionZ = val * resolved.Gz
+                    ElementZ = frameGeomMap.ContainsKey(frameName) ? frameGeomMap[frameName] : 0
                 };
 
-                // Log suspicious near-zero components
-                LogIfComponentsNearZero(raw, resolved, val);
+                // Set vector components
+                raw.SetForceVector(forceVector);
 
                 loads.Add(raw);
             }
@@ -554,6 +346,7 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>
         /// ??c t?i Area Uniform To Frame (t?i 1 ph??ng/2 ph??ng truy?n vào d?m)
+        /// REFACTORED: Vector-based approach
         /// </summary>
         public List<RawSapLoad> ReadAreaUniformToFrameLoads(string patternFilter = null)
         {
@@ -583,39 +376,37 @@ namespace DTS_Engine.Core.Utils
                 if (string.IsNullOrEmpty(areaName) || string.IsNullOrEmpty(pattern)) continue;
 
                 // Filter
-                if (!string.IsNullOrEmpty(patternFilter) && !pattern.Equals(patternFilter, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.IsNullOrEmpty(patternFilter))
+                {
+                    var patterns = patternFilter.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (!patterns.Any(p => p.Equals(pattern, StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                }
 
-                double val = schema.GetDouble(r, colLoad);
-                val = SapUtils.ConvertLoadToKnPerM2(val); // Convert ??n v?
+                double rawVal = schema.GetDouble(r, colLoad);
+                double magnitude = Math.Abs(SapUtils.ConvertLoadToKnPerM2(rawVal));
 
                 string dir = schema.GetString(r, colDir) ?? "Gravity";
                 string sys = schema.GetString(r, colSys) ?? "GLOBAL";
                 string distType = schema.GetString(r, colDist) ?? "Two way";
 
-                // Tính vector h??ng
-                var resolved = ResolveDirection(areaName, "Area", dir, sys);
+                // NEW: Calculate Force Vector
+                var forceVector = CalculateForceVector(areaName, "Area", magnitude, dir, sys);
                 double z = areaGeomMap.ContainsKey(areaName) ? areaGeomMap[areaName] : 0;
 
                 var raw = new RawSapLoad
                 {
                     ElementName = areaName,
                     LoadPattern = pattern,
-                    Value1 = Math.Abs(val),
+                    Value1 = magnitude,
                     LoadType = "AreaUniformToFrame",
-                    Direction = resolved.GlobalAxis,
-                    GlobalAxis = resolved.GlobalAxis,
-                    DirectionSign = resolved.Sign,
+                    Direction = dir,
                     CoordSys = sys,
                     ElementZ = z,
-                    DistributionType = distType,
-                    // Vector components
-                    DirectionX = val * resolved.Gx,
-                    DirectionY = val * resolved.Gy,
-                    DirectionZ = val * resolved.Gz
+                    DistributionType = distType
                 };
 
-                LogIfComponentsNearZero(raw, resolved, val);
-
+                raw.SetForceVector(forceVector);
                 loads.Add(raw);
             }
             return loads;
@@ -654,6 +445,7 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>
         /// ??c Area Uniform Loads v?i Direction ?ã resolve
+        /// REFACTORED: Vector-based approach
         /// </summary>
         public List<RawSapLoad> ReadAreaUniformLoads(string patternFilter = null)
         {
@@ -690,34 +482,27 @@ namespace DTS_Engine.Core.Utils
                         continue;
                 }
 
-                double val = schema.GetDouble(r, colUnifLoad);
-                val = SapUtils.ConvertLoadToKnPerM2(val);
+                double rawVal = schema.GetDouble(r, colUnifLoad);
+                double magnitude = Math.Abs(SapUtils.ConvertLoadToKnPerM2(rawVal));
 
                 string dir = schema.GetString(r, colDir) ?? "Gravity";
                 string coordSys = schema.GetString(r, colCoordSys) ?? "Local";
 
-                var resolved = ResolveDirection(areaName, "Area", dir, coordSys);
+                // NEW: Calculate Force Vector
+                var forceVector = CalculateForceVector(areaName, "Area", magnitude, dir, coordSys);
 
                 var raw = new RawSapLoad
                 {
                     ElementName = areaName,
                     LoadPattern = pattern,
-                    Value1 = Math.Abs(val),
+                    Value1 = magnitude,
                     LoadType = "AreaUniform",
-                    Direction = resolved.ToString(),
-                    GlobalAxis = resolved.GlobalAxis,
-                    DirectionSign = resolved.Sign,
+                    Direction = dir,
                     CoordSys = coordSys,
-                    ElementZ = areaGeomMap.ContainsKey(areaName) ? areaGeomMap[areaName] : 0,
-
-                    // Global components
-                    DirectionX = val * resolved.Gx,
-                    DirectionY = val * resolved.Gy,
-                    DirectionZ = val * resolved.Gz
+                    ElementZ = areaGeomMap.ContainsKey(areaName) ? areaGeomMap[areaName] : 0
                 };
 
-                LogIfComponentsNearZero(raw, resolved, val);
-
+                raw.SetForceVector(forceVector);
                 loads.Add(raw);
             }
 
@@ -726,6 +511,7 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>
         /// ??c Joint Loads (Force) - ??Y ?? F1, F2, F3
+        /// REFACTORED: Vector-based approach
         /// </summary>
         public List<RawSapLoad> ReadJointLoads(string patternFilter = null)
         {
@@ -773,88 +559,61 @@ namespace DTS_Engine.Core.Utils
                 // Thêm 3 component riêng bi?t
                 if (Math.Abs(f1) > 0.001)
                 {
-                    var resolved = ResolveDirection(joint, "Joint", "1", coordSys);
-                    double convertedF1 = SapUtils.ConvertForceToKn(f1);
+                    double magnitude = Math.Abs(SapUtils.ConvertForceToKn(f1));
+                    var forceVector = CalculateForceVector(joint, "Point", magnitude, "1", coordSys);
 
                     var raw = new RawSapLoad
                     {
                         ElementName = joint,
                         LoadPattern = pattern,
-                        Value1 = Math.Abs(convertedF1),
+                        Value1 = magnitude,
                         LoadType = "PointForce",
-                        Direction = resolved.ToString(),
-                        GlobalAxis = resolved.GlobalAxis,
-                        DirectionSign = resolved.Sign * Math.Sign(f1),
+                        Direction = "Local-1",
                         CoordSys = coordSys,
-                        ElementZ = z,
-
-                        // Global components
-                        DirectionX = convertedF1 * resolved.Gx,
-                        DirectionY = convertedF1 * resolved.Gy,
-                        DirectionZ = convertedF1 * resolved.Gz
-
+                        ElementZ = z
                     };
 
-                    LogIfComponentsNearZero(raw, resolved, convertedF1);
-
+                    raw.SetForceVector(forceVector * Math.Sign(f1));
                     loads.Add(raw);
                 }
 
                 if (Math.Abs(f2) > 0.001)
                 {
-                    var resolved = ResolveDirection(joint, "Joint", "2", coordSys);
-                    double convertedF2 = SapUtils.ConvertForceToKn(f2);
+                    double magnitude = Math.Abs(SapUtils.ConvertForceToKn(f2));
+                    var forceVector = CalculateForceVector(joint, "Point", magnitude, "2", coordSys);
 
                     var raw = new RawSapLoad
                     {
                         ElementName = joint,
                         LoadPattern = pattern,
-                        Value1 = Math.Abs(convertedF2),
+                        Value1 = magnitude,
                         LoadType = "PointForce",
-                        Direction = resolved.ToString(),
-                        GlobalAxis = resolved.GlobalAxis,
-                        DirectionSign = resolved.Sign * Math.Sign(f2),
+                        Direction = "Local-2",
                         CoordSys = coordSys,
-                        ElementZ = z,
-
-                        // Global components
-                        DirectionX = convertedF2 * resolved.Gx,
-                        DirectionY = convertedF2 * resolved.Gy,
-                        DirectionZ = convertedF2 * resolved.Gz
-
+                        ElementZ = z
                     };
 
-                    LogIfComponentsNearZero(raw, resolved, convertedF2);
-
+                    raw.SetForceVector(forceVector * Math.Sign(f2));
                     loads.Add(raw);
                 }
 
                 if (Math.Abs(f3) > 0.001)
                 {
-                    var resolved = ResolveDirection(joint, "Joint", "3", coordSys);
-                    double convertedF3 = SapUtils.ConvertForceToKn(f3);
+                    double magnitude = Math.Abs(SapUtils.ConvertForceToKn(f3));
+                    var forceVector = CalculateForceVector(joint, "Point", magnitude, "3", coordSys);
 
                     var raw = new RawSapLoad
                     {
                         ElementName = joint,
                         LoadPattern = pattern,
-                        Value1 = Math.Abs(convertedF3),
+                        Value1 = magnitude,
                         LoadType = "PointForce",
-                        Direction = resolved.ToString(),
-                        GlobalAxis = resolved.GlobalAxis,
-                        DirectionSign = resolved.Sign * Math.Sign(f3),
+                        Direction = "Local-3",
                         CoordSys = coordSys,
-                        ElementZ = z,
-
-                        // Global components
-                        DirectionX = convertedF3 * resolved.Gx,
-                        DirectionY = convertedF3 * resolved.Gy,
-                        DirectionZ = convertedF3 * resolved.Gz
-
+                        ElementZ = z
                     };
 
-                    LogIfComponentsNearZero(raw, resolved, convertedF3);
-
+                    raw.SetForceVector(forceVector * Math.Sign(f3));
                     loads.Add(raw);
                 }
             }
@@ -863,10 +622,12 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Read all loads (frame/area/joint) and also compute Base Reaction intelligently
-        /// Returns list of loads and outputs baseReaction in kN
+        /// Read all loads (frame/area/joint) - RENAMED from ReadAllLoadsWithBaseReaction
+        /// BASE REACTION REMOVED: Ng??i dùng s? check th? công trên SAP2000
+        /// 
+        /// Returns list of loads with full Vector components (DirectionX/Y/Z)
         /// </summary>
-        public List<RawSapLoad> ReadAllLoadsWithBaseReaction(string patternFilter, out double baseReaction)
+        public List<RawSapLoad> ReadAllLoads(string patternFilter)
         {
             var loads = new List<RawSapLoad>();
             loads.AddRange(ReadFrameDistributedLoads(patternFilter));
@@ -877,84 +638,14 @@ namespace DTS_Engine.Core.Utils
             // Include frame point loads (legacy)
             try { loads.AddRange(SapUtils.GetAllFramePointLoads(patternFilter)); } catch { }
 
-            // Compute dominant direction
-            double totalX = loads.Sum(l => Math.Abs(l.DirectionX));
-            double totalY = loads.Sum(l => Math.Abs(l.DirectionY));
-            double totalZ = loads.Sum(l => Math.Abs(l.DirectionZ));
-
-            bool isLateral = Math.Max(totalX, totalY) > totalZ * 0.5;
-            string dominantDir = "Z";
-            if (isLateral) dominantDir = totalX > totalY ? "X" : "Y";
-
-            baseReaction = ReadBaseReaction(patternFilter, dominantDir);
             return loads;
-        }
-
-        private void LogIfComponentsNearZero(RawSapLoad load, ResolvedDirection resolved, double originalVal)
-        {
-            try
-            {
-                double absVal = Math.Abs(originalVal);
-                double relThreshold = Math.Max(COMPONENT_NEAR_ZERO_ABS, absVal * 1e-3);
-
-                // If resolved indicates a component but the computed global component is almost zero -> log
-                if (Math.Abs(resolved.Gx) > 0.001 && Math.Abs(load.DirectionX) < relThreshold)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Warning: X component near-zero for {load.LoadType} {load.ElementName} Pattern={load.LoadPattern} Dir={load.Direction} Res=({resolved.Gx:F3},{resolved.Gy:F3},{resolved.Gz:F3}) Val={originalVal:E}");
-                }
-                if (Math.Abs(resolved.Gy) > 0.001 && Math.Abs(load.DirectionY) < relThreshold)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Warning: Y component near-zero for {load.LoadType} {load.ElementName} Pattern={load.LoadPattern} Dir={load.Direction} Res=({resolved.Gx:F3},{resolved.Gy:F3},{resolved.Gz:F3}) Val={originalVal:E}");
-                }
-                if (Math.Abs(resolved.Gz) > 0.001 && Math.Abs(load.DirectionZ) < relThreshold)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Warning: Z component near-zero for {load.LoadType} {load.ElementName} Pattern={load.LoadPattern} Dir={load.Direction} Res=({resolved.Gx:F3},{resolved.Gy:F3},{resolved.Gz:F3}) Val={originalVal:E}");
-                }
-            }
-            catch { }
         }
 
         #endregion
 
-        #region Direction Vector Resolution (FIX BUG #1 + #3)
+        #region Direction Vector Resolution (FIX BUG #1 + #3) - DEPRECATED
 
-        /// <summary>
-        /// Phân tích Direction String và CoordSys ?? tính vector h??ng (X, Y, Z).
-        /// 
-        /// ?? LOGIC:
-        /// - "Gravity" / "GravProj" ? (0, 0, -1) * magnitude
-        /// - "X" / "Y" / "Z" trong GLOBAL ? (±1, 0, 0) etc.
-        /// - Local Dir ? C?n frame angle (t?m b? qua, coi nh? Global)
-        /// </summary>
-        private (double X, double Y, double Z) ResolveDirectionVector(string direction, string coordSys, double magnitude)
-        {
-            if (string.IsNullOrEmpty(direction)) return (0, 0, 0);
-
-            var dir = direction.ToUpperInvariant().Trim();
-            var cs = coordSys?.ToUpperInvariant().Trim() ?? "GLOBAL";
-
-            // Case 1: Gravity (Vertical Down)
-            if (dir.Contains("GRAV") || dir.Contains("Z"))
-                return (0, 0, Math.Abs(magnitude)); // Z-component d??ng (vì magnitude ?ã abs)
-
-            // Case 2: Global X
-            if (cs.Contains("GLOBAL") && (dir.Contains("X") || dir.Equals("1")))
-                return (Math.Abs(magnitude), 0, 0);
-
-            // Case 3: Global Y
-            if (cs.Contains("GLOBAL") && (dir.Contains("Y") || dir.Equals("2")))
-                return (0, Math.Abs(magnitude), 0);
-
-            // Case 4: Projected X/Y
-            if (dir.Contains("XPROJ") || dir.Contains("X PROJ"))
-                return (Math.Abs(magnitude), 0, 0);
-
-            if (dir.Contains("YPROJ") || dir.Contains("Y PROJ"))
-                return (0, Math.Abs(magnitude), 0);
-
-            // Default: Vertical (safest assumption for unknown)
-            return (0, 0, Math.Abs(magnitude));
-        }
+        // XÓA B? HOÀN TOÀN - Logic c? không còn s? d?ng
 
         #endregion
     }
