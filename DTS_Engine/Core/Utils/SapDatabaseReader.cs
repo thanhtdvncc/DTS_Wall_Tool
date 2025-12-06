@@ -22,6 +22,7 @@ namespace DTS_Engine.Core.Utils
     /// </summary>
     public class SapDatabaseReader
     {
+        private const double COMPONENT_NEAR_ZERO_ABS = 1e-6;
         private readonly cSapModel _model;
         private readonly Dictionary<string, TableSchema> _schemaCache;
 
@@ -522,7 +523,7 @@ namespace DTS_Engine.Core.Utils
                 // Resolve direction
                 var resolved = ResolveDirection(frameName, "Frame", dir, coordSys);
 
-                loads.Add(new RawSapLoad
+                var raw = new RawSapLoad
                 {
                     ElementName = frameName,
                     LoadPattern = pattern,
@@ -540,10 +541,115 @@ namespace DTS_Engine.Core.Utils
                     DirectionX = val * resolved.Gx,
                     DirectionY = val * resolved.Gy,
                     DirectionZ = val * resolved.Gz
-                });
+                };
+
+                // Log suspicious near-zero components
+                LogIfComponentsNearZero(raw, resolved, val);
+
+                loads.Add(raw);
             }
 
             return loads;
+        }
+
+        /// <summary>
+        /// ??c t?i Area Uniform To Frame (t?i 1 ph??ng/2 ph??ng truy?n vào d?m)
+        /// </summary>
+        public List<RawSapLoad> ReadAreaUniformToFrameLoads(string patternFilter = null)
+        {
+            var loads = new List<RawSapLoad>();
+            var schema = GetTableSchema("Area Loads - Uniform To Frame", patternFilter);
+            if (schema.RecordCount == 0) return loads;
+
+            // Mapping c?t
+            string colArea = schema.FindColumn("Area", "Element");
+            string colPattern = schema.FindColumn("LoadPat", "OutputCase");
+            string colLoad = schema.FindColumn("UnifLoad", "LoadValue");
+            string colDir = schema.FindColumn("Dir", "Direction");
+            string colSys = schema.FindColumn("CoordSys", "CSys");
+            string colDist = schema.FindColumn("DistType", "Distribution");
+
+            if (colArea == null || colPattern == null) return loads;
+
+            // Cache geometry Area ?? l?y cao ?? Z
+            var areaGeomMap = new Dictionary<string, double>();
+            var areas = SapUtils.GetAllAreasGeometry();
+            foreach (var a in areas) areaGeomMap[a.Name] = a.AverageZ;
+
+            for (int r = 0; r < schema.RecordCount; r++)
+            {
+                string areaName = schema.GetString(r, colArea);
+                string pattern = schema.GetString(r, colPattern);
+                if (string.IsNullOrEmpty(areaName) || string.IsNullOrEmpty(pattern)) continue;
+
+                // Filter
+                if (!string.IsNullOrEmpty(patternFilter) && !pattern.Equals(patternFilter, StringComparison.OrdinalIgnoreCase)) continue;
+
+                double val = schema.GetDouble(r, colLoad);
+                val = SapUtils.ConvertLoadToKnPerM2(val); // Convert ??n v?
+
+                string dir = schema.GetString(r, colDir) ?? "Gravity";
+                string sys = schema.GetString(r, colSys) ?? "GLOBAL";
+                string distType = schema.GetString(r, colDist) ?? "Two way";
+
+                // Tính vector h??ng
+                var resolved = ResolveDirection(areaName, "Area", dir, sys);
+                double z = areaGeomMap.ContainsKey(areaName) ? areaGeomMap[areaName] : 0;
+
+                var raw = new RawSapLoad
+                {
+                    ElementName = areaName,
+                    LoadPattern = pattern,
+                    Value1 = Math.Abs(val),
+                    LoadType = "AreaUniformToFrame",
+                    Direction = resolved.GlobalAxis,
+                    GlobalAxis = resolved.GlobalAxis,
+                    DirectionSign = resolved.Sign,
+                    CoordSys = sys,
+                    ElementZ = z,
+                    DistributionType = distType,
+                    // Vector components
+                    DirectionX = val * resolved.Gx,
+                    DirectionY = val * resolved.Gy,
+                    DirectionZ = val * resolved.Gz
+                };
+
+                LogIfComponentsNearZero(raw, resolved, val);
+
+                loads.Add(raw);
+            }
+            return loads;
+        }
+
+        /// <summary>
+        /// ??c ph?n l?c ?áy (Base Reaction) ?? ki?m tra t?ng t?i
+        /// </summary>
+        public double ReadBaseReaction(string loadPattern, string direction = "Z")
+        {
+            var schema = GetTableSchema("Base Reactions", loadPattern);
+            if (schema.RecordCount == 0) return 0;
+
+            string colCase = schema.FindColumn("OutputCase", "LoadCase", "LoadPat");
+            
+            // Xác ??nh c?t l?c d?a trên h??ng yêu c?u
+            string targetColName = "GlobalFZ"; // M?c ??nh Z
+            if (direction == "X") targetColName = "GlobalFX";
+            if (direction == "Y") targetColName = "GlobalFY";
+            
+            string colForce = schema.FindColumn(targetColName, direction == "X" ? "FX" : (direction == "Y" ? "FY" : "FZ"));
+
+            if (colCase == null || colForce == null) return 0;
+
+            for (int i = 0; i < schema.RecordCount; i++)
+            {
+                string rowCase = schema.GetString(i, colCase);
+                if (string.Equals(rowCase, loadPattern, StringComparison.OrdinalIgnoreCase))
+                {
+                    double val = schema.GetDouble(i, colForce);
+                    return SapUtils.ConvertForceToKn(val); // Convert ??n v?
+                }
+            }
+            return 0;
         }
 
         /// <summary>
@@ -592,7 +698,7 @@ namespace DTS_Engine.Core.Utils
 
                 var resolved = ResolveDirection(areaName, "Area", dir, coordSys);
 
-                loads.Add(new RawSapLoad
+                var raw = new RawSapLoad
                 {
                     ElementName = areaName,
                     LoadPattern = pattern,
@@ -608,7 +714,11 @@ namespace DTS_Engine.Core.Utils
                     DirectionX = val * resolved.Gx,
                     DirectionY = val * resolved.Gy,
                     DirectionZ = val * resolved.Gz
-                });
+                };
+
+                LogIfComponentsNearZero(raw, resolved, val);
+
+                loads.Add(raw);
             }
 
             return loads;
@@ -666,7 +776,7 @@ namespace DTS_Engine.Core.Utils
                     var resolved = ResolveDirection(joint, "Joint", "1", coordSys);
                     double convertedF1 = SapUtils.ConvertForceToKn(f1);
 
-                    loads.Add(new RawSapLoad
+                    var raw = new RawSapLoad
                     {
                         ElementName = joint,
                         LoadPattern = pattern,
@@ -682,7 +792,12 @@ namespace DTS_Engine.Core.Utils
                         DirectionX = convertedF1 * resolved.Gx,
                         DirectionY = convertedF1 * resolved.Gy,
                         DirectionZ = convertedF1 * resolved.Gz
-                    });
+
+                    };
+
+                    LogIfComponentsNearZero(raw, resolved, convertedF1);
+
+                    loads.Add(raw);
                 }
 
                 if (Math.Abs(f2) > 0.001)
@@ -690,7 +805,7 @@ namespace DTS_Engine.Core.Utils
                     var resolved = ResolveDirection(joint, "Joint", "2", coordSys);
                     double convertedF2 = SapUtils.ConvertForceToKn(f2);
 
-                    loads.Add(new RawSapLoad
+                    var raw = new RawSapLoad
                     {
                         ElementName = joint,
                         LoadPattern = pattern,
@@ -706,7 +821,12 @@ namespace DTS_Engine.Core.Utils
                         DirectionX = convertedF2 * resolved.Gx,
                         DirectionY = convertedF2 * resolved.Gy,
                         DirectionZ = convertedF2 * resolved.Gz
-                    });
+
+                    };
+
+                    LogIfComponentsNearZero(raw, resolved, convertedF2);
+
+                    loads.Add(raw);
                 }
 
                 if (Math.Abs(f3) > 0.001)
@@ -714,7 +834,7 @@ namespace DTS_Engine.Core.Utils
                     var resolved = ResolveDirection(joint, "Joint", "3", coordSys);
                     double convertedF3 = SapUtils.ConvertForceToKn(f3);
 
-                    loads.Add(new RawSapLoad
+                    var raw = new RawSapLoad
                     {
                         ElementName = joint,
                         LoadPattern = pattern,
@@ -730,11 +850,68 @@ namespace DTS_Engine.Core.Utils
                         DirectionX = convertedF3 * resolved.Gx,
                         DirectionY = convertedF3 * resolved.Gy,
                         DirectionZ = convertedF3 * resolved.Gz
-                    });
+
+                    };
+
+                    LogIfComponentsNearZero(raw, resolved, convertedF3);
+
+                    loads.Add(raw);
                 }
             }
 
             return loads;
+        }
+
+        /// <summary>
+        /// Read all loads (frame/area/joint) and also compute Base Reaction intelligently
+        /// Returns list of loads and outputs baseReaction in kN
+        /// </summary>
+        public List<RawSapLoad> ReadAllLoadsWithBaseReaction(string patternFilter, out double baseReaction)
+        {
+            var loads = new List<RawSapLoad>();
+            loads.AddRange(ReadFrameDistributedLoads(patternFilter));
+            loads.AddRange(ReadAreaUniformLoads(patternFilter));
+            loads.AddRange(ReadAreaUniformToFrameLoads(patternFilter));
+            loads.AddRange(ReadJointLoads(patternFilter));
+
+            // Include frame point loads (legacy)
+            try { loads.AddRange(SapUtils.GetAllFramePointLoads(patternFilter)); } catch { }
+
+            // Compute dominant direction
+            double totalX = loads.Sum(l => Math.Abs(l.DirectionX));
+            double totalY = loads.Sum(l => Math.Abs(l.DirectionY));
+            double totalZ = loads.Sum(l => Math.Abs(l.DirectionZ));
+
+            bool isLateral = Math.Max(totalX, totalY) > totalZ * 0.5;
+            string dominantDir = "Z";
+            if (isLateral) dominantDir = totalX > totalY ? "X" : "Y";
+
+            baseReaction = ReadBaseReaction(patternFilter, dominantDir);
+            return loads;
+        }
+
+        private void LogIfComponentsNearZero(RawSapLoad load, ResolvedDirection resolved, double originalVal)
+        {
+            try
+            {
+                double absVal = Math.Abs(originalVal);
+                double relThreshold = Math.Max(COMPONENT_NEAR_ZERO_ABS, absVal * 1e-3);
+
+                // If resolved indicates a component but the computed global component is almost zero -> log
+                if (Math.Abs(resolved.Gx) > 0.001 && Math.Abs(load.DirectionX) < relThreshold)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Warning: X component near-zero for {load.LoadType} {load.ElementName} Pattern={load.LoadPattern} Dir={load.Direction} Res=({resolved.Gx:F3},{resolved.Gy:F3},{resolved.Gz:F3}) Val={originalVal:E}");
+                }
+                if (Math.Abs(resolved.Gy) > 0.001 && Math.Abs(load.DirectionY) < relThreshold)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Warning: Y component near-zero for {load.LoadType} {load.ElementName} Pattern={load.LoadPattern} Dir={load.Direction} Res=({resolved.Gx:F3},{resolved.Gy:F3},{resolved.Gz:F3}) Val={originalVal:E}");
+                }
+                if (Math.Abs(resolved.Gz) > 0.001 && Math.Abs(load.DirectionZ) < relThreshold)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Warning: Z component near-zero for {load.LoadType} {load.ElementName} Pattern={load.LoadPattern} Dir={load.Direction} Res=({resolved.Gx:F3},{resolved.Gy:F3},{resolved.Gz:F3}) Val={originalVal:E}");
+                }
+            }
+            catch { }
         }
 
         #endregion

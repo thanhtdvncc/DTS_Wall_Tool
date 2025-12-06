@@ -94,11 +94,13 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Chạy kiểm toán cho một Load Pattern cụ thể
-        /// Updated: use GroupLoadsByStory logic (sàn dưới đỡ tường trên)
+        /// Uses SapDatabaseReader to get robust direction resolution and global components
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
+            // Refresh geometry cache
             CacheGeometry();
+
             var report = new AuditReport
             {
                 LoadPattern = loadPattern,
@@ -107,22 +109,25 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
+            var dbReader = new SapDatabaseReader(SapUtils.GetModel());
             var allLoads = new List<RawSapLoad>();
-            allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads(loadPattern));
-            allLoads.AddRange(SapUtils.GetAllFramePointLoads(loadPattern));
-            allLoads.AddRange(SapUtils.GetAllAreaUniformLoads(loadPattern));
-            allLoads.AddRange(SapUtils.GetAllAreaUniformToFrameLoads(loadPattern));
-            allLoads.AddRange(SapUtils.GetAllPointLoads(loadPattern));
 
-            // Strict filtering: ensure only loads that exactly match the requested pattern are processed
+            // Read loads using new reader (provides DirectionX/Y/Z)
+            allLoads.AddRange(dbReader.ReadFrameDistributedLoads(loadPattern));
+            allLoads.AddRange(dbReader.ReadAreaUniformLoads(loadPattern));
+            allLoads.AddRange(dbReader.ReadAreaUniformToFrameLoads(loadPattern));
+            allLoads.AddRange(dbReader.ReadJointLoads(loadPattern));
+
+            // Keep legacy frame point loads (already reliable)
+            allLoads.AddRange(SapUtils.GetAllFramePointLoads(loadPattern));
+
+            // Final strict filtering
             allLoads = allLoads.Where(l => string.Equals(l.LoadPattern, loadPattern, StringComparison.OrdinalIgnoreCase)).ToList();
 
             if (allLoads.Count == 0) return report;
 
-            // NEW LOGIC: group loads by story using "sàn dưới đỡ tường trên" logic
+            // Group and process by story
             var storyBuckets = GroupLoadsByStory(allLoads);
-
-            // iterate from top to bottom stories for reporting
             foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
                 var storyGroup = ProcessStory(bucket.StoryName, bucket.Elevation, bucket.Loads);
@@ -130,19 +135,19 @@ namespace DTS_Engine.Core.Engines
                     report.Stories.Add(storyGroup);
             }
 
-            // Lấy Base Reaction (nếu tải ngang thì lấy Max(X,Y,Z))
+            // Smart Base Reaction: decide direction using summed global components
             if (CheckIfLateralLoad(allLoads))
             {
-                double rx = SapUtils.GetBaseReaction(loadPattern, "X");
-                double ry = SapUtils.GetBaseReaction(loadPattern, "Y");
-                report.SapBaseReaction = Math.Abs(rx) > Math.Abs(ry) ? rx : ry;
+                double totalX = allLoads.Sum(l => Math.Abs(l.DirectionX));
+                double totalY = allLoads.Sum(l => Math.Abs(l.DirectionY));
+                string dominantDir = totalX > totalY ? "X" : "Y";
+                report.SapBaseReaction = dbReader.ReadBaseReaction(loadPattern, dominantDir);
             }
             else
             {
-                report.SapBaseReaction = SapUtils.GetBaseReaction(loadPattern, "Z");
+                report.SapBaseReaction = dbReader.ReadBaseReaction(loadPattern, "Z");
             }
 
-            // If reaction is zero (no analysis/results) mark as not analyzed
             if (Math.Abs(report.SapBaseReaction) < 0.001) report.IsAnalyzed = false;
 
             return report;
