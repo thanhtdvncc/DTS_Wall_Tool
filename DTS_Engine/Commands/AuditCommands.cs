@@ -27,8 +27,8 @@ namespace DTS_Engine.Commands
         #region Main Audit Command
 
         /// <summary>
-        /// L?nh chính ?? ki?m toán t?i tr?ng SAP2000.
-        /// Nh?p các Load Pattern c?n ki?m tra, xu?t báo cáo ra file text.
+        /// Lệnh chính để kiểm toán tải trọng SAP2000.
+        /// Nhập các Load Pattern cần kiểm tra, xuất báo cáo ra file text.
         /// </summary>
         [CommandMethod("DTS_AUDIT_SAP2000")]
         public void DTS_AUDIT_SAP2000()
@@ -37,6 +37,7 @@ namespace DTS_Engine.Commands
             {
                 WriteMessage("\n==============================================");
                 WriteMessage("      DTS ENGINE - AUDIT TẢI TRỌNG SAP2000     ");
+                WriteMessage("      (DATABASE TABLE MODE - HIGH ACCURACY)    ");
                 WriteMessage("==============================================");
 
                 var langOpt = new PromptKeywordOptions("\nChọn ngôn ngữ báo cáo [English/Vietnamese]: ");
@@ -54,37 +55,45 @@ namespace DTS_Engine.Commands
                 WriteMessage("\nĐang quét dữ liệu Load Patterns...");
                 var activePatterns = SapUtils.GetActiveLoadPatterns();
                 
-                // Lọc bỏ pattern rỗng (Total = 0) nếu danh sách quá dài
+                // ⚠️ FIX1: Lọc TRƯỚC KHI giới hạn menu để tránh mất dữ liệu
                 var nonEmptyPatterns = activePatterns.Where(p => p.TotalEstimatedLoad > 0.001).ToList();
                 if (nonEmptyPatterns.Count == 0) nonEmptyPatterns = activePatterns; // Fallback
 
-                // 3. Xây dựng Menu chọn
-                var pko = new PromptKeywordOptions("\nChọn Load Pattern cần kiểm toán:");
+                // ⚠️ FIX2: Tạo danh sách top 10 patterns để hiển thị
+                int maxMenu = Math.Min(10, nonEmptyPatterns.Count);
+                var topPatterns = nonEmptyPatterns.Take(maxMenu).ToList();
+
+                // 3. Hiển thị danh sách đầy đủ trước khi prompt
+                WriteMessage("\nDanh sách Pattern có tải trọng lớn nhất:");
+                for (int i = 0; i < topPatterns.Count; i++)
+                {
+                    WriteMessage($"  [{i + 1}] {topPatterns[i].Name} (Est: {topPatterns[i].TotalEstimatedLoad:N0})");
+                }
+                WriteMessage("\nLựa chọn:");
+                WriteMessage("  - Nhập SỐ THỨ TỰ [1-10] để chọn pattern");
+                WriteMessage("  - Nhập 'O' để nhập nhiều Pattern (cách nhau bởi dấu phẩy)");
+                WriteMessage("  - Nhập 'A' để kiểm toán toàn bộ");
+
+                // ⚠️ FIX3: Dùng PromptKeywordOptions với keywords ĐƠN GIẢN
+                var pko = new PromptKeywordOptions("\nLựa chọn:");
                 pko.AllowNone = true;
 
-                // Thêm 10 pattern nặng nhất vào menu
-                int maxMenu = Math.Min(10, nonEmptyPatterns.Count);
-                for (int i = 0; i < maxMenu; i++)
+                // Thêm keywords dạng số (1..10)
+                for (int i = 0; i < topPatterns.Count; i++)
                 {
-                    pko.Keywords.Add(nonEmptyPatterns[i].Name);
+                    pko.Keywords.Add((i + 1).ToString());
                 }
                 
-                if (nonEmptyPatterns.Count > maxMenu) pko.Keywords.Add("Other");
+                pko.Keywords.Add("Other");
                 pko.Keywords.Add("All");
-                pko.Keywords.Default = maxMenu > 0 ? nonEmptyPatterns[0].Name : "All";
-
-                // Hiển thị danh sách gợi ý
-                WriteMessage("\nDanh sách Pattern có tải trọng lớn nhất:");
-                for (int i = 0; i < maxMenu; i++)
-                {
-                    WriteMessage($"  - {nonEmptyPatterns[i].Name} (Est: {nonEmptyPatterns[i].TotalEstimatedLoad:N0})");
-                }
+                pko.Keywords.Default = "1";
 
                 PromptResult res = Ed.GetKeywords(pko);
                 if (res.Status != PromptStatus.OK) return;
 
                 var selectedPatterns = new List<string>();
 
+                // ⚠️ FIX4: Parse dựa trên SỐ THỨ TỰ thay vì tên pattern
                 if (res.StringResult == "All")
                 {
                     selectedPatterns = nonEmptyPatterns.Select(p => p.Name).ToList();
@@ -95,7 +104,7 @@ namespace DTS_Engine.Commands
                     var strRes = Ed.GetString(strOpt);
                     if (strRes.Status == PromptStatus.OK && !string.IsNullOrWhiteSpace(strRes.StringResult))
                     {
-                        // ⚠️ FIX: Parse multiple delimiters and ensure distinct patterns
+                        // Parse multiple delimiters and ensure distinct patterns
                         selectedPatterns = strRes.StringResult
                             .Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
                             .Select(s => s.Trim())
@@ -106,7 +115,16 @@ namespace DTS_Engine.Commands
                 }
                 else
                 {
-                    selectedPatterns.Add(res.StringResult);
+                    // User chọn số thứ tự -> convert sang tên pattern
+                    if (int.TryParse(res.StringResult, out int index) && index >= 1 && index <= topPatterns.Count)
+                    {
+                        selectedPatterns.Add(topPatterns[index - 1].Name);
+                    }
+                    else
+                    {
+                        WriteError($"Lựa chọn không hợp lệ: {res.StringResult}");
+                        return;
+                    }
                 }
 
                 if (selectedPatterns.Count == 0)
@@ -138,12 +156,19 @@ namespace DTS_Engine.Commands
 
                 foreach (var pat in selectedPatterns)
                 {
-                    WriteMessage($"Đang xử lý {pat}...");
+                    // Kiểm tra Pattern có tồn tại không
+                    if (!SapUtils.LoadPatternExists(pat))
+                    {
+                        WriteWarning($"  -> Pattern '{pat}' không tồn tại trong SAP. Bỏ qua.");
+                        continue;
+                    }
+
+                    WriteMessage($"\n>> Đang Audit pattern: {pat}...");
                     var report = engine.RunSingleAudit(pat);
                     
-                    if (report.Stories.Count == 0)
+                    if (report.Stories.Count == 0 && Math.Abs(report.SapBaseReaction) < 0.001)
                     {
-                        WriteWarning($"  -> {pat}: Không tìm thấy dữ liệu hoặc tải trọng = 0.");
+                        WriteWarning($"   [Empty] Pattern {pat} không có dữ liệu tải trọng.");
                         continue;
                     }
 
@@ -158,25 +183,25 @@ namespace DTS_Engine.Commands
                     File.WriteAllText(filePath, content, Encoding.UTF8);
                     reportFiles.Add(filePath);
                     
-                    WriteMessage($"  -> Tạo file: {fileName}");
+                    WriteMessage($"   [OK] Đã tạo báo cáo: {fileName}");
                 }
 
                 // 7. Kết quả
                 if (reportFiles.Count > 0)
                 {
-                    WriteSuccess($"Đã tạo {reportFiles.Count} báo cáo.");
+                    WriteSuccess($"\nHoàn thành! Tổng cộng {reportFiles.Count} báo cáo.");
+                    WriteMessage($"Thư mục lưu: {tempFolder}");
                     
                     // Mở file đầu tiên ngay lập tức (UX: Instant Feedback)
                     try 
                     { 
                         Process.Start(reportFiles[0]); 
-                        if (reportFiles.Count > 1) WriteMessage($"Các file khác nằm tại: {tempFolder}");
                     } 
                     catch { }
                 }
                 else
                 {
-                    WriteWarning("Không tạo được báo cáo nào (Model trống hoặc không có tải).");
+                    WriteWarning("\nKhông có báo cáo nào được tạo. Kiểm tra lại Load Patterns.");
                 }
             });
         }
@@ -411,7 +436,7 @@ namespace DTS_Engine.Commands
                     return;
                 }
 
-                // T?o CSV
+                // Tạo CSV
                 var sb = new StringBuilder();
                 sb.AppendLine("Element,LoadPattern,LoadType,Value,Direction,Z");
 
@@ -428,7 +453,7 @@ namespace DTS_Engine.Commands
                 WriteSuccess($"Đã xuất {allLoads.Count} bản ghi ra:");
                 WriteMessage($"  {filePath}");
 
-                // M? file
+                // Mở file
                 try
                 {
                     Process.Start(filePath);

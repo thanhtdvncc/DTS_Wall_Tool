@@ -1078,86 +1078,147 @@ ref csys,
 
         #endregion
 
-        #region Extended Load Reading - AUDIT FEATURES
+        #region DATABASE TABLE HELPERS (CORE FIX)
 
         /// <summary>
-        /// Đọc TẤT CẢ tải phân bố trên TOÀN BỘ Frame theo pattern.
-        /// Trả về danh sách RawSapLoad để xử lý thống kê.
+        /// Generic helper to read any SAP2000 Database Table safely.
+        /// Returns a list of dictionaries (Row -> [ColumnName: Value])
         /// </summary>
-        public static List<RawSapLoad> GetAllFrameDistributedLoads(string patternFilter = null)
+        private static List<Dictionary<string, string>> GetSapTableData(string tableName, string loadPatternFilter = null)
         {
-            var results = new List<RawSapLoad>();
+            var results = new List<Dictionary<string, string>>();
             var model = GetModel();
             if (model == null) return results;
 
             try
             {
-                // Lấy danh sách tất cả frame
-                int frameCount = 0;
-                string[] frameNames = null;
-                model.FrameObj.GetNameList(ref frameCount, ref frameNames);
-                if (frameCount == 0 || frameNames == null) return results;
+                int tableVersion = 0;
+                string[] fields = null;
+                int numRecords = 0;
+                string[] tableData = null;
+                string[] inputKeys = new string[] { }; // Empty for all
 
-                // Cache geometry để lấy Z
-                var frameGeometryCache = new Dictionary<string, SapFrame>();
-                foreach (var fn in frameNames)
+                // Use Group "All" to get everything
+                int ret = model.DatabaseTables.GetTableForDisplayArray(
+                    tableName,
+                    ref inputKeys,
+                    "All",
+                    ref tableVersion,
+                    ref fields,
+                    ref numRecords,
+                    ref tableData);
+
+                if (ret != 0 || numRecords == 0 || fields == null || tableData == null)
+                    return results;
+
+                int colCount = fields.Length;
+                
+                // Pre-calculate index of LoadPat to filter early if needed
+                int loadPatIdx = Array.IndexOf(fields, "LoadPat");
+                if (loadPatIdx < 0) loadPatIdx = Array.IndexOf(fields, "OutputCase"); // Some tables use OutputCase
+
+                for (int r = 0; r < numRecords; r++)
                 {
-                    var geo = GetFrameGeometry(fn);
-                    if (geo != null) frameGeometryCache[fn] = geo;
-                }
-
-                // Đọc tải từng frame
-                foreach (var frameName in frameNames)
-                {
-                    int numberItems = 0;
-                    string[] fNames = null;
-                    string[] loadPatterns = null;
-                    int[] myTypes = null;
-                    string[] csys = null;
-                    int[] dirs = null;
-                    double[] rd1 = null, rd2 = null;
-                    double[] dist1 = null, dist2 = null;
-                    double[] val1 = null, val2 = null;
-
-                    int ret = model.FrameObj.GetLoadDistributed(
-                        frameName, ref numberItems, ref fNames, ref loadPatterns,
-                        ref myTypes, ref csys, ref dirs,
-                        ref rd1, ref rd2, ref dist1, ref dist2, ref val1, ref val2,
-                        eItemType.Objects);
-
-                    if (ret != 0 || numberItems == 0) continue;
-
-                    for (int i = 0; i < numberItems; i++)
+                    // Filter by Pattern if requested and column exists
+                    if (!string.IsNullOrEmpty(loadPatternFilter) && loadPatIdx >= 0)
                     {
-                        // Lọc theo pattern
-                        if (!string.IsNullOrEmpty(patternFilter) &&
-                            !loadPatterns[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
+                        string rowPat = tableData[r * colCount + loadPatIdx];
+                        if (!string.Equals(rowPat, loadPatternFilter, StringComparison.OrdinalIgnoreCase))
                             continue;
-
-                        double avgZ = 0;
-                        if (frameGeometryCache.TryGetValue(frameName, out var geo))
-                            avgZ = geo.AverageZ;
-
-                        results.Add(new RawSapLoad
-                        {
-                            ElementName = frameName,
-                            LoadPattern = loadPatterns[i],
-                            Value1 = ConvertLoadToKnPerM(val1[i]),
-                            Value2 = ConvertLoadToKnPerM(val2[i]),
-                            LoadType = "FrameDistributed",
-                            Direction = GetDirectionName(dirs[i]),
-                            DistStart = dist1[i],
-                            DistEnd = dist2[i],
-                            IsRelative = rd1[i] > 0.5, // 1 = relative
-                            CoordSys = csys[i],
-                            ElementZ = avgZ
-                        });
                     }
+
+                    var rowDict = new Dictionary<string, string>();
+                    for (int c = 0; c < colCount; c++)
+                    {
+                        string key = fields[c];
+                        string val = tableData[r * colCount + c];
+                        rowDict[key] = val;
+                    }
+                    results.Add(rowDict);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // Silent fail or log
+                System.Diagnostics.Debug.WriteLine($"Error reading table {tableName}: {ex.Message}");
+            }
 
             return results;
+        }
+
+        private static double ParseDouble(string val)
+        {
+            if (string.IsNullOrEmpty(val)) return 0.0;
+            if (double.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out double res))
+                return res;
+            return 0.0;
+        }
+
+        #endregion
+
+        #region Extended Load Reading - AUDIT FEATURES
+
+        /// <summary>
+        /// Đọc TẤT CẢ tải phân bố trên TOÀN BỘ Frame theo pattern.
+        /// Trả về danh sách RawSapLoad để xử lý thống kê.
+        /// SỬ DỤNG DATABASE TABLE để đọc nhanh và chính xác.
+        /// </summary>
+        public static List<RawSapLoad> GetAllFrameDistributedLoads(string patternFilter = null)
+        {
+            var loads = new List<RawSapLoad>();
+            
+            // 1. Read Database Table "Frame Loads - Distributed"
+            var rows = GetSapTableData("Frame Loads - Distributed", patternFilter);
+
+            // 2. Cache Geometry for Z-coordinates (Optimization)
+            var frameGeomMap = new Dictionary<string, double>();
+            if (rows.Count > 0)
+            {
+                var frames = GetAllFramesGeometry();
+                foreach (var f in frames) frameGeomMap[f.Name] = f.AverageZ;
+            }
+
+            // 3. Parse Rows theo đúng cấu trúc bảng SAP2000
+            foreach (var row in rows)
+            {
+                // Required fields: Frame, LoadPat, FOverLA (hoặc FOverLB), Dir, CoordSys
+                if (!row.ContainsKey("Frame") || !row.ContainsKey("LoadPat")) continue;
+
+                string frameName = row["Frame"];
+                string pattern = row["LoadPat"];
+                
+                // Value từ cột FOverLA (Force Over Length at point A)
+                double val1 = 0;
+                if (row.ContainsKey("FOverLA")) val1 = ParseDouble(row["FOverLA"]);
+                else if (row.ContainsKey("FOverLB")) val1 = ParseDouble(row["FOverLB"]); // Fallback
+
+                // Convert Unit (Table returns values in Present Units - typically kN/mm)
+                val1 = ConvertLoadToKnPerM(val1);
+
+                // Distance A và B (AbsDistA/AbsDistB hoặc RelDistA/RelDistB)
+                double distA = row.ContainsKey("AbsDistA") ? ParseDouble(row["AbsDistA"]) : 0;
+                double distB = row.ContainsKey("AbsDistB") ? ParseDouble(row["AbsDistB"]) : 0;
+                bool isRelative = row.ContainsKey("DistType") && row["DistType"].Contains("Rel");
+                
+                // Get Z from cache
+                double z = frameGeomMap.ContainsKey(frameName) ? frameGeomMap[frameName] : 0;
+
+                loads.Add(new RawSapLoad
+                {
+                    ElementName = frameName,
+                    LoadPattern = pattern,
+                    Value1 = Math.Abs(val1), // Use Abs for magnitude
+                    LoadType = "FrameDistributed",
+                    Direction = row.ContainsKey("Dir") ? row["Dir"] : "Gravity",
+                    DistStart = distA,
+                    DistEnd = distB,
+                    CoordSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "GLOBAL",
+                    ElementZ = z,
+                    IsRelative = isRelative
+                });
+            }
+
+            return loads;
         }
 
         /// <summary>
@@ -1234,234 +1295,163 @@ ref csys,
 
         /// <summary>
         /// Đọc tải đều trên Area (Shell Uniform Load - kN/m²)
+        /// SỬ DỤNG DATABASE TABLE "Area Loads - Uniform"
         /// </summary>
         public static List<RawSapLoad> GetAllAreaUniformLoads(string patternFilter = null)
         {
-            var results = new List<RawSapLoad>();
-            var model = GetModel();
-            if (model == null) return results;
+            var loads = new List<RawSapLoad>();
+            var rows = GetSapTableData("Area Loads - Uniform", patternFilter);
 
-            try
+            var areaGeomMap = new Dictionary<string, double>();
+            if (rows.Count > 0)
             {
-                int areaCount = 0;
-                string[] areaNames = null;
-                model.AreaObj.GetNameList(ref areaCount, ref areaNames);
-                if (areaCount == 0 || areaNames == null) return results;
-
-                // Cache area Z
-                var areaZCache = new Dictionary<string, double>();
-                foreach (var aName in areaNames)
-                {
-                    var areaGeo = GetAreaGeometry(aName);
-                    if (areaGeo != null)
-                        areaZCache[aName] = areaGeo.AverageZ;
-                }
-
-                foreach (var areaName in areaNames)
-                {
-                    int numItems = 0;
-                    string[] aNames = null;
-                    string[] pats = null;
-                    string[] csys = null;
-                    int[] dirs = null;
-                    double[] vals = null;
-
-                    int ret = model.AreaObj.GetLoadUniform(
-                        areaName, ref numItems, ref aNames, ref pats,
-                        ref csys, ref dirs, ref vals, eItemType.Objects);
-
-                    if (ret != 0 || numItems == 0) continue;
-
-                    for (int i = 0; i < numItems; i++)
-                    {
-                        if (!string.IsNullOrEmpty(patternFilter) &&
-                            !pats[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        double avgZ = 0;
-                        areaZCache.TryGetValue(areaName, out avgZ);
-
-                        results.Add(new RawSapLoad
-                        {
-                            ElementName = areaName,
-                            LoadPattern = pats[i],
-                            Value1 = ConvertLoadToKnPerM2(vals[i]),
-                            LoadType = "AreaUniform",
-                            Direction = GetDirectionName(dirs[i]),
-                            CoordSys = csys[i],
-                            ElementZ = avgZ
-                        });
-                    }
-                }
+                var areas = GetAllAreasGeometry();
+                foreach (var a in areas) areaGeomMap[a.Name] = a.AverageZ;
             }
-            catch { }
 
-            return results;
+            foreach (var row in rows)
+            {
+                if (!row.ContainsKey("Area")) continue;
+
+                // Cột "UnifLoad" chứa giá trị tải (kN/mm²)
+                double val = row.ContainsKey("UnifLoad") ? ParseDouble(row["UnifLoad"]) : 0;
+                val = ConvertLoadToKnPerM2(val);
+
+                loads.Add(new RawSapLoad
+                {
+                    ElementName = row["Area"],
+                    LoadPattern = row["LoadPat"],
+                    Value1 = Math.Abs(val),
+                    LoadType = "AreaUniform",
+                    Direction = row.ContainsKey("Dir") ? row["Dir"] : "Gravity",
+                    CoordSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "Local",
+                    ElementZ = areaGeomMap.ContainsKey(row["Area"]) ? areaGeomMap[row["Area"]] : 0
+                });
+            }
+            return loads;
         }
 
         /// <summary>
         /// Đọc tải Area Uniform To Frame (1-way/2-way distribution)
+        /// SỬ DỤNG DATABASE TABLE "Area Loads - Uniform To Frame"
         /// </summary>
         public static List<RawSapLoad> GetAllAreaUniformToFrameLoads(string patternFilter = null)
         {
-            var results = new List<RawSapLoad>();
-            var model = GetModel();
-            if (model == null) return results;
+            var loads = new List<RawSapLoad>();
+            var rows = GetSapTableData("Area Loads - Uniform To Frame", patternFilter);
 
-            try
+            var areaGeomMap = new Dictionary<string, double>();
+            if (rows.Count > 0)
             {
-                int areaCount = 0;
-                string[] areaNames = null;
-                model.AreaObj.GetNameList(ref areaCount, ref areaNames);
-                if (areaCount == 0 || areaNames == null) return results;
-
-                var areaZCache = new Dictionary<string, double>();
-                foreach (var aName in areaNames)
-                {
-                    var areaGeo = GetAreaGeometry(aName);
-                    if (areaGeo != null)
-                        areaZCache[aName] = areaGeo.AverageZ;
-                }
-
-                foreach (var areaName in areaNames)
-                {
-                    int numItems = 0;
-                    string[] aNames = null;
-                    string[] pats = null;
-                    string[] csys = null;
-                    int[] dirs = null;
-                    double[] vals = null;
-                    int[] distTypes = null;
-
-                    int ret = model.AreaObj.GetLoadUniformToFrame(
-                        areaName, ref numItems, ref aNames, ref pats,
-                        ref csys, ref dirs, ref vals, ref distTypes, eItemType.Objects);
-
-                    if (ret != 0 || numItems == 0) continue;
-
-                    for (int i = 0; i < numItems; i++)
-                    {
-                        if (!string.IsNullOrEmpty(patternFilter) &&
-                            !pats[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        double avgZ = 0;
-                        areaZCache.TryGetValue(areaName, out avgZ);
-
-                        results.Add(new RawSapLoad
-                        {
-                            ElementName = areaName,
-                            LoadPattern = pats[i],
-                            Value1 = ConvertLoadToKnPerM2(vals[i]),
-                            LoadType = "AreaUniformToFrame",
-                            Direction = GetDirectionName(dirs[i]),
-                            DistributionType = distTypes[i] == 1 ? "1-Way" : "2-Way",
-                            CoordSys = csys[i],
-                            ElementZ = avgZ
-                        });
-                    }
-                }
+                var areas = GetAllAreasGeometry();
+                foreach (var a in areas) areaGeomMap[a.Name] = a.AverageZ;
             }
-            catch { }
 
-            return results;
+            foreach (var row in rows)
+            {
+                if (!row.ContainsKey("Area")) continue;
+
+                double val = row.ContainsKey("UnifLoad") ? ParseDouble(row["UnifLoad"]) : 0;
+                val = ConvertLoadToKnPerM2(val);
+
+                loads.Add(new RawSapLoad
+                {
+                    ElementName = row["Area"],
+                    LoadPattern = row["LoadPat"],
+                    Value1 = Math.Abs(val),
+                    LoadType = "AreaUniformToFrame",
+                    Direction = row.ContainsKey("Dir") ? row["Dir"] : "Gravity",
+                    DistributionType = row.ContainsKey("DistType") ? row["DistType"] : "Two way",
+                    CoordSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "GLOBAL",
+                    ElementZ = areaGeomMap.ContainsKey(row["Area"]) ? areaGeomMap[row["Area"]] : 0
+                });
+            }
+            return loads;
         }
 
         /// <summary>
         /// Đọc tải tập trung trên Point/Joint
+        /// SỬ DỤNG DATABASE TABLE "Joint Loads - Force"
+        /// CORRECTS: Đọc đầy đủ F1, F2, F3 để không bỏ sót tải ngang
         /// </summary>
         public static List<RawSapLoad> GetAllPointLoads(string patternFilter = null)
         {
-            var results = new List<RawSapLoad>();
-            var model = GetModel();
-            if (model == null) return results;
+            var loads = new List<RawSapLoad>();
+            var rows = GetSapTableData("Joint Loads - Force", patternFilter);
 
-            try
+            var pointGeomMap = new Dictionary<string, double>();
+            if (rows.Count > 0)
             {
-                int pointCount = 0;
-                string[] pointNames = null;
-                model.PointObj.GetNameList(ref pointCount, ref pointNames);
-                if (pointCount == 0 || pointNames == null) return results;
+                var points = GetAllPoints();
+                foreach (var p in points) pointGeomMap[p.Name] = p.Z;
+            }
 
-                // Cache point coordinates
-                var pointCache = GetAllPoints().ToDictionary(p => p.Name, p => p);
+            foreach (var row in rows)
+            {
+                if (!row.ContainsKey("Joint")) continue;
+                string joint = row["Joint"];
+                string pattern = row["LoadPat"];
+                string cSys = row.ContainsKey("CoordSys") ? row["CoordSys"] : "GLOBAL";
+                double z = pointGeomMap.ContainsKey(joint) ? pointGeomMap[joint] : 0;
 
-                foreach (var pointName in pointNames)
+                // Check F1 (X direction)
+                if (row.ContainsKey("F1"))
                 {
-                    int numItems = 0;
-                    string[] pNames = null;
-                    string[] pats = null;
-                    int[] lcStep = null;
-                    string[] csys = null;
-                    double[] f1 = null, f2 = null, f3 = null;
-                    double[] m1 = null, m2 = null, m3 = null;
-
-                    int ret = model.PointObj.GetLoadForce(
-                        pointName, ref numItems, ref pNames, ref pats, ref lcStep,
-                        ref csys, ref f1, ref f2, ref f3, ref m1, ref m2, ref m3,
-                        eItemType.Objects);
-
-                    if (ret != 0 || numItems == 0) continue;
-
-                    for (int i = 0; i < numItems; i++)
+                    double f1 = ParseDouble(row["F1"]);
+                    if (Math.Abs(f1) > 0.001)
                     {
-                        if (!string.IsNullOrEmpty(patternFilter) &&
-                            !pats[i].Equals(patternFilter, StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        double z = 0;
-                        if (pointCache.TryGetValue(pointName, out var pt))
-                            z = pt.Z;
-
-                        // Xử lý lực theo từng hướng (thường quan tâm F3 = Gravity)
-                        if (Math.Abs(f3[i]) > 0.001)
+                        loads.Add(new RawSapLoad
                         {
-                            results.Add(new RawSapLoad
-                            {
-                                ElementName = pointName,
-                                LoadPattern = pats[i],
-                                Value1 = Math.Abs(ConvertForceToKn(f3[i])),
-                                LoadType = "PointForce",
-                                Direction = f3[i] < 0 ? "Gravity (-Z)" : "+Z",
-                                CoordSys = csys[i],
-                                ElementZ = z
-                            });
-                        }
+                            ElementName = joint,
+                            LoadPattern = pattern,
+                            Value1 = Math.Abs(ConvertForceToKn(f1)),
+                            LoadType = "PointForce",
+                            Direction = "Global X",
+                            CoordSys = cSys,
+                            ElementZ = z
+                        });
+                    }
+                }
 
-                        // Có thể thêm F1, F2 nếu cần
-                        if (Math.Abs(f1[i]) > 0.001)
+                // Check F2 (Y direction)
+                if (row.ContainsKey("F2"))
+                {
+                    double f2 = ParseDouble(row["F2"]);
+                    if (Math.Abs(f2) > 0.001)
+                    {
+                        loads.Add(new RawSapLoad
                         {
-                            results.Add(new RawSapLoad
-                            {
-                                ElementName = pointName,
-                                LoadPattern = pats[i],
-                                Value1 = Math.Abs(ConvertForceToKn(f1[i])),
-                                LoadType = "PointForce",
-                                Direction = "X",
-                                CoordSys = csys[i],
-                                ElementZ = z
-                            });
-                        }
+                            ElementName = joint,
+                            LoadPattern = pattern,
+                            Value1 = Math.Abs(ConvertForceToKn(f2)),
+                            LoadType = "PointForce",
+                            Direction = "Global Y",
+                            CoordSys = cSys,
+                            ElementZ = z
+                        });
+                    }
+                }
 
-                        if (Math.Abs(f2[i]) > 0.001)
+                // Check F3 (Z/Gravity)
+                if (row.ContainsKey("F3"))
+                {
+                    double f3 = ParseDouble(row["F3"]);
+                    if (Math.Abs(f3) > 0.001)
+                    {
+                        loads.Add(new RawSapLoad
                         {
-                            results.Add(new RawSapLoad
-                            {
-                                ElementName = pointName,
-                                LoadPattern = pats[i],
-                                Value1 = Math.Abs(ConvertForceToKn(f2[i])),
-                                LoadType = "PointForce",
-                                Direction = "Y",
-                                CoordSys = csys[i],
-                                ElementZ = z
-                            });
-                        }
+                            ElementName = joint,
+                            LoadPattern = pattern,
+                            Value1 = Math.Abs(ConvertForceToKn(f3)),
+                            LoadType = "PointForce",
+                            Direction = "Gravity/Z",
+                            CoordSys = cSys,
+                            ElementZ = z
+                        });
                     }
                 }
             }
-            catch { }
-
-            return results;
+            return loads;
         }
 
         /// <summary>
