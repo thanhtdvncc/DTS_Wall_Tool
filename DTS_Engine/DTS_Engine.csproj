@@ -192,7 +192,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Docs\DEPENDENCY_INJECTION_ARCHITECTURE.txt" />
+    <Folder Include="Docs\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

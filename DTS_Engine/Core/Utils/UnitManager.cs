@@ -1,14 +1,14 @@
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using System;
 
 namespace DTS_Engine.Core.Utils
 {
     /// <summary>
-    /// Enum ??n v? ??ng b? v?i SAP2000 eUnits.
-    /// QUAN TR?NG - KH�NG THAY ??I GI� TR? INT:
-    /// - Gi� tr? int ph?i KH?P CH�NH X�C v?i SAP2000v1.eUnits
-    /// - Sai l?ch s? g�y l?i ??n v? khi g�n t?i sang SAP
+    /// Enum đơn vị đồng bộ với SAP2000 eUnits.
+    /// QUAN TRỌNG - KHÔNG THAY ĐỔI GIÁ TRỊ INT:
+    /// - Giá trị int phải KHỚP CHÍNH XÁC với SAP2000v1.eUnits
+    /// - Sai lệch sẽ gây lỗi đơn vị khi gán tải sang SAP
     /// </summary>
     public enum DtsUnit
     {
@@ -16,7 +16,7 @@ namespace DTS_Engine.Core.Utils
         lb_ft_F = 2,
         kip_in_F = 3,
         kip_ft_F = 4,
-        kN_mm_C = 5,    // M?c ??nh cho Vi?t Nam (AutoCAD v? mm, SAP d�ng kN)
+        kN_mm_C = 5,    // Mặc định cho Việt Nam (AutoCAD vẽ mm, SAP dùng kN)
         kN_m_C = 6,
         kgf_mm_C = 7,
         kgf_m_C = 8,
@@ -31,77 +31,77 @@ namespace DTS_Engine.Core.Utils
     }
 
     /// <summary>
-    /// Th�ng tin chi ti?t v? ??n v? hi?n t?i.
-    /// Cung c?p h? s? quy ??i v� t�n ??n v? ?? hi?n th?.
+    /// Thông tin chi tiết về đơn vị hiện tại.
+    /// Cung cấp hệ số quy đổi và tên đơn vị để hiển thị.
     /// 
-    /// REFACTORED: Th?m h? s? quy ??i chu?n h�a cho Force v� Pressure
-    /// ?? ??m b?o t?t c? c�c ph?n m?m ??c t?i t? SAP ??u nh?t qu�n.
+    /// REFACTORED: Thêm hệ số quy đổi chuẩn hóa cho Force và Pressure
+    /// Đảm bảo tất cả các phần mềm đọc tải từ SAP đều nhất quán.
     /// </summary>
     public class UnitInfo
     {
         /// <summary>
-        /// ??n v? g?c (enum)
+        /// Đơn vị gốc (enum)
         /// </summary>
         public DtsUnit Unit { get; private set; }
 
         /// <summary>
-        /// ??n v? l?c (kN, kgf, N, Ton, lb, kip)
+        /// Đơn vị lực (kN, kgf, N, Ton, lb, kip)
         /// </summary>
         public string ForceUnit { get; private set; }
 
         /// <summary>
-        /// ??n v? chi?u d�i (mm, cm, m, in, ft)
+        /// Đơn vị chiều dài (mm, cm, m, in, ft)
         /// </summary>
         public string LengthUnit { get; private set; }
 
         /// <summary>
-        /// H? s? nh�n ?? ??i t? ??n v? CAD sang M�t.
-        /// V� d?: CAD v? mm -> Scale = 0.001
-        ///        CAD v? m  -> Scale = 1.0
+        /// Hệ số nhân để đổi từ đơn vị CAD sang Mét.
+        /// Ví dụ: CAD vẽ mm -> Scale = 0.001
+        ///        CAD vẽ m  -> Scale = 1.0
         /// 
-        /// C�NG TH?C T�NH T?I:
-        /// Load (kN/m) = Thickness(mm) * LengthScaleToMeter * Height(mm) * LengthScaleToMeter * UnitWeight(kN/m�)
+        /// CÔNG THỨC TÍNH TẢI:
+        /// Load (kN/m) = Thickness(mm) * LengthScaleToMeter * Height(mm) * LengthScaleToMeter * UnitWeight(kN/m³)
         /// </summary>
         public double LengthScaleToMeter { get; private set; }
 
         /// <summary>
-        /// H? s? nh�n ?? ??i t? ??n v? CAD sang Milimet.
-        /// D�ng khi c?n xu?t sang SAP v?i ??n v? mm.
+        /// Hệ số nhân để đổi từ đơn vị CAD sang Milimet.
+        /// Dùng khi cần xuất sang SAP với đơn vị mm.
         /// </summary>
         public double LengthScaleToMm { get; private set; }
 
         /// <summary>
-        /// H? s? nh�n ?? ??i l?c t? ??n v? SAP sang kN (chu?n h�a).
-        /// V� d?: SAP d�ng Ton -> Scale = 9.80665
-        ///        SAP d�ng kN  -> Scale = 1.0
+        /// Hệ số nhân để đổi lực từ đơn vị SAP sang kN (chuẩn hóa).
+        /// Ví dụ: SAP dùng Ton -> Scale = 9.80665
+        ///        SAP dùng kN  -> Scale = 1.0
         /// 
-        /// CRITICAL: D�ng ?? chuy?n ??i t?i tr?ng t?p trung (Point Loads)
+        /// CRITICAL: Dùng để chuyển đổi tải trọng tập trung (Point Loads)
         /// </summary>
         public double ForceScaleToKn { get; private set; }
 
         /// <summary>
-        /// H? s? quy ??i t?i ph�n b? (Force/Length) t? SAP sang kN/m.
+        /// Hệ số quy đổi tải phân bố (Force/Length) từ SAP sang kN/m.
         /// = ForceScaleToKn / LengthScaleToMeter
         /// 
-        /// V� d?: SAP kN_mm_C:
-        /// - Value t? SAP: 0.008169 kN/mm
+        /// Ví dụ: SAP kN_mm_C:
+        /// - Value từ SAP: 0.008169 kN/mm
         /// - LineLoadScaleToKnPerM = 1.0 / 0.001 = 1000
         /// - Result: 0.008169 * 1000 = 8.169 kN/m
         /// 
-        /// CRITICAL: S?a l?i "S? qu� nh?" trong GetActiveLoadPatterns
+        /// CRITICAL: Sửa lỗi "Số quá nhỏ" trong GetActiveLoadPatterns
         /// </summary>
         public double LineLoadScaleToKnPerM => ForceScaleToKn / LengthScaleToMeter;
 
         /// <summary>
-        /// H? s? quy ??i �p su?t (Force/Area) t? SAP sang kN/m�.
-        /// = ForceScaleToKn / (LengthScaleToMeter)�
+        /// Hệ số quy đổi áp suất (Force/Area) từ SAP sang kN/m².
+        /// = ForceScaleToKn / (LengthScaleToMeter)²
         /// 
-        /// V� d?: SAP kN_mm_C:
-        /// - Value t? SAP: 8.169e-7 kN/mm�
-        /// - PressureScaleToKnPerM2 = 1.0 / (0.001)� = 1,000,000
-        /// - Result: 8.169e-7 * 1,000,000 = 0.8169 kN/m�
+        /// Ví dụ: SAP kN_mm_C:
+        /// - Value từ SAP: 8.169e-7 kN/mm²
+        /// - PressureScaleToKnPerM2 = 1.0 / (0.001)² = 1,000,000
+        /// - Result: 8.169e-7 * 1,000,000 = 0.8169 kN/m²
         /// 
-        /// CRITICAL: S?a l?i "S? qu� nh?" cho Area Loads
+        /// CRITICAL: Sửa lỗi "Số quá nhỏ" cho Area Loads
         /// </summary>
         public double PressureScaleToKnPerM2 => ForceScaleToKn / Math.Pow(LengthScaleToMeter, 2);
 
@@ -112,10 +112,10 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Ph�n t�ch chu?i enum ?? l?y ??n v? l?c v� chi?u d�i.
-        /// V� d?: "kN_mm_C" -> ForceUnit = "kN", LengthUnit = "mm"
+        /// Phân tích chuỗi enum để lấy đơn vị lực và chiều dài.
+        /// Ví dụ: "kN_mm_C" -> ForceUnit = "kN", LengthUnit = "mm"
         /// 
-        /// REFACTORED: Th?m logic t�nh ForceScaleToKn cho t?t c? c�c ??n v? l?c.
+        /// REFACTORED: Thêm logic tính ForceScaleToKn cho tất cả các đơn vị lực.
         /// </summary>
         private void ParseUnit()
         {
@@ -129,12 +129,12 @@ namespace DTS_Engine.Core.Utils
             }
             else
             {
-                // Fallback an to�n
+                // Fallback an toàn
                 ForceUnit = "kN";
                 LengthUnit = "mm";
             }
 
-            // 1. X�c ??nh h? s? quy ??i chi?u d�i
+            // 1. Xác định hệ số quy đổi chiều dài
             switch (LengthUnit.ToLowerInvariant())
             {
                 case "mm":
@@ -158,13 +158,13 @@ namespace DTS_Engine.Core.Utils
                     LengthScaleToMm = 304.8;
                     break;
                 default:
-                    // Fallback: gi? ??nh mm (ph? bi?n nh?t ? VN)
+                    // Fallback: giả định mm (phổ biến nhất ở VN)
                     LengthScaleToMeter = 0.001;
                     LengthScaleToMm = 1.0;
                     break;
             }
 
-            // 2. X�c ??nh h? s? quy ??i l?c (t? ??n v? SAP sang kN)
+            // 2. Xác định hệ số quy đổi lực (từ đơn vị SAP sang kN)
             switch (ForceUnit.ToLowerInvariant())
             {
                 case "kn":
@@ -177,7 +177,7 @@ namespace DTS_Engine.Core.Utils
                     ForceScaleToKn = 0.00980665; // 1 kgf = 0.00980665 kN
                     break;
                 case "ton":
-                    ForceScaleToKn = 9.80665; // 1 Ton (metric) = 9.80665 kN
+                    ForceScaleToKn = 9.80665; // 1 Tấn (metric) = 9.80665 kN
                     break;
                 case "lb":
                     ForceScaleToKn = 0.00444822; // 1 lb = 0.00444822 kN
@@ -186,53 +186,53 @@ namespace DTS_Engine.Core.Utils
                     ForceScaleToKn = 4.44822; // 1 kip = 4.44822 kN
                     break;
                 default:
-                    ForceScaleToKn = 1.0; // Fallback: gi? ??nh kN
+                    ForceScaleToKn = 1.0; // Fallback: giả định kN
                     break;
             }
         }
 
         /// <summary>
-        /// Hi?n th? ??n v? d?ng "kN-mm" cho UI
+        /// Hiển thị đơn vị dạng "kN-mm" cho UI
         /// </summary>
         public override string ToString() => $"{ForceUnit}-{LengthUnit}";
 
         /// <summary>
-        /// Hi?n th? ??n v? t?i ph�n b?, v� d?: "kN/m"
+        /// Hiển thị đơn vị tải phân bố, ví dụ: "kN/m"
         /// </summary>
         public string GetLineLoadUnit() => $"{ForceUnit}/m";
 
         /// <summary>
-        /// Hi?n th? ??n v? t?i di?n t�ch, v� d?: "kN/m�"
+        /// Hiển thị đơn vị tải diện tích, ví dụ: "kN/m²"
         /// </summary>
-        public string GetAreaLoadUnit() => $"{ForceUnit}/m�";
+        public string GetAreaLoadUnit() => $"{ForceUnit}/m²";
     }
 
     /// <summary>
-    /// Qu?n l� ??n v? to�n c?c cho DTS Tool.
+    /// Quản lý đơn vị toàn cục cho DTS Tool.
     /// 
-    /// QUAN TR?NG - LOGIC HO?T ??NG:
-    /// 1. ??n v? ???c l?u v�o Named Object Dictionary c?a file DWG
-    /// 2. Khi m? b?n v? m?i, g?i Initialize() ?? ??c ??n v? ?� l?u
-    /// 3. Khi k?t n?i SAP, SapUtils.SyncUnits() s? �p SAP d�ng c�ng ??n v?
-    /// 4. T?t c? t�nh to�n t?i tr?ng ??u d�ng Info.LengthScaleToMeter
+    /// QUAN TRỌNG - LOGIC HOẠT ĐỘNG:
+    /// 1. Đơn vị được lưu vào Named Object Dictionary của file DWG
+    /// 2. Khi mở bản vẽ mới, gọi Initialize() để đọc đơn vị đã lưu
+    /// 3. Khi kết nối SAP, SapUtils.SyncUnits() sẽ ép SAP dùng cùng đơn vị
+    /// 4. Tất cả tính toán tải trọng đều dùng Info.LengthScaleToMeter
     /// 
-    /// KH�NG S?A ??I:
-    /// - T�n dictionary DICT_NAME v� KEY_UNIT (s? m?t data c?)
-    /// - Logic SaveToDwg/LoadFromDwg (?nh h??ng persistence)
+    /// KHÔNG SỬA ĐỔI:
+    /// - Tên dictionary DICT_NAME và KEY_UNIT (sẽ mất data cũ)
+    /// - Logic SaveToDwg/LoadFromDwg (ảnh hưởng persistence)
     /// </summary>
     public static class UnitManager
     {
-        #region Constants - KH�NG THAY ??I
+        #region Constants - KHÔNG THAY ĐỔI
 
         /// <summary>
-        /// T�n Dictionary l?u settings trong DWG.
-        /// KH�NG ??I T�N - s? m?t d? li?u ?� l?u trong c�c b?n v? c?.
+        /// Tên Dictionary lưu settings trong DWG.
+        /// KHÔNG ĐỔI TÊN - sẽ mất dữ liệu đã lưu trong các bản vẽ cũ.
         /// </summary>
         private const string DICT_NAME = "DTS_SETTINGS";
 
         /// <summary>
-        /// Key l?u ??n v? hi?n t?i.
-        /// KH�NG ??I T�N - s? m?t d? li?u ?� l?u trong c�c b?n v? c?.
+        /// Key lưu đơn vị hiện tại.
+        /// KHÔNG ĐỔI TÊN - sẽ mất dữ liệu đã lưu trong các bản vẽ cũ.
         /// </summary>
         private const string KEY_UNIT = "CurrentUnit";
 
@@ -241,17 +241,17 @@ namespace DTS_Engine.Core.Utils
         #region State
 
         /// <summary>
-        /// ??n v? hi?n t?i. M?c ??nh: kN_mm_C (ph? bi?n nh?t ? VN)
+        /// Đơn vị hiện tại. Mặc định: kN_mm_C (phổ biến nhất ở VN)
         /// </summary>
         private static DtsUnit _currentUnit = DtsUnit.kN_mm_C;
 
         /// <summary>
-        /// Cache th�ng tin ??n v? ?? tr�nh t?o object m?i m?i l?n truy c?p
+        /// Cache thông tin đơn vị để tránh tạo object mới mỗi lần truy cập
         /// </summary>
         private static UnitInfo _info = new UnitInfo(_currentUnit);
 
         /// <summary>
-        /// Flag ?�nh d?u ?� kh?i t?o t? DWG ch?a
+        /// Flag đánh dấu đã khởi tạo từ DWG chưa
         /// </summary>
         private static bool _initialized = false;
 
@@ -260,7 +260,7 @@ namespace DTS_Engine.Core.Utils
         #region Public Properties
 
         /// <summary>
-        /// ??n v? hi?n t?i. Set s? t? ??ng l?u v�o DWG.
+        /// Đơn vị hiện tại. Set sẽ tự động lưu vào DWG.
         /// </summary>
         public static DtsUnit CurrentUnit
         {
@@ -277,13 +277,13 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Th�ng tin chi ti?t v? ??n v? hi?n t?i.
-        /// D�ng ?? l?y h? s? quy ??i v� t�n ??n v?.
+        /// Thông tin chi tiết về đơn vị hiện tại.
+        /// Dùng để lấy hệ số quy đổi và tên đơn vị.
         /// </summary>
         public static UnitInfo Info => _info;
 
         /// <summary>
-        /// Ki?m tra ?� kh?i t?o t? DWG ch?a
+        /// Kiểm tra đã khởi tạo từ DWG chưa
         /// </summary>
         public static bool IsInitialized => _initialized;
 
@@ -292,12 +292,12 @@ namespace DTS_Engine.Core.Utils
         #region Initialization
 
         /// <summary>
-        /// Kh?i t?o UnitManager t? file DWG hi?n t?i.
-        /// G?I H�M N�Y KHI:
-        /// - Plugin ???c load (IExtensionApplication.Initialize)
-        /// - M? b?n v? m?i (Document.BeginDocumentClose event)
+        /// Khởi tạo UnitManager từ file DWG hiện tại.
+        /// GỌI HÀM NÀY KHI:
+        /// - Plugin được load (IExtensionApplication.Initialize)
+        /// - Mở bản vẽ mới (Document.BeginDocumentClose event)
         /// 
-        /// N?u DWG kh�ng c� th�ng tin ??n v? -> d�ng m?c ??nh kN_mm_C
+        /// Nếu DWG không có thông tin đơn vị -> dùng mặc định kN_mm_C
         /// </summary>
         public static void Initialize()
         {
@@ -310,13 +310,13 @@ namespace DTS_Engine.Core.Utils
             }
             catch
             {
-                // Fallback: gi? nguy�n ??n v? m?c ??nh
+                // Fallback: giữ nguyên đơn vị mặc định
                 _initialized = true;
             }
         }
 
         /// <summary>
-        /// Kh?i t?o UnitManager t? Database c? th?.
+        /// Khởi tạo UnitManager từ Database cụ thể.
         /// </summary>
         public static void Initialize(Database db)
         {
@@ -363,7 +363,7 @@ namespace DTS_Engine.Core.Utils
             }
             catch
             {
-                // Fallback: gi? nguy�n ??n v? m?c ??nh
+                // Fallback: giữ nguyên đơn vị mặc định
                 _initialized = true;
             }
         }
@@ -373,11 +373,11 @@ namespace DTS_Engine.Core.Utils
         #region Persistence
 
         /// <summary>
-        /// L?u ??n v? hi?n t?i v�o DWG.
-        /// KH�NG S?A ??I LOGIC N�Y:
-        /// - S? d?ng Named Object Dictionary ?? l?u persistent data
-        /// - Xrecord ch?a TypedValue v?i DxfCode.Int16
-        /// - T? ??ng t?o dictionary n?u ch?a c�
+        /// Lưu đơn vị hiện tại vào DWG.
+        /// KHÔNG SỬA ĐỔI LOGIC NÀY:
+        /// - Sử dụng Named Object Dictionary để lưu persistent data
+        /// - Xrecord chứa TypedValue với DxfCode.Int16
+        /// - Tự động tạo dictionary nếu chưa có
         /// </summary>
         private static void SaveToDwg()
         {
@@ -395,7 +395,7 @@ namespace DTS_Engine.Core.Utils
 
                     DBDictionary dtsDict;
 
-                    // T?o ho?c l?y dictionary DTS_SETTINGS
+                    // Tạo hoặc lấy dictionary DTS_SETTINGS
                     if (nod.Contains(DICT_NAME))
                     {
                         dtsDict = (DBDictionary)tr.GetObject(nod.GetAt(DICT_NAME), OpenMode.ForWrite);
@@ -407,13 +407,13 @@ namespace DTS_Engine.Core.Utils
                         tr.AddNewlyCreatedDBObject(dtsDict, true);
                     }
 
-                    // T?o Xrecord ch?a gi� tr? ??n v?
+                    // Tạo Xrecord chứa giá trị đơn vị
                     var xRec = new Xrecord();
                     xRec.Data = new ResultBuffer(
                       new TypedValue((int)DxfCode.Int16, (short)_currentUnit)
                         );
 
-                    // Ghi ?� ho?c t?o m?i entry
+                    // Ghi đè hoặc tạo mới entry
                     if (dtsDict.Contains(KEY_UNIT))
                     {
                         var oldRec = tr.GetObject(dtsDict.GetAt(KEY_UNIT), OpenMode.ForWrite);
@@ -428,7 +428,7 @@ namespace DTS_Engine.Core.Utils
             }
             catch
             {
-                // Silent fail - kh�ng ?nh h??ng workflow ch�nh
+                // Silent fail - không ảnh hưởng workflow chính
             }
         }
 
@@ -437,29 +437,29 @@ namespace DTS_Engine.Core.Utils
         #region Utility Methods
 
         /// <summary>
-        /// Chuy?n ??i chi?u d�i t? ??n v? CAD sang M�t.
+        /// Chuyển đổi chiều dài từ đơn vị CAD sang Mét.
         /// </summary>
-        /// <param name="value">Gi� tr? trong ??n v? CAD (mm/cm/m...)</param>
-        /// <returns>Gi� tr? trong M�t</returns>
+        /// <param name="value">Giá trị trong đơn vị CAD (mm/cm/m...)</param>
+        /// <returns>Giá trị trong Mét</returns>
         public static double ToMeter(double value)
         {
             return value * _info.LengthScaleToMeter;
         }
 
         /// <summary>
-        /// Chuy?n ??i chi?u d�i t? ??n v? CAD sang Milimet.
-        /// D�ng khi xu?t sang SAP v?i setting kN_mm_C.
+        /// Chuyển đổi chiều dài từ đơn vị CAD sang Milimet.
+        /// Dùng khi xuất sang SAP với setting kN_mm_C.
         /// </summary>
-        /// <param name="value">Gi� tr? trong ??n v? CAD</param>
-        /// <returns>Gi� tr? trong mm</returns>
+        /// <param name="value">Giá trị trong đơn vị CAD</param>
+        /// <returns>Giá trị trong mm</returns>
         public static double ToMm(double value)
         {
             return value * _info.LengthScaleToMm;
         }
 
         /// <summary>
-        /// Reset v? ??n v? m?c ??nh (kN_mm_C).
-        /// D�ng cho testing ho?c khi c?n reset.
+        /// Reset về đơn vị mặc định (kN_mm_C).
+        /// Dùng cho testing hoặc khi cần reset.
         /// </summary>
         public static void Reset()
         {
@@ -469,7 +469,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// L?y danh s�ch t?t c? ??n v? c� s?n (cho UI dropdown)
+        /// Lấy danh sách tất cả đơn vị có sẵn (cho UI dropdown)
         /// </summary>
         public static DtsUnit[] GetAllUnits()
         {
