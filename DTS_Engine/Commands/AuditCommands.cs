@@ -89,51 +89,88 @@ namespace DTS_Engine.Commands
                 WriteMessage(" A. All (Chọn tất cả)");
                 WriteMessage(" 0. Cancel");
 
-                // 5. Yêu cầu nhập (dùng string để tránh parser issues)
-                var pso = new PromptStringOptions("\nNhập số thứ tự (ví dụ: 1, 3) hoặc tên Pattern [All]: ");
-                pso.AllowSpaces = true;
-                pso.DefaultValue = "All";
-                pso.UseDefaultValue = true;
-
-                PromptResult pres = Ed.GetString(pso);
-                if (pres.Status != PromptStatus.OK) return;
-
-                string input = pres.StringResult.Trim();
+                // prepare selection container
                 var selectedPatterns = new List<string>();
 
-                var parts = input.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var part in parts)
-                {
-                    string p = part.Trim();
-                    if (string.IsNullOrEmpty(p)) continue;
+                // 5. Quick keyword picker: show up to 20 patterns as clickable keywords (fallback to typed input)
+                var quickPick = new PromptKeywordOptions("\nChọn nhanh Pattern (hoặc chọn 'More' để nhập thủ công): ");
+                int maxQuick = Math.Min(displayList.Count, 20);
+                for (int k = 0; k < maxQuick; k++) quickPick.Keywords.Add(displayList[k]);
+                quickPick.Keywords.Add("All");
+                quickPick.Keywords.Add("More");
+                quickPick.Keywords.Add("Cancel");
+                quickPick.AllowNone = true;
+                quickPick.Keywords.Default = maxQuick > 0 ? displayList[0] : "All";
 
-                    if (p.Equals("All", StringComparison.OrdinalIgnoreCase) || p.Equals("A", StringComparison.OrdinalIgnoreCase))
+                var quickRes = Ed.GetKeywords(quickPick);
+                bool usedQuick = false;
+                if (quickRes.Status == PromptStatus.OK)
+                {
+                    string choice = quickRes.StringResult?.Trim();
+                    if (string.Equals(choice, "Cancel", StringComparison.OrdinalIgnoreCase)) return;
+                    if (string.Equals(choice, "All", StringComparison.OrdinalIgnoreCase))
                     {
                         selectedPatterns = allPatterns.ToList();
-                        break;
+                        usedQuick = true;
                     }
-                    else if (int.TryParse(p, out int idx))
+                    else if (!string.Equals(choice, "More", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (idx == 0) return; // cancel
-                        if (idx > 0 && idx <= displayList.Count)
+                        // Single quick choice
+                        var match = allPatterns.FirstOrDefault(x => x.Equals(choice, StringComparison.OrdinalIgnoreCase));
+                        if (match != null)
                         {
-                            selectedPatterns.Add(displayList[idx - 1]);
+                            selectedPatterns.Add(match);
+                            usedQuick = true;
+                        }
+                    }
+                }
+
+                if (!usedQuick)
+                {
+                    // 5. Yêu cầu nhập (dùng string để tránh parser issues)
+                    var pso = new PromptStringOptions("\nNhập số thứ tự (ví dụ: 1, 3) hoặc tên Pattern [All]: ");
+                    pso.AllowSpaces = true;
+                    pso.DefaultValue = "All";
+                    pso.UseDefaultValue = true;
+
+                    PromptResult pres = Ed.GetString(pso);
+                    if (pres.Status != PromptStatus.OK) return;
+
+                    string input = pres.StringResult.Trim();
+                    var parts = input.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var part in parts)
+                    {
+                        string p = part.Trim();
+                        if (string.IsNullOrEmpty(p)) continue;
+
+                        if (p.Equals("All", StringComparison.OrdinalIgnoreCase) || p.Equals("A", StringComparison.OrdinalIgnoreCase))
+                        {
+                            selectedPatterns = allPatterns.ToList();
+                            break;
+                        }
+                        else if (int.TryParse(p, out int idx))
+                        {
+                            if (idx == 0) return; // cancel
+                            if (idx > 0 && idx <= displayList.Count)
+                            {
+                                selectedPatterns.Add(displayList[idx - 1]);
+                            }
+                            else
+                            {
+                                WriteWarning($"Số {idx} không hợp lệ (Max: {displayList.Count})");
+                            }
                         }
                         else
                         {
-                            WriteWarning($"Số {idx} không hợp lệ (Max: {displayList.Count})");
-                        }
-                    }
-                    else
-                    {
-                        var match = allPatterns.FirstOrDefault(x => x.Equals(p, StringComparison.OrdinalIgnoreCase));
-                        if (match != null) selectedPatterns.Add(match);
-                        else
-                        {
-                            string sanitizedInput = p.Replace("-", "").Replace("_", "");
-                            var fuzzyMatch = allPatterns.FirstOrDefault(x => x.Replace("_", "").Replace("-", "").Equals(sanitizedInput, StringComparison.OrdinalIgnoreCase));
-                            if (fuzzyMatch != null) selectedPatterns.Add(fuzzyMatch);
-                            else WriteWarning($"Không tìm thấy pattern '{p}'");
+                            var match = allPatterns.FirstOrDefault(x => x.Equals(p, StringComparison.OrdinalIgnoreCase));
+                            if (match != null) selectedPatterns.Add(match);
+                            else
+                            {
+                                string sanitizedInput = p.Replace("-", "").Replace("_", "");
+                                var fuzzyMatch = allPatterns.FirstOrDefault(x => x.Replace("_", "").Replace("-", "").Equals(sanitizedInput, StringComparison.OrdinalIgnoreCase));
+                                if (fuzzyMatch != null) selectedPatterns.Add(fuzzyMatch);
+                                else WriteWarning($"Không tìm thấy pattern '{p}'");
+                            }
                         }
                     }
                 }
