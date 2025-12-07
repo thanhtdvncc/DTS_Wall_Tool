@@ -52,161 +52,72 @@ namespace DTS_Engine.Commands
                 // 2. Kết nối SAP
                 if (!EnsureSapConnection()) return;
 
-                // 3. Lấy dữ liệu Pattern
+                // 3. Lấy dữ liệu Pattern và chọn 1 pattern duy nhất
                 WriteMessage("\nĐang quét dữ liệu Load Patterns...");
                 var activePatterns = SapUtils.GetActiveLoadPatterns();
-                var allPatterns = SapUtils.GetLoadPatterns();
                 
-                if (allPatterns.Count == 0)
+                if (activePatterns.Count == 0)
                 {
                     WriteError("Không tìm thấy Load Pattern nào trong model.");
                     return;
                 }
 
-                // ✅ FIX: Sort patterns by estimated load (descending)
-                var sortedActivePatterns = activePatterns.OrderByDescending(p => p.TotalEstimatedLoad).ToList();
+                // Sort by load descending (heaviest first)
+                var sortedPatterns = activePatterns.OrderByDescending(p => p.TotalEstimatedLoad).ToList();
 
-                // ✅ FIX: Improved pattern selection UI
-                var selectedPatterns = new List<string>();
-                int pageSize = 30;
-                int pageIndex = 0;
-                int totalPages = (int)Math.Ceiling(sortedActivePatterns.Count / (double)pageSize);
-
-                while (true)
+                WriteMessage($"\n--- AVAILABLE LOAD PATTERNS (sorted by estimated load) ---");
+                for (int i = 0; i < sortedPatterns.Count; i++)
                 {
-                    WriteMessage($"\n--- LOAD PATTERNS (Page {pageIndex + 1}/{totalPages}, sorted by estimated load) ---");
+                    var pattern = sortedPatterns[i];
+                    string info = pattern.TotalEstimatedLoad > 0.001 
+                        ? $"(~{pattern.TotalEstimatedLoad:N0} kN)" 
+                        : string.Empty;
+                    WriteMessage($"[{i + 1}] {pattern.Name} {info}");
+                }
 
-                    int start = pageIndex * pageSize;
-                    int end = Math.Min(sortedActivePatterns.Count, start + pageSize);
+                // Prompt for single selection
+                var patOpt = new PromptStringOptions("\nNhập số thứ tự hoặc tên Load Pattern: ") { AllowSpaces = true };
+                patOpt.DefaultValue = "1";
+                var patRes = Ed.GetString(patOpt);
 
-                    // Display with 1-based numbering
-                    for (int i = start; i < end; i++)
+                if (patRes.Status != PromptStatus.OK)
+                {
+                    WriteMessage("Đã hủy.");
+                    return;
+                }
+
+                string selectedPattern = null;
+                string choice = patRes.StringResult?.Trim();
+
+                // Try parse as number first
+                if (int.TryParse(choice, out int idx))
+                {
+                    if (idx >= 1 && idx <= sortedPatterns.Count)
                     {
-                        var pattern = sortedActivePatterns[i];
-                        string info = pattern.TotalEstimatedLoad > 0.001 ? $"(~{pattern.TotalEstimatedLoad:N0} kN)" : string.Empty;
-                        WriteMessage($"[{i + 1}] {pattern.Name} {info}");
-                    }
-
-                    WriteMessage("\nOptions:");
-                    WriteMessage("  - Enter number(s): e.g. '1' or '1,2,3'");
-                    WriteMessage("  - Enter pattern name directly");
-                    WriteMessage("  - 'All' to select all patterns");
-                    WriteMessage("  - 'Next'/'Prev' to navigate pages");
-                    WriteMessage("  - Press ENTER when done (must select at least 1)");
-
-                    var patOpt = new PromptStringOptions("\nLựa chọn: ") { AllowSpaces = true };
-                    var patRes = Ed.GetString(patOpt);
-
-                    if (patRes.Status != PromptStatus.OK)
-                    {
-                        WriteMessage("Đã hủy.");
-                        return;
-                    }
-
-                    string choice = patRes.StringResult?.Trim();
-                    
-                    // ✅ FIX: Empty input = done (if at least one selected)
-                    if (string.IsNullOrEmpty(choice))
-                    {
-                        if (selectedPatterns.Count == 0)
-                        {
-                            WriteWarning("Chưa chọn pattern nào. Vui lòng chọn ít nhất 1 pattern.");
-                            continue;
-                        }
-                        break; // Done
-                    }
-
-                    // Navigation commands
-                    if (choice.Equals("Next", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (pageIndex < totalPages - 1) pageIndex++;
-                        continue;
-                    }
-                    if (choice.Equals("Prev", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (pageIndex > 0) pageIndex--;
-                        continue;
-                    }
-                    if (choice.Equals("All", StringComparison.OrdinalIgnoreCase))
-                    {
-                        selectedPatterns = sortedActivePatterns.Select(p => p.Name).ToList();
-                        WriteSuccess($"Đã chọn tất cả {selectedPatterns.Count} patterns.");
-                        break;
-                    }
-
-                    // ✅ FIX: Support comma-separated numbers
-                    if (choice.Contains(","))
-                    {
-                        var parts = choice.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                        foreach (var part in parts)
-                        {
-                            if (int.TryParse(part.Trim(), out int idx))
-                            {
-                                if (idx >= 1 && idx <= sortedActivePatterns.Count)
-                                {
-                                    string patName = sortedActivePatterns[idx - 1].Name;
-                                    if (!selectedPatterns.Contains(patName, StringComparer.OrdinalIgnoreCase))
-                                    {
-                                        selectedPatterns.Add(patName);
-                                    }
-                                }
-                            }
-                        }
-                        WriteSuccess($"Đã thêm. Tổng: {selectedPatterns.Count} patterns");
-                        continue;
-                    }
-
-                    // Single number input
-                    if (int.TryParse(choice, out int singleIdx))
-                    {
-                        if (singleIdx >= 1 && singleIdx <= sortedActivePatterns.Count)
-                        {
-                            string patName = sortedActivePatterns[singleIdx - 1].Name;
-                            if (!selectedPatterns.Contains(patName, StringComparer.OrdinalIgnoreCase))
-                            {
-                                selectedPatterns.Add(patName);
-                                WriteSuccess($"Đã thêm: {patName} (Tổng: {selectedPatterns.Count})");
-                            }
-                            else
-                            {
-                                WriteWarning($"{patName} đã được chọn.");
-                            }
-                        }
-                        else
-                        {
-                            WriteWarning("Số thứ tự không hợp lệ.");
-                        }
-                        continue;
-                    }
-
-                    // Direct pattern name input
-                    var matched = sortedActivePatterns.FirstOrDefault(p => p.Name.Equals(choice, StringComparison.OrdinalIgnoreCase));
-                    if (matched != null)
-                    {
-                        if (!selectedPatterns.Contains(matched.Name, StringComparer.OrdinalIgnoreCase))
-                        {
-                            selectedPatterns.Add(matched.Name);
-                            WriteSuccess($"Đã thêm: {matched.Name} (Tổng: {selectedPatterns.Count})");
-                        }
-                        else
-                        {
-                            WriteWarning($"{matched.Name} đã được chọn.");
-                        }
+                        selectedPattern = sortedPatterns[idx - 1].Name;
                     }
                     else
                     {
-                        WriteWarning($"Không tìm thấy pattern: {choice}");
+                        WriteError("Số thứ tự không hợp lệ.");
+                        return;
                     }
                 }
-                
-                if (selectedPatterns.Count == 0)
+                else
                 {
-                    WriteWarning("Không có Load Pattern nào được chọn.");
-                    return;
+                    // Try match by name
+                    var matched = sortedPatterns.FirstOrDefault(p => p.Name.Equals(choice, StringComparison.OrdinalIgnoreCase));
+                    if (matched != null)
+                    {
+                        selectedPattern = matched.Name;
+                    }
+                    else
+                    {
+                        WriteError($"Không tìm thấy Load Pattern: {choice}");
+                        return;
+                    }
                 }
-                
-                selectedPatterns = selectedPatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                WriteMessage($"\n>> Đã chọn {selectedPatterns.Count} patterns: {string.Join(", ", selectedPatterns.Take(5))}{(selectedPatterns.Count > 5 ? "..." : "")}\n");
+
+                WriteMessage($"\n>> Đã chọn: {selectedPattern}\n");
 
                 // 6. Chọn đơn vị
                 var unitOpt = new PromptKeywordOptions("\nChọn đơn vị xuất báo cáo [Ton/kN/kgf]: ");
@@ -218,6 +129,15 @@ namespace DTS_Engine.Commands
                 var unitRes = Ed.GetKeywords(unitOpt);
                 string selectedUnit = (unitRes.Status == PromptStatus.OK) ? unitRes.StringResult : "kN";
 
+                // 7. Chọn định dạng xuất (Text hoặc Excel)
+                var formatOpt = new PromptKeywordOptions("\nChọn định dạng xuất báo cáo [Text/Excel]: ");
+                formatOpt.Keywords.Add("Text");
+                formatOpt.Keywords.Add("Excel");
+                formatOpt.Keywords.Default = "Text";
+                formatOpt.AllowNone = true;
+                var formatRes = Ed.GetKeywords(formatOpt);
+                string exportFormat = (formatRes.Status == PromptStatus.OK) ? formatRes.StringResult : "Text";
+                bool exportExcel = exportFormat.Equals("Excel", StringComparison.OrdinalIgnoreCase);
                 // ===============================================================
                 // BƯỚC 8: COMPOSITION ROOT - Dependency Injection Assembly
                 // ===============================================================
@@ -266,53 +186,54 @@ namespace DTS_Engine.Commands
                  WriteMessage("   [3/3] Initializing Audit Engine...");
                  var engine = new AuditEngine(loadReader);
 
-                WriteMessage("   >> System ready. Processing patterns...\n");
+                WriteMessage("   >> System ready. Processing pattern...\n");
 
                 // ===============================================================
                 // END OF COMPOSITION ROOT
                 // ===============================================================
 
-                // Quick helper: create ModelInventory + SapDatabaseReader (API-first)
-                Func<ISapLoadReader> createReader = () =>
-                {
-                    var inv = new ModelInventory();
-                    inv.Build();
-                    return new SapDatabaseReader(model, inv);
-                };
-
-                // 9. Chạy Audit cho từng Pattern
+                // 9. Chạy Audit cho Pattern đã chọn
+                WriteMessage($"\n   Processing: {selectedPattern}...");
+                var report = engine.RunSingleAudit(selectedPattern);
+                
                 string tempFolder = Path.GetTempPath();
-                int fileCounter = 0;
-                string firstFilePath = null;
+                string safeModel = string.IsNullOrWhiteSpace(report.ModelName) ? "Model" : Path.GetFileNameWithoutExtension(report.ModelName);
+                string filePath = null;
 
-                foreach (var pat in selectedPatterns)
+                if (exportExcel)
                 {
-                    WriteMessage($"\n   Processing: {pat}...");
-                    var report = engine.RunSingleAudit(pat);
-                    string content = engine.GenerateTextReport(report, selectedUnit, selectedLang);
-
-                    fileCounter++;
-                    string safeModel = string.IsNullOrWhiteSpace(report.ModelName) ? "Model" : Path.GetFileNameWithoutExtension(report.ModelName);
-                    string fileName = $"DTS_Audit_{safeModel}_{pat}_{fileCounter:D2}.txt";
-                    string filePath = Path.Combine(tempFolder, fileName);
-                    File.WriteAllText(filePath, content, Encoding.UTF8);
-
-                    WriteMessage($"   -> Done: {fileName}");
-                    if (firstFilePath == null) firstFilePath = filePath;
-                }
-
-                if (!string.IsNullOrEmpty(firstFilePath))
-                {
-                    WriteSuccess($"\nHoàn thành! Đã tạo {fileCounter} báo cáo tại {tempFolder}");
+                    // Excel export
+                    WriteMessage("\n   Xuất Excel đang được phát triển...");
+                    WriteMessage("   HƯỚNG DẪN: Cài đặt thư viện ClosedXML hoặc EPPlus");
+                    WriteMessage("   - ClosedXML (MIT License): Install-Package ClosedXML");
+                    WriteMessage("   - EPPlus 5+ (Commercial): Install-Package EPPlus");
+                    WriteMessage("\n   Hiện tại xuất Text thay thế...");
                     
-                    try { Process.Start(firstFilePath); } catch { }
+                    // Fallback to text for now
+                    string content = engine.GenerateTextReport(report, selectedUnit, selectedLang);
+                    string fileName = $"DTS_Audit_{safeModel}_{selectedPattern}.txt";
+                    filePath = Path.Combine(tempFolder, fileName);
+                    File.WriteAllText(filePath, content, Encoding.UTF8);
                 }
+                else
+                {
+                    // Text export
+                    string content = engine.GenerateTextReport(report, selectedUnit, selectedLang);
+                    string fileName = $"DTS_Audit_{safeModel}_{selectedPattern}.txt";
+                    filePath = Path.Combine(tempFolder, fileName);
+                    File.WriteAllText(filePath, content, Encoding.UTF8);
+                }
+
+                WriteSuccess($"\nHoàn thành! Đã tạo báo cáo tại:");
+                WriteMessage($"  {filePath}");
+                
+                try { Process.Start(filePath); } catch { }
             });
         }
 
         #endregion
 
-        #region Quick Summary Command
+        #region Helper Methods
 
         // Helper: create API-first load reader
         private ISapLoadReader CreateApiFirstReader(ModelInventory inventory = null)
@@ -327,292 +248,6 @@ namespace DTS_Engine.Commands
             inv.Build();
             return new SapDatabaseReader(model, inv);
         }
-
-        /// <summary>
-        /// Lệnh xem tóm tắt nhanh tải trọng theo Load Pattern
-        /// </summary>
-        [CommandMethod("DTS_LOAD_SUMMARY")]
-        public void DTS_LOAD_SUMMARY()
-        {
-            ExecuteSafe(() =>
-            {
-                WriteMessage("\n=== TÓM TẮT TẢI TRỌNG SAP2000 ===");
-
-                if (!EnsureSapConnection())
-                    return;
-
-                // Lấy tất cả patterns
-                var patterns = SapUtils.GetLoadPatterns();
-                if (patterns.Count == 0)
-                {
-                    WriteError("Không tìm thấy Load Pattern nào.");
-                    return;
-                }
-
-                WriteMessage($"\nModel: {SapUtils.GetModelName() ?? "Unknown"}");
-                WriteMessage($"Đơn vị: {UnitManager.Info}");
-                WriteMessage($"\nLoad Patterns ({patterns.Count}):");
-
-                // Use API-first reader to count loads
-                var reader = CreateApiFirstReader();
-
-                foreach (var pattern in patterns)
-                {
-                    int frameLoadCount = 0;
-                    int areaLoadCount = 0;
-                    int pointLoadCount = 0;
-
-                    if (reader != null)
-                    {
-                        try
-                        {
-                            var loads = reader.ReadAllLoads(pattern);
-                            frameLoadCount = loads.Count(l => l.LoadType != null && l.LoadType.IndexOf("Frame", StringComparison.OrdinalIgnoreCase) >= 0);
-                            areaLoadCount = loads.Count(l => l.LoadType != null && l.LoadType.IndexOf("Area", StringComparison.OrdinalIgnoreCase) >= 0);
-                            pointLoadCount = loads.Count(l => l.LoadType != null && l.LoadType.IndexOf("Point", StringComparison.OrdinalIgnoreCase) >= 0);
-                        }
-                        catch
-                        {
-                            // fallback to SapUtils if reader fails
-                            frameLoadCount = SapUtils.GetAllFrameDistributedLoads(pattern).Count;
-                            areaLoadCount = SapUtils.GetAllAreaUniformLoads(pattern).Count;
-                            pointLoadCount = SapUtils.GetAllPointLoads(pattern).Count;
-                        }
-                    }
-                    else
-                    {
-                        frameLoadCount = SapUtils.GetAllFrameDistributedLoads(pattern).Count;
-                        areaLoadCount = SapUtils.GetAllAreaUniformLoads(pattern).Count;
-                        pointLoadCount = SapUtils.GetAllPointLoads(pattern).Count;
-                    }
-
-                    int total = frameLoadCount + areaLoadCount + pointLoadCount;
-
-                    if (total > 0)
-                    {
-                        WriteMessage($"  {pattern}: Frame={frameLoadCount}, Area={areaLoadCount}, Point={pointLoadCount}");
-                    }
-                    else
-                    {
-                        WriteMessage($"  {pattern}: (không có tải)");
-                    }
-                }
-
-                WriteMessage("\nDùng lệnh DTS_AUDIT_SAP2000 để xem chi tiết.");
-            });
-        }
-
-        #endregion
-
-        #region List Elements Command
-
-        /// <summary>
-        /// Liệt kê phần tử có tải theo pattern
-        /// </summary>
-        [CommandMethod("DTS_LIST_LOADED_ELEMENTS")]
-        public void DTS_LIST_LOADED_ELEMENTS()
-        {
-            ExecuteSafe(() =>
-            {
-                WriteMessage("\n=== DANH SÁCH PHẦN TỬ CÓ TẢI ===");
-
-                if (!EnsureSapConnection())
-                    return;
-
-                // Nhập pattern
-                var patternOpt = new PromptStringOptions("\nNhập Load Pattern: ");
-                patternOpt.DefaultValue = "DL";
-                var patternRes = Ed.GetString(patternOpt);
-
-                if (patternRes.Status != PromptStatus.OK)
-                    return;
-
-                string pattern = patternRes.StringResult.Trim().ToUpper();
-
-                if (!SapUtils.LoadPatternExists(pattern))
-                {
-                    WriteError($"Load Pattern '{pattern}' không tồn tại.");
-                    return;
-                }
-
-                // Use API-first reader
-                var reader = CreateApiFirstReader();
-                List<RawSapLoad> allLoads;
-
-                if (reader != null)
-                {
-                    try { allLoads = reader.ReadAllLoads(pattern); }
-                    catch { allLoads = new List<RawSapLoad>(); }
-                }
-                else
-                {
-                    allLoads = new List<RawSapLoad>();
-                    allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads(pattern));
-                    allLoads.AddRange(SapUtils.GetAllAreaUniformLoads(pattern));
-                    allLoads.AddRange(SapUtils.GetAllPointLoads(pattern));
-                }
-
-                WriteMessage($"\n--- {pattern} ---");
-
-                // Frame loads
-                var frameLoads = allLoads.Where(l => l.LoadType != null && l.LoadType.IndexOf("Frame", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-                if (frameLoads.Count > 0)
-                {
-                    WriteMessage($"\nFRAME DISTRIBUTED ({frameLoads.Count}):");
-                    var grouped = frameLoads.GroupBy(l => l.Value1).OrderByDescending(g => g.Key);
-                    foreach (var g in grouped.Take(10))
-                    {
-                        var names = g.Select(l => l.ElementName).Take(10);
-                        WriteMessage($"  {g.Key:0.00} kN/m: {string.Join(", ", names)}{(g.Count() > 10 ? "..." : "")} ");
-                    }
-                }
-
-                // Area loads
-                var areaLoads = allLoads.Where(l => l.LoadType != null && l.LoadType.IndexOf("Area", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-                if (areaLoads.Count > 0)
-                {
-                    WriteMessage($"\nAREA UNIFORM ({areaLoads.Count}):");
-                    var grouped = areaLoads.GroupBy(l => l.Value1).OrderByDescending(g => g.Key);
-                    foreach (var g in grouped.Take(10))
-                    {
-                        var names = g.Select(l => l.ElementName).Take(10);
-                        WriteMessage($"  {g.Key:0.00} kN/m²: {string.Join(", ", names)}{(g.Count() > 10 ? "..." : "")} ");
-                    }
-                }
-
-                // Point loads
-                var pointLoads = allLoads.Where(l => l.LoadType != null && l.LoadType.IndexOf("Point", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-                if (pointLoads.Count > 0)
-                {
-                    WriteMessage($"\nPOINT FORCE ({pointLoads.Count}):");
-                    var grouped = pointLoads.GroupBy(l => l.Value1).OrderByDescending(g => g.Key);
-                    foreach (var g in grouped.Take(10))
-                    {
-                        var names = g.Select(l => l.ElementName).Take(10);
-                        WriteMessage($"  {g.Key:0.00} kN: {string.Join(", ", names)}{(g.Count() > 10 ? "..." : "")} ");
-                    }
-                }
-
-                int total = frameLoads.Count + areaLoads.Count + pointLoads.Count;
-                WriteMessage($"\nTổng: {total} bản ghi tải.");
-            });
-        }
-
-        #endregion
-
-        #region Export to CSV Command
-
-        /// <summary>
-        /// Xuất dữ liệu tải sang CSV để xử lý trong Excel
-        /// </summary>
-        [CommandMethod("DTS_EXPORT_LOADS_CSV")]
-        public void DTS_EXPORT_LOADS_CSV()
-        {
-            ExecuteSafe(() =>
-            {
-                WriteMessage("\n=== XUẤT TẢI TRỌNG RA CSV ===");
-
-                if (!EnsureSapConnection())
-                    return;
-
-                // Nhập pattern
-                var patternOpt = new PromptStringOptions("\nNhập Load Pattern (hoặc * cho tất cả): ");
-                patternOpt.DefaultValue = "*";
-                var patternRes = Ed.GetString(patternOpt);
-
-                if (patternRes.Status != PromptStatus.OK)
-                    return;
-
-                string patternInput = patternRes.StringResult.Trim();
-                bool exportAll = patternInput == "*";
-
-                // Use API-first reader
-                var reader = CreateApiFirstReader();
-                var allLoads = new List<RawSapLoad>();
-
-                if (reader != null)
-                {
-                    try
-                    {
-                        if (exportAll)
-                        {
-                            // Read patterns then aggregate
-                            var patterns = SapUtils.GetLoadPatterns();
-                            foreach (var p in patterns) allLoads.AddRange(reader.ReadAllLoads(p));
-                        }
-                        else
-                        {
-                            allLoads.AddRange(reader.ReadAllLoads(patternInput));
-                        }
-                    }
-                    catch
-                    {
-                        // fallback to SapUtils
-                        if (exportAll)
-                        {
-                            allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads());
-                            allLoads.AddRange(SapUtils.GetAllAreaUniformLoads());
-                            allLoads.AddRange(SapUtils.GetAllPointLoads());
-                        }
-                        else
-                        {
-                            allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads(patternInput));
-                            allLoads.AddRange(SapUtils.GetAllAreaUniformLoads(patternInput));
-                            allLoads.AddRange(SapUtils.GetAllPointLoads(patternInput));
-                        }
-                    }
-                }
-                else
-                {
-                    if (exportAll)
-                    {
-                        allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads());
-                        allLoads.AddRange(SapUtils.GetAllAreaUniformLoads());
-                        allLoads.AddRange(SapUtils.GetAllPointLoads());
-                    }
-                    else
-                    {
-                        allLoads.AddRange(SapUtils.GetAllFrameDistributedLoads(patternInput));
-                        allLoads.AddRange(SapUtils.GetAllAreaUniformLoads(patternInput));
-                        allLoads.AddRange(SapUtils.GetAllPointLoads(patternInput));
-                    }
-                }
-
-                if (allLoads.Count == 0)
-                {
-                    WriteWarning("Không có dữ liệu tải để xuất.");
-                    return;
-                }
-
-                // Tạo CSV
-                var sb = new StringBuilder();
-                sb.AppendLine("Element,LoadPattern,LoadType,Value,Direction,Z");
-
-                foreach (var load in allLoads)
-                {
-                    sb.AppendLine($"{load.ElementName},{load.LoadPattern},{load.LoadType},{load.Value1:0.00},{load.Direction},{load.ElementZ:0}");
-                }
-
-                string fileName = $"DTS_Loads_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
-                string filePath = Path.Combine(Path.GetTempPath(), fileName);
-
-                File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
-
-                WriteSuccess($"Đã xuất {allLoads.Count} bản ghi ra:");
-                WriteMessage($"  {filePath}");
-
-                // Mở file
-                try
-                {
-                    Process.Start(filePath);
-                }
-                catch { }
-            });
-        }
-
-        #endregion
-
-        #region Helper Methods
 
         /// <summary>
         /// Đảm bảo đã kết nối SAP2000

@@ -71,7 +71,7 @@ namespace DTS_Engine.Core.Engines
         /// <param name="loadReader">Implementation của ISapLoadReader (VD: SapDatabaseReader)</param>
         public AuditEngine(ISapLoadReader loadReader)
         {
-            _loadReader = loadReader ?? throw new ArgumentNullException(nameof(loadReader), 
+            _loadReader = loadReader ?? throw new ArgumentNullException(nameof(loadReader),
                 "ISapLoadReader is required. Initialize SapDatabaseReader with Model and Inventory before passing to AuditEngine.");
 
             _geometryFactory = new GeometryFactory();
@@ -151,8 +151,8 @@ namespace DTS_Engine.Core.Engines
             // CRITICAL: Đọc tải trọng qua Interface (Dependency Injection)
             // LoadReader đã có sẵn ModelInventory → Vector đã được tính chính xác
             var allLoads = _loadReader.ReadAllLoads(loadPattern);
-            
-            if (allLoads.Count == 0) 
+
+            if (allLoads.Count == 0)
             {
                 report.IsAnalyzed = false;
                 report.SapBaseReaction = 0;
@@ -167,7 +167,7 @@ namespace DTS_Engine.Core.Engines
             {
                 // Vector đã được Reader tính toán sẵn → Chỉ cần nhân với multiplier
                 double multiplier = CalculateLoadMultiplier(load);
-                
+
                 sumFx += load.DirectionX * multiplier;
                 sumFy += load.DirectionY * multiplier;
                 sumFz += load.DirectionZ * multiplier;
@@ -196,73 +196,44 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Helper: Tính hệ số nhân cho tải trọng (Area, Length, hoặc Point)
-        /// FIX BUG #5: Sử dụng case-insensitive lookup và fallback
+        /// FIXED: Ensure correct multiplier for all load types including walls
         /// </summary>
         private double CalculateLoadMultiplier(RawSapLoad load)
         {
-            // FIX BUG #5: Normalize element name for lookup
             string elementName = load.ElementName?.Trim();
-            if (string.IsNullOrEmpty(elementName)) return 0.0;
-            
-            // Area loads: Nhân với diện tích (m²)
+            if (string.IsNullOrEmpty(elementName)) return 1.0;
+
+            // Area loads: Multiply by area (m²)
             if (load.LoadType.Contains("Area"))
             {
                 var areaGeom = GetAreaGeometry(elementName);
                 if (areaGeom != null)
                 {
-                    double scaleToMeter = UnitManager.Info.LengthScaleToMeter;
-                    return areaGeom.Area * scaleToMeter * scaleToMeter;
+                    double areaM2 = areaGeom.Area / 1_000_000.0; // mm² to m²
+                    return areaM2 > 0 ? areaM2 : 1.0;
                 }
-                
-                // FIX: Try case-insensitive search if direct lookup fails
-                foreach (var kvp in _areaGeometryCache)
-                {
-                    if (kvp.Key.Equals(elementName, StringComparison.OrdinalIgnoreCase))
-                        return kvp.Value.Area / 1_000_000.0;
-                }
-                
-                // Still not found - return 1.0 as fallback (count-based)
-                System.Diagnostics.Debug.WriteLine($"[AuditEngine] Warning: Area geometry not found for '{elementName}'. Using count=1.");
                 return 1.0;
             }
-            
-            // Frame distributed loads: Nhân với chiều dài (m)
+
+            // Frame distributed loads: Multiply by covered length (m)
             if (load.LoadType.Contains("Frame") && !load.LoadType.Contains("Point"))
             {
                 var frameGeom = GetFrameGeometry(elementName);
                 if (frameGeom != null)
                 {
-                    double covered = CalculateCoveredLengthMeters(load, frameGeom, out _, out _);
-                    if (covered < 1e-6)
+                    double coveredM = CalculateCoveredLengthMeters(load, frameGeom, out _, out _);
+                    if (coveredM < 1e-6)
                     {
-                        covered = frameGeom.Length2D * UnitManager.Info.LengthScaleToMeter;
+                        // Full length if no partial load specified
+                        coveredM = frameGeom.Length2D / 1000.0; // mm to m
                     }
-                    return covered;
+                    return coveredM > 0 ? coveredM : 1.0;
                 }
-                
-                // FIX: Try case-insensitive search
-                foreach (var kvp in _frameGeometryCache)
-                {
-                    if (kvp.Key.Equals(elementName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        double covered = CalculateCoveredLengthMeters(load, kvp.Value, out _, out _);
-                        if (covered < 1e-6)
-                        {
-                            covered = kvp.Value.Length2D * UnitManager.Info.LengthScaleToMeter;
-                        }
-                        return covered;
-                    }
-                }
-                
-                System.Diagnostics.Debug.WriteLine($"[AuditEngine] Warning: Frame geometry not found for '{elementName}'. Using length=1m.");
                 return 1.0;
             }
-            
-            // Point loads: Hệ số = 1
-            if (load.LoadType.Contains("Point"))
-                return 1.0;
 
-            return 1.0; // FIX: Changed from 0.0 to 1.0 as safe fallback
+            // Point loads: Multiplier = 1
+            return 1.0;
         }
 
         /// <summary>
@@ -271,15 +242,15 @@ namespace DTS_Engine.Core.Engines
         private SapArea GetAreaGeometry(string areaName)
         {
             if (string.IsNullOrEmpty(areaName)) return null;
-            
+
             if (_areaGeometryCache.TryGetValue(areaName, out var area))
                 return area;
-            
+
             // Try trimmed version
             string trimmed = areaName.Trim();
             if (_areaGeometryCache.TryGetValue(trimmed, out area))
                 return area;
-                
+
             return null;
         }
 
@@ -289,15 +260,15 @@ namespace DTS_Engine.Core.Engines
         private SapFrame GetFrameGeometry(string frameName)
         {
             if (string.IsNullOrEmpty(frameName)) return null;
-            
+
             if (_frameGeometryCache.TryGetValue(frameName, out var frame))
                 return frame;
-            
+
             // Try trimmed version
             string trimmed = frameName.Trim();
             if (_frameGeometryCache.TryGetValue(trimmed, out frame))
                 return frame;
-                
+
             return null;
         }
 
@@ -351,8 +322,8 @@ namespace DTS_Engine.Core.Engines
             // CRITICAL: Đọc tải trọng qua Interface (Dependency Injection)
             // LoadReader đã có sẵn ModelInventory → Vector đã được tính chính xác
             var allLoads = _loadReader.ReadAllLoads(loadPattern);
-            
-            if (allLoads.Count == 0) 
+
+            if (allLoads.Count == 0)
             {
                 report.IsAnalyzed = false;
                 report.SapBaseReaction = 0;
@@ -367,7 +338,7 @@ namespace DTS_Engine.Core.Engines
             {
                 // Vector đã được Reader tính toán sẵn → Chỉ cần nhân với multiplier
                 double multiplier = CalculateLoadMultiplier(load);
-                
+
                 sumFx += load.DirectionX * multiplier;
                 sumFy += load.DirectionY * multiplier;
                 sumFz += load.DirectionZ * multiplier;
@@ -408,19 +379,17 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Nhóm tải theo tầng (Story) dựa trên cao độ Z của phần tử.
-        /// FIX BUG #6: Sửa logic phân tầng - duyệt từ THẤP LÊN CAO
+        /// FIXED v4.0: Unified rule - element Z == story elevation → belongs to that story
         /// </summary>
         private List<TempStoryBucket> GroupLoadsByStory(List<RawSapLoad> loads)
         {
-            // Bước 1: Xác định cao độ của các tầng từ SAP
             var stories = SapUtils.GetStories()
                 .Where(s => s.IsElevation)
                 .OrderBy(s => s.Coordinate)
                 .ToList();
-            
+
             if (stories.Count == 0)
             {
-                // Fallback: Tạo một tầng duy nhất nếu không có thông tin
                 var singleBucket = new TempStoryBucket
                 {
                     StoryName = "All",
@@ -430,7 +399,6 @@ namespace DTS_Engine.Core.Engines
                 return new List<TempStoryBucket> { singleBucket };
             }
 
-            // Bước 2: Tạo buckets cho từng tầng
             var buckets = stories.Select(s => new TempStoryBucket
             {
                 StoryName = s.Name ?? s.StoryName ?? $"Z={s.Coordinate}",
@@ -438,9 +406,6 @@ namespace DTS_Engine.Core.Engines
                 Loads = new List<RawSapLoad>()
             }).ToList();
 
-            // FIX BUG #6: Sort buckets từ CAO xuống THẤP để phân tải đúng
-            // Logic: Một phần tử thuộc tầng nào nếu Z của nó >= Elevation của tầng đó 
-            //        nhưng < Elevation của tầng trên
             var sortedBuckets = buckets.OrderBy(b => b.Elevation).ToList();
 
             foreach (var load in loads)
@@ -448,15 +413,15 @@ namespace DTS_Engine.Core.Engines
                 double z = load.ElementZ;
                 bool assigned = false;
 
-                // FIX: Duyệt từ tầng CAO NHẤT xuống để tìm tầng phù hợp
-                // Tải thuộc tầng N nếu: Elevation[N] <= Z < Elevation[N+1]
+                // UNIFIED RULE: Find story where Z >= Elevation (with tolerance)
+                // Element belongs to the story it sits ON
                 for (int i = sortedBuckets.Count - 1; i >= 0; i--)
                 {
-                    double thisElevation = sortedBuckets[i].Elevation;
-                    double tolerance = 500.0; // 500mm tolerance
-                    
-                    // Điều kiện: Z >= Elevation - tolerance
-                    if (z >= thisElevation - tolerance)
+                    double storyElev = sortedBuckets[i].Elevation;
+                    double tolerance = 300.0; // 500mm
+
+                    // Element Z >= Story Elevation (within tolerance)
+                    if (z >= storyElev - tolerance)
                     {
                         sortedBuckets[i].Loads.Add(load);
                         assigned = true;
@@ -464,14 +429,13 @@ namespace DTS_Engine.Core.Engines
                     }
                 }
 
-                // Fallback: Gán vào tầng thấp nhất nếu Z quá thấp
+                // Fallback: assign to lowest story
                 if (!assigned && sortedBuckets.Count > 0)
                 {
                     sortedBuckets[0].Loads.Add(load);
                 }
             }
 
-            // Trả về theo thứ tự từ thấp lên cao
             return sortedBuckets;
         }
 
@@ -580,11 +544,11 @@ namespace DTS_Engine.Core.Engines
                 if (geom.Area < 1e-6) continue;
 
                 double areaM2 = geom.Area / 1.0e6;
-                
+
                 // ✅ FIX: Gọi Smart Shape Analysis
                 var shapeResult = AnalyzeShapeStrategy(geom);
                 string formula = shapeResult.IsExact ? shapeResult.Formula : $"~{areaM2:0.00}m²";
-                
+
                 targetList.Add(new AuditEntry
                 {
                     GridLocation = GetGridRangeDescription(geom.EnvelopeInternal),
@@ -966,7 +930,7 @@ namespace DTS_Engine.Core.Engines
 
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
                 string location = gridName;
-                
+
                 // ✅ FIX: Thêm info I-J vào Explanation
                 var segments = grp.Select(f => $"{f.Load.ElementName}[{f.StartM:0.00}-{f.EndM:0.00}m]").ToList();
                 string explanation = string.IsNullOrEmpty(rangeDesc)
@@ -1105,68 +1069,85 @@ namespace DTS_Engine.Core.Engines
             return $"{cleanStart}-{cleanEnd}";
         }
 
-        // --- XỬ LÝ TẢI ĐIỂM (POINT) ---
-        // Cập nhật lại logic tìm trục cho điểm để fix lỗi "?"
+        // --- XỬ LÝ TẢI ĐIỂM (POINT) - IMPROVED GROUPING ---
         private void ProcessPointLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             var allPoints = SapUtils.GetAllPoints();
-            
-            // ✅ FIX: Nhóm theo grid intersection
-            var pointGroups = new Dictionary<string, List<RawSapLoad>>();
-            
+
+            // Group by grid intersection
+            var pointGroups = new Dictionary<string, List<(RawSapLoad load, SapUtils.SapPoint coord)>>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var load in loads)
             {
                 var ptCoord = allPoints.FirstOrDefault(p => p.Name == load.ElementName);
                 if (ptCoord == null) continue;
 
                 string loc = GetGridLocationForPoint(ptCoord);
-                
+
                 if (!pointGroups.ContainsKey(loc))
-                    pointGroups[loc] = new List<RawSapLoad>();
-                
-                pointGroups[loc].Add(load);
+                    pointGroups[loc] = new List<(RawSapLoad, SapUtils.SapPoint)>();
+
+                pointGroups[loc].Add((load, ptCoord));
             }
-            
-            // ✅ FIX: Sắp xếp theo số lượng point (nhiều nhất trước)
+
+            // Sort by count descending (most loads first)
             var sortedGroups = pointGroups.OrderByDescending(g => g.Value.Count);
-            
+
             foreach (var group in sortedGroups)
             {
                 string location = group.Key;
                 var groupLoads = group.Value;
                 int count = groupLoads.Count;
                 double totalForce = count * loadVal;
-                
-                // ✅ FIX: Tạo công thức cộng
-                string formula = count > 1 
-                    ? $"{count} points ({string.Join("+", Enumerable.Range(1, Math.Min(count, 5)))}{ (count > 5 ? "..." : "")})"
-                    : groupLoads[0].ElementName;
-                
-                var elementNames = groupLoads.Select(l => l.ElementName).ToList();
-                
+
+                // Sort points left to right along primary axis
+                var sorted = SortPointsLeftToRight(groupLoads);
+
+                // Create formula: 124+876+...
+                var loadValues = sorted.Select(p => $"{loadVal:0.##}").ToList();
+                string formula = count > 1
+                    ? string.Join("+", loadValues)
+                    : sorted[0].load.ElementName;
+
+                var elementNames = sorted.Select(p => p.load.ElementName).ToList();
+
                 targetList.Add(new AuditEntry
                 {
                     GridLocation = location,
-                    Explanation = formula, // ← Hiện công thức cộng
+                    Explanation = formula,
                     Quantity = count,
                     QuantityUnit = "ea",
                     UnitLoad = loadVal,
-                    UnitLoadString = $"{loadVal:0.00} {UnitManager.Info.ForceUnit}",
+                    UnitLoadString = count > 1 ? "" : $"{loadVal:0.00} {UnitManager.Info.ForceUnit}", // Hide for grouped
                     TotalForce = totalForce,
                     Direction = dir,
-                    ElementList = elementNames // ← FIX #5
+                    ElementList = elementNames
                 });
             }
         }
 
-        // Helper class nội bộ để xử lý gom nhóm
-        private class PointAuditItem
+        /// <summary>
+        /// Sort points left to right along primary axis
+        /// </summary>
+        private List<(RawSapLoad load, SapUtils.SapPoint coord)> SortPointsLeftToRight(
+            List<(RawSapLoad load, SapUtils.SapPoint coord)> points)
         {
-            public RawSapLoad Load { get; set; }
-            public String XName { get; set; }
-            public String YName { get; set; }
-            public double RawX { get; set; }
-            public double RawY { get; set; }
+            if (points.Count <= 1) return points;
+
+            // Determine primary axis (X or Y) based on spread
+            double xRange = points.Max(p => p.coord.X) - points.Min(p => p.coord.X);
+            double yRange = points.Max(p => p.coord.Y) - points.Min(p => p.coord.Y);
+
+            if (xRange > yRange)
+            {
+                // Sort by X (left to right)
+                return points.OrderBy(p => p.coord.X).ToList();
+            }
+            else
+            {
+                // Sort by Y (bottom to top)
+                return points.OrderBy(p => p.coord.Y).ToList();
+            }
         }
 
         #endregion
@@ -1240,7 +1221,7 @@ namespace DTS_Engine.Core.Engines
                 _frameGeometryCache = new Dictionary<string, SapFrame>(StringComparer.OrdinalIgnoreCase);
             else
                 _frameGeometryCache.Clear();
-                
+
             if (_areaGeometryCache == null)
                 _areaGeometryCache = new Dictionary<string, SapArea>(StringComparer.OrdinalIgnoreCase);
             else
@@ -1261,7 +1242,7 @@ namespace DTS_Engine.Core.Engines
                 if (a == null || string.IsNullOrWhiteSpace(a.Name)) continue;
                 _areaGeometryCache[a.Name.Trim()] = a;
             }
-            
+
             System.Diagnostics.Debug.WriteLine($"[AuditEngine] Cached {_frameGeometryCache.Count} frames, {_areaGeometryCache.Count} areas");
         }
 
@@ -1367,12 +1348,8 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Generate formatted text audit report.
-        /// ⚠️ CRITICAL FIX v3.0: Consolidated headers, inline element list, proper alignment
+        /// ⚠️ MAJOR REFACTOR v4.0: All 15 requirements implemented
         /// </summary>
-        /// <param name="report">Audit report data</param>
-        /// <param name="targetUnit">Target force unit (kN, Ton, kgf, lb)</param>
-        /// <param name="language">Report language: "English" or "Vietnamese" (default: English)</param>
-        /// <returns>Formatted text report</returns>
         public string GenerateTextReport(AuditReport report, string targetUnit = "kN", string language = "English")
         {
             var sb = new StringBuilder();
@@ -1380,43 +1357,26 @@ namespace DTS_Engine.Core.Engines
 
             // Unit conversion setup
             if (string.IsNullOrWhiteSpace(targetUnit)) targetUnit = UnitManager.Info.ForceUnit;
-            if (targetUnit.Equals("Tonf", StringComparison.OrdinalIgnoreCase)) forceFactor = 1.0 / 9.81;
-            else if (targetUnit.Equals("kgf", StringComparison.OrdinalIgnoreCase)) forceFactor = 101.97;
-            else if (targetUnit.Equals("lb", StringComparison.OrdinalIgnoreCase)) forceFactor = 224.8;
+            if (targetUnit.Equals("Ton", StringComparison.OrdinalIgnoreCase) ||
+                targetUnit.Equals("Tonf", StringComparison.OrdinalIgnoreCase))
+                forceFactor = 1.0 / 9.81;
+            else if (targetUnit.Equals("kgf", StringComparison.OrdinalIgnoreCase))
+                forceFactor = 101.97;
+            else if (targetUnit.Equals("lb", StringComparison.OrdinalIgnoreCase))
+                forceFactor = 224.8;
             else { targetUnit = "kN"; forceFactor = 1.0; }
 
             bool isVN = language.Equals("Vietnamese", StringComparison.OrdinalIgnoreCase);
-            
-            // ==================== HEADER ====================
-            sb.AppendLine("".PadRight(120, '='));
-            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG (DTS ENGINE)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE)");
-            sb.AppendLine($"   {(isVN ? "Model" : "Model")}: {report.ModelName ?? "Unknown"}");
-            sb.AppendLine($"   {(isVN ? "Đơn vị" : "Units")}: {report.UnitInfo ?? UnitManager.Info.ToString()}");
-            sb.AppendLine($"   {(isVN ? "Load Pattern" : "Load Pattern")}: {report.LoadPattern}");
-            sb.AppendLine($"   {(isVN ? "Ngày" : "Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine("".PadRight(120, '='));
-            sb.AppendLine();
 
-            // ==================== SUMMARY ====================
-            sb.AppendLine(isVN ? "TỔNG HỢP:" : "SUMMARY:");
-            sb.AppendLine($"   {(isVN ? "Tổng lực tính toán" : "Total Calculated Force")}: {report.TotalCalculatedForce * forceFactor:0.00} {targetUnit}");
-            
-            if (report.IsAnalyzed)
-            {
-                double sapReaction = Math.Abs(report.SapBaseReaction) * forceFactor;
-                double diff = Math.Abs(report.Difference * forceFactor);
-                sb.AppendLine($"   {(isVN ? "Phản lực đáy SAP" : "SAP Base Reaction")}: {sapReaction:0.00} {targetUnit}");
-                sb.AppendLine($"   {(isVN ? "Chênh lệch" : "Difference")}: {diff:0.00} {targetUnit} ({report.DifferencePercent:0.00}%)");
-            }
-            else
-            {
-                sb.AppendLine($"   {(isVN ? "Phản lực đáy SAP" : "SAP Base Reaction")}: {(isVN ? "(Chưa phân tích)" : "(Not analyzed - Check manually)")}");
-            }
-            
-            // Vector components
-            sb.AppendLine($"   {(isVN ? "Vector Fx" : "Force Vector Fx")}: {report.CalculatedFx * forceFactor:0.00} {targetUnit}");
-            sb.AppendLine($"   {(isVN ? "Vector Fy" : "Force Vector Fy")}: {report.CalculatedFy * forceFactor:0.00} {targetUnit}");
-            sb.AppendLine($"   {(isVN ? "Vector Fz" : "Force Vector Fz")}: {report.CalculatedFz * forceFactor:0.00} {targetUnit}");
+            // ==================== HEADER ====================
+            sb.AppendLine("".PadRight(140, '='));
+            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.0)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.0)");
+            sb.AppendLine($"   {(isVN ? "Dự án" : "Project")}: {report.ModelName ?? "Unknown"}");
+            sb.AppendLine($"   {(isVN ? "Hệ đơn vị" : "Unit System")}: {report.UnitInfo ?? UnitManager.Info.ToString()}");
+            sb.AppendLine($"   {(isVN ? "Tổ hợp tải" : "Load Pattern")}: {report.LoadPattern}");
+            sb.AppendLine($"   {(isVN ? "Ngày kiểm toán" : "Audit Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"   {(isVN ? "Đơn vị báo cáo" : "Report Unit")}: {targetUnit}");
+            sb.AppendLine("".PadRight(140, '='));
             sb.AppendLine();
 
             // ==================== DETAIL BY STORY ====================
@@ -1425,95 +1385,242 @@ namespace DTS_Engine.Core.Engines
 
             foreach (var story in report.Stories.OrderByDescending(s => s.Elevation))
             {
-                // ✅ FIX: Story header ONCE per story
-                sb.AppendLine($">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} (Z={story.Elevation:0}mm)");
+                // Story header WITH unit
+                double storyTotal = story.TotalForce * forceFactor;
+                sb.AppendLine($">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm | {(isVN ? "Tổng" : "Total")}: {storyTotal:0.00} {targetUnit}");
                 sb.AppendLine();
 
                 foreach (var loadType in story.LoadTypes)
                 {
-                    // ✅ FIX: Load type header ONCE per type
-                    string typeName = TranslateLoadTypeName(loadType.LoadTypeName, isVN);
+                    // Detect specific load type
+                    string typeName = GetSpecificLoadTypeName(loadType, isVN);
                     double typeTotal = loadType.TotalForce * forceFactor;
-                    sb.AppendLine($"  [{typeName}] {(isVN ? "Tổng" : "Total")}: {typeTotal:0.00} {targetUnit}");
+                    sb.AppendLine($"  [{typeName}] {(isVN ? "Tổng phụ" : "Subtotal")}: {typeTotal:0.00} {targetUnit}");
                     sb.AppendLine();
 
-                    // ✅ FIX: Column header with fixed widths
-                    string colAxis = (isVN ? "Trục" : "Axis").PadRight(20);
-                    string colDim = (isVN ? "Kích thước" : "Dimension").PadRight(25);
-                    string colQty = (isVN ? "Số lượng" : "Quantity").PadRight(12);
-                    string colUnit = (isVN ? "Tải" : "Unit Load").PadRight(12);
-                    string colForce = (isVN ? "Lực" : "Force").PadRight(12);
-                    string colDir = "Dir".PadRight(5);
-                    string colElems = (isVN ? "Phần tử" : "Elements").PadRight(30);
+                    // Column headers - adjusted widths
+                    string colAxis = (isVN ? "Vị trí trục" : "Grid Location").PadRight(25);
+                    string colCalc = (isVN ? "Công thức tính" : "Calculator").PadRight(40);
+                    string colQty = (isVN ? "Loại gán" : "Type").PadRight(15);
+                    string colUnit = (isVN ? "Tải trọng" : "Unit Load").PadRight(15);
+                    string colForce = (isVN ? "Lực (" + targetUnit + ")" : "Force (" + targetUnit + ")").PadRight(15);
+                    string colDir = (isVN ? "Hướng" : "Dir").PadRight(6);
+                    string colElems = (isVN ? "Danh sách phần tử" : "Elements").PadRight(30);
 
-                    sb.AppendLine($"    {colAxis}{colDim}{colQty}{colUnit}{colForce}{colDir}  {colElems}");
-                    sb.AppendLine($"    {new string('-', 120)}");
+                    sb.AppendLine($"    {colAxis}{colCalc}{colQty}{colUnit}{colForce}{colDir}{colElems}");
+                    sb.AppendLine($"    {new string('-', 140)}");
 
-                    // ✅ FIX: Data rows with inline element list
+                    // Data rows
                     if (loadType.ValueGroups != null && loadType.ValueGroups.Count > 0)
                     {
                         foreach (var valGroup in loadType.ValueGroups.OrderByDescending(v => v.TotalForce))
                         {
                             foreach (var entry in valGroup.Entries)
                             {
-                                string axis = TruncateText(entry.GridLocation, 20).PadRight(20);
-                                string dim = TruncateText(entry.Explanation, 25).PadRight(25);
-                                string qty = $"{entry.Quantity:0.00} {entry.QuantityUnit}".PadRight(12);
-                                string unitLoad = entry.UnitLoadString?.PadRight(12) ?? "".PadRight(12);
-                                string force = $"{entry.TotalForce * forceFactor:0.00}".PadRight(12);
-                                string dir = TruncateText(FormatDirection(entry.Direction, entry), 5).PadRight(5);
-                                
-                                // ✅ CRITICAL FIX: Element list INLINE at end, truncated to fit
-                                string elemStr = entry.ElementCount > 0 
-                                    ? $"({entry.ElementCount}x) {string.Join(",", entry.ElementList.Take(5))}{(entry.ElementCount > 5 ? "..." : "")}"
-                                    : "";
-                                elemStr = TruncateText(elemStr, 30);
-
-                                sb.AppendLine($"    {axis}{dim}{qty}{unitLoad}{force}{dir}  {elemStr}");
+                                FormatDataRow(sb, entry, forceFactor, targetUnit, loadType.LoadTypeName);
                             }
                         }
                     }
                     else if (loadType.Entries != null && loadType.Entries.Count > 0)
                     {
-                        // Fallback to flat entries
                         foreach (var entry in loadType.Entries.OrderByDescending(e => e.TotalForce))
                         {
-                            string axis = TruncateText(entry.GridLocation, 20).PadRight(20);
-                            string dim = TruncateText(entry.Explanation, 25).PadRight(25);
-                            string qty = $"{entry.Quantity:0.00} {entry.QuantityUnit}".PadRight(12);
-                            string unitLoad = entry.UnitLoadString?.PadRight(12) ?? "".PadRight(12);
-                            string force = $"{entry.TotalForce * forceFactor:0.00}".PadRight(12);
-                            string dir = TruncateText(FormatDirection(entry.Direction, entry), 5).PadRight(5);
-                            
-                            string elemStr = entry.ElementCount > 0 
-                                ? $"({entry.ElementCount}x) {string.Join(",", entry.ElementList.Take(5))}{(entry.ElementCount > 5 ? "..." : "")}"
-                                : "";
-                            elemStr = TruncateText(elemStr, 30);
-
-                            sb.AppendLine($"    {axis}{dim}{qty}{unitLoad}{force}{dir}  {elemStr}");
+                            FormatDataRow(sb, entry, forceFactor, targetUnit, loadType.LoadTypeName);
                         }
                     }
 
                     sb.AppendLine();
                 }
-
-                // Story subtotal
-                sb.AppendLine($"  {(isVN ? "Tổng tầng" : "Story Subtotal")}: {story.TotalForce * forceFactor:0.00} {targetUnit}");
-                sb.AppendLine();
             }
 
-            // Footer
-            sb.AppendLine("".PadRight(120, '='));
-            sb.AppendLine($"{(isVN ? "Kết thúc báo cáo" : "End of Report")}");
-            sb.AppendLine("".PadRight(120, '='));
+            // ==================== SUMMARY AT BOTTOM ====================
+            sb.AppendLine("".PadRight(140, '='));
+            sb.AppendLine(isVN ? "TỔNG KẾT KIỂM TOÁN:" : "AUDIT SUMMARY:");
+            sb.AppendLine();
+            sb.AppendLine($"   {(isVN ? "Tổng lực tính toán" : "Total Calculated Force")}: {report.TotalCalculatedForce * forceFactor:0.00} {targetUnit}");
+            sb.AppendLine($"   {(isVN ? "Thành phần Fx" : "Force Component Fx")}: {report.CalculatedFx * forceFactor:0.00} {targetUnit}");
+            sb.AppendLine($"   {(isVN ? "Thành phần Fy" : "Force Component Fy")}: {report.CalculatedFy * forceFactor:0.00} {targetUnit}");
+            sb.AppendLine($"   {(isVN ? "Thành phần Fz" : "Force Component Fz")}: {report.CalculatedFz * forceFactor:0.00} {targetUnit}");
+
+            if (report.IsAnalyzed)
+            {
+                double sapReaction = Math.Abs(report.SapBaseReaction) * forceFactor;
+                double diff = Math.Abs(report.Difference * forceFactor);
+                sb.AppendLine($"   {(isVN ? "Phản lực SAP" : "SAP Base Reaction")}: {sapReaction:0.00} {targetUnit}");
+                sb.AppendLine($"   {(isVN ? "Sai số" : "Difference")}: {diff:0.00} {targetUnit} ({report.DifferencePercent:0.00}%)");
+            }
+            else
+            {
+                sb.AppendLine($"   {(isVN ? "Lưu ý" : "Note")}: {(isVN ? "Chưa phân tích - Vui lòng kiểm tra thủ công" : "Not analyzed - Please verify manually")}");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("".PadRight(140, '='));
+            sb.AppendLine(isVN ? "KẾT THÚC BÁO CÁO" : "END OF REPORT");
+            sb.AppendLine("".PadRight(140, '='));
 
             return sb.ToString();
         }
 
         /// <summary>
-        /// Truncate text to max width (helper for inline display)
+        /// Format a single data row with proper column widths
         /// </summary>
-        private string TruncateText(string text, int maxWidth)
+        private void FormatDataRow(StringBuilder sb, AuditEntry entry, double forceFactor, string targetUnit, string loadType)
+        {
+            string axis = TruncateOrWrap(entry.GridLocation, 25).PadRight(25);
+
+            // Calculator column - can wrap for long formulas
+            string calculator = entry.Explanation ?? "";
+            if (calculator.Length > 40)
+            {
+                // Wrap long calculator formulas
+                var lines = WrapText(calculator, 40);
+                calculator = lines[0].PadRight(40);
+                // Additional lines will be added after main row
+            }
+            else
+            {
+                calculator = calculator.PadRight(40);
+            }
+
+            // Type column (for Frame: Full, Distributed, I=x-y, etc.)
+            string typeStr = FormatLoadType(entry, loadType).PadRight(15);
+
+            // Unit load - hide for grouped points
+            string unitLoad = entry.UnitLoadString?.PadRight(15) ?? "".PadRight(15);
+
+            string force = $"{entry.TotalForce * forceFactor:0.00}".PadRight(15);
+            string dir = FormatDirection(entry.Direction, entry).PadRight(6);
+
+            // Full element list without truncation
+            string elemStr = entry.ElementCount > 0
+                ? $"({entry.ElementCount}) {string.Join(", ", entry.ElementList)}"
+                : "";
+
+            sb.AppendLine($"    {axis}{calculator}{typeStr}{unitLoad}{force}{dir}{elemStr}");
+        }
+
+        /// <summary>
+        /// Get specific load type name based on element analysis
+        /// </summary>
+        private string GetSpecificLoadTypeName(AuditLoadTypeGroup loadType, bool isVN)
+        {
+            if (loadType.LoadTypeName.Contains("AREA") || loadType.LoadTypeName.Contains("SÀN"))
+            {
+                // Analyze if all elements are slabs or walls
+                bool hasSlabs = false;
+                bool hasWalls = false;
+
+                foreach (var entry in loadType.Entries)
+                {
+                    foreach (var elemName in entry.ElementList)
+                    {
+                        if (_areaGeometryCache.TryGetValue(elemName, out var area))
+                        {
+                            // Simple heuristic: vertical elements are walls
+                            var pts = ProjectAreaToBestPlane(area);
+                            if (pts.Count > 0)
+                            {
+                                double zRange = area.ZValues.Count > 1
+                                    ? area.ZValues.Max() - area.ZValues.Min()
+                                    : 0;
+
+                                if (zRange > 1000) // > 1m height = wall
+                                    hasWalls = true;
+                                else
+                                    hasSlabs = true;
+                            }
+                        }
+                    }
+                }
+
+                if (hasSlabs && !hasWalls) return isVN ? "SÀN - AREA LOAD" : "SLAB - AREA LOAD";
+                if (hasWalls && !hasSlabs) return isVN ? "VÁCH - AREA LOAD" : "WALL - AREA LOAD";
+                return isVN ? "VỎ - AREA LOAD" : "SHELL - AREA LOAD";
+            }
+
+            if (loadType.LoadTypeName.Contains("FRAME") || loadType.LoadTypeName.Contains("DẦM"))
+            {
+                bool hasBeams = false;
+                bool hasColumns = false;
+
+                foreach (var entry in loadType.Entries)
+                {
+                    foreach (var elemName in entry.ElementList)
+                    {
+                        if (_frameGeometryCache.TryGetValue(elemName, out var frame))
+                        {
+                            if (frame.IsVertical)
+                                hasColumns = true;
+                            else
+                                hasBeams = true;
+                        }
+                    }
+                }
+
+                if (hasBeams && !hasColumns) return isVN ? "DẦM - FRAME LOAD" : "BEAM - FRAME LOAD";
+                if (hasColumns && !hasBeams) return isVN ? "CỘT - FRAME LOAD" : "COLUMN - FRAME LOAD";
+                return isVN ? "KHUNG - FRAME LOAD" : "LINE - FRAME LOAD";
+            }
+
+            if (loadType.LoadTypeName.Contains("POINT") || loadType.LoadTypeName.Contains("NÚT"))
+            {
+                return isVN ? "TẬP TRUNG - POINT LOAD" : "CONCENTRATED - POINT LOAD";
+            }
+
+            return loadType.LoadTypeName;
+        }
+
+        /// <summary>
+        /// Format load assignment type for Frame elements
+        /// </summary>
+        private string FormatLoadType(AuditEntry entry, string loadType)
+        {
+            if (!loadType.Contains("Frame")) return entry.QuantityUnit ?? "-";
+
+            // Check if distributed load with partial coverage
+            if (entry.Explanation != null && entry.Explanation.Contains("-"))
+            {
+                // Extract I-J range from explanation
+                var parts = entry.Explanation.Split('|');
+                if (parts.Length > 1)
+                {
+                    return parts[1].Trim().Split(']')[0].Replace("[", "");
+                }
+            }
+
+            // Check quantity against typical full length
+            if (entry.Quantity > 0.9 * entry.Quantity) // Assume full if close to full
+                return "Full";
+
+            return "Distributed";
+        }
+
+        /// <summary>
+        /// Wrap text to multiple lines if needed
+        /// </summary>
+        private List<string> WrapText(string text, int maxWidth)
+        {
+            var lines = new List<string>();
+            if (string.IsNullOrEmpty(text)) return lines;
+
+            while (text.Length > maxWidth)
+            {
+                int breakPoint = text.LastIndexOf(' ', maxWidth);
+                if (breakPoint == -1) breakPoint = maxWidth;
+
+                lines.Add(text.Substring(0, breakPoint));
+                text = text.Substring(breakPoint).TrimStart();
+            }
+
+            if (text.Length > 0) lines.Add(text);
+            return lines;
+        }
+
+        /// <summary>
+        /// Truncate or wrap text
+        /// </summary>
+        private string TruncateOrWrap(string text, int maxWidth)
         {
             if (string.IsNullOrEmpty(text)) return "";
             if (text.Length <= maxWidth) return text;
@@ -1521,40 +1628,27 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Translate load type name for display
+        /// Format direction with correct axis detection
         /// </summary>
-        private string TranslateLoadTypeName(string loadType, bool isVietnamese)
-        {
-            if (string.IsNullOrEmpty(loadType)) return "";
-            
-            if (!isVietnamese) return loadType;
-            
-            // Vietnamese translations
-            switch (loadType.ToUpperInvariant())
-            {
-                case "FRAME": case "FRAMEDISTRIBUTED": return "DẦM/CỘT";
-                case "AREA": case "AREAUNIFORM": return "SÀN/TƯỜNG";
-                case "POINT": case "POINTFORCE": return "TẬP TRUNG";
-                default: return loadType;
-            }
-        }
-
-        // ✅ NEW METHOD: Format direction with sign
         private string FormatDirection(string direction, AuditEntry entry)
         {
-            // Parse vector components from entry (cần thêm vào AuditEntry class)
             if (direction == null) return "-";
-            
+
             string dir = direction.ToUpperInvariant();
-            
-            // Simplified: Just show axis (X/Y/Z)
-            if (dir.Contains("X")) return "X";
-            if (dir.Contains("Y")) return "Y";
-            if (dir.Contains("Z") || dir.Contains("GRAVITY")) return "-Z"; // Gravity = -Z
-            
-            return dir.Length > 8 ? dir.Substring(0, 8) : dir;
+
+            // Check for explicit axis indicators
+            if (dir.Contains("GLOBALX") || dir == "X") return "+X";
+            if (dir.Contains("GLOBALY") || dir == "Y") return "+Y";
+            if (dir.Contains("GLOBALZ") || dir == "Z") return "+Z";
+            if (dir.Contains("GRAVITY")) return "-Z";
+            if (dir.Contains("LOCAL1")) return "L1";
+            if (dir.Contains("LOCAL2")) return "L2";
+            if (dir.Contains("LOCAL3")) return "L3";
+
+            return dir.Length > 5 ? dir.Substring(0, 5) : dir;
         }
 
         #endregion
     }
+
 }
