@@ -112,7 +112,7 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
-            // BƯỚC 1: BUILD INVENTORY (1 lần duy nhất)
+            // BƯỚC 1: BUILD INVENTORY (1 lần duy nhất) - CRITICAL for Vector calculation
             if (_inventory == null)
             {
                 _inventory = new ModelInventory();
@@ -121,6 +121,7 @@ namespace DTS_Engine.Core.Engines
             }
 
             // BƯỚC 2: READ LOADS với SapDatabaseReader (truyền Inventory)
+            // Inventory enables accurate DirectionX/Y/Z calculation for all load types
             var dbReader = new SapDatabaseReader(SapUtils.GetModel(), _inventory);
             var allLoads = dbReader.ReadAllLoads(loadPattern);
             
@@ -132,6 +133,7 @@ namespace DTS_Engine.Core.Engines
             }
 
             // --- BƯỚC TÍNH TOÁN CHÍNH XÁC (Dựa trên Inventory) ---
+            // OPTIMIZATION: Single-pass calculation instead of nested loops
             double sumFx = 0, sumFy = 0, sumFz = 0;
 
             foreach (var load in allLoads)
@@ -146,7 +148,7 @@ namespace DTS_Engine.Core.Engines
                     else if (load.LoadType.Contains("Frame") && !load.LoadType.Contains("Point"))
                     {
                         double len = elemInfo.Length / 1000.0; // mm -> m
-                        // Xử lý tải từng đoạn đơn giản
+                        // Handle partial distributed loads (distStart != distEnd)
                         if (!load.IsRelative && Math.Abs(load.DistEnd - load.DistStart) > 0.001)
                             len = Math.Abs(load.DistEnd - load.DistStart) / 1000.0;
                         multiplier = len;
@@ -155,6 +157,7 @@ namespace DTS_Engine.Core.Engines
                         multiplier = 1.0;
                 }
 
+                // Accumulate vector components
                 sumFx += load.DirectionX * multiplier;
                 sumFy += load.DirectionY * multiplier;
                 sumFz += load.DirectionZ * multiplier;
