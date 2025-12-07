@@ -1,5 +1,6 @@
 ﻿using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Primitives;
+using DTS_Engine.Core.Engines;
 using SAP2000v1;
 using System;
 using System.Collections.Generic;
@@ -290,8 +291,9 @@ namespace DTS_Engine.Core.Utils
 			var model = GetModel();
 			if (model == null) return new List<RawSapLoad>();
 
-			// DELEGATE to SapDatabaseReader (Hybrid Mode)
-			var reader = new SapDatabaseReader(model, null); // null inventory for backward compat
+			var inventory = new ModelInventory();
+			inventory.Build();
+			var reader = new SapDatabaseReader(model, inventory);
 			return reader.ReadFrameDistributedLoads(patternFilter);
 		}
 
@@ -877,7 +879,6 @@ namespace DTS_Engine.Core.Utils
 
 			var summaryMap = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
 
-			// Initialize with defined patterns so they appear even if no loads were found for them
 			try
 			{
 				foreach (var p in GetLoadPatterns())
@@ -885,80 +886,27 @@ namespace DTS_Engine.Core.Utils
 					if (!summaryMap.ContainsKey(p)) summaryMap[p] = 0.0;
 				}
 			}
-			catch
-			{
-				// Optionally handle exception or log
-			}
+			catch { }
 
-			// Read all loads from various sources and aggregate magnitudes per pattern
 			try
 			{
-				// Frame distributed loads
-				var frameLoads = GetAllFrameDistributedLoads(null);
-				foreach (var load in frameLoads)
-				{
-					if (!string.IsNullOrEmpty(load.LoadPattern))
-					{
-						double current = 0.0;
-						summaryMap.TryGetValue(load.LoadPattern, out current);
-						summaryMap[load.LoadPattern] = current + Math.Abs(load.Value1);
-					}
-				}
+				var inventory = new ModelInventory();
+				inventory.Build();
+				var reader = new SapDatabaseReader(model, inventory);
+				var loads = reader.ReadAllLoads(null);
 
-				// Area uniform loads
-				var areaUniformLoads = GetAllAreaUniformLoads(null);
-				foreach (var load in areaUniformLoads)
+				foreach (var load in loads)
 				{
-					if (!string.IsNullOrEmpty(load.LoadPattern))
-					{
-						double current = 0.0;
-						summaryMap.TryGetValue(load.LoadPattern, out current);
-						summaryMap[load.LoadPattern] = current + Math.Abs(load.Value1);
-					}
-				}
-
-				// Area uniform to frame loads
-				var areaUniformToFrameLoads = GetAllAreaUniformToFrameLoads(null);
-				foreach (var load in areaUniformToFrameLoads)
-				{
-					if (!string.IsNullOrEmpty(load.LoadPattern))
-					{
-						double current = 0.0;
-						summaryMap.TryGetValue(load.LoadPattern, out current);
-						summaryMap[load.LoadPattern] = current + Math.Abs(load.Value1);
-					}
-				}
-
-				// Point loads
-				var pointLoads = GetAllPointLoads(null);
-				foreach (var load in pointLoads)
-				{
-					if (!string.IsNullOrEmpty(load.LoadPattern))
-					{
-						double current = 0.0;
-						summaryMap.TryGetValue(load.LoadPattern, out current);
-						summaryMap[load.LoadPattern] = current + Math.Abs(load.Value1);
-					}
-				}
-
-				// Joint masses (if considered loads)
-				var jointMasses = GetAllJointMasses();
-				foreach (var load in jointMasses)
-				{
-					if (!string.IsNullOrEmpty(load.LoadPattern))
-					{
-						double current = 0.0;
-						summaryMap.TryGetValue(load.LoadPattern, out current);
-						summaryMap[load.LoadPattern] = current + Math.Abs(load.Value1);
-					}
+					if (string.IsNullOrEmpty(load.LoadPattern)) continue;
+					if (!summaryMap.TryGetValue(load.LoadPattern, out var current)) current = 0.0;
+					summaryMap[load.LoadPattern] = current + Math.Abs(load.Value1);
 				}
 			}
 			catch (Exception ex)
 			{
-				System.Diagnostics.Debug.WriteLine($"Error reading loads: {ex.Message}");
+				System.Diagnostics.Debug.WriteLine($"Error reading loads via API: {ex.Message}");
 			}
 
-			// Return the result as a list of PatternSummary, ordered by descending load
 			return summaryMap
 				.Select(kvp => new PatternSummary { Name = kvp.Key, TotalEstimatedLoad = kvp.Value })
 				.OrderByDescending(ps => ps.TotalEstimatedLoad)
@@ -1562,43 +1510,15 @@ namespace DTS_Engine.Core.Utils
 		/// </summary>
 		public static List<RawSapLoad> GetAllAreaUniformLoads(string patternFilter = null)
 		{
-			var loads = new List<RawSapLoad>();
-			var rows = GetSapTableData("Area Loads - Uniform", patternFilter);
+			var model = GetModel();
+			if (model == null) return new List<RawSapLoad>();
 
-			var areaGeomMap = new Dictionary<string, double>();
-			if (rows.Count > 0)
-			{
-				var areas = GetAllAreasGeometry();
-				foreach (var a in areas) areaGeomMap[a.Name] = a.AverageZ;
-			}
-
-			foreach (var row in rows)
-			{
-				try
-				{
-					if (!row.ContainsKey("Area")) continue;
-
-					// Cột "UnifLoad" chứa giá trị tải (kN/mm²)
-					double val = ParseDouble(TryGetRowValue(row, "UnifLoad") ?? "0");
-					val = ConvertLoadToKnPerM2(val);
-
-					loads.Add(new RawSapLoad
-					{
-						ElementName = TryGetRowValue(row, "Area") ?? string.Empty,
-						LoadPattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty,
-						Value1 = Math.Abs(val),
-						LoadType = "AreaUniform",
-						Direction = TryGetRowValue(row, "Dir") ?? "Gravity",
-						CoordSys = TryGetRowValue(row, "CoordSys") ?? "Local",
-						ElementZ = areaGeomMap.ContainsKey(TryGetRowValue(row, "Area") ?? string.Empty) ? areaGeomMap[TryGetRowValue(row, "Area")] : 0
-					});
-				}
-				catch (Exception ex)
-				{
-					System.Diagnostics.Debug.WriteLine($"GetAllAreaUniformLoads: row parse failed: {ex}");
-				}
-			}
-			return loads;
+			var inventory = new ModelInventory();
+			inventory.Build();
+			var reader = new SapDatabaseReader(model, inventory);
+			return reader.ReadAllLoads(patternFilter)
+				.Where(l => l.LoadType != null && l.LoadType.IndexOf("AreaUniform", StringComparison.OrdinalIgnoreCase) >= 0)
+				.ToList();
 		}
 
 		/// <summary>
@@ -1607,43 +1527,15 @@ namespace DTS_Engine.Core.Utils
 		/// </summary>
 		public static List<RawSapLoad> GetAllAreaUniformToFrameLoads(string patternFilter = null)
 		{
-			var loads = new List<RawSapLoad>();
-			var rows = GetSapTableData("Area Loads - Uniform To Frame", patternFilter);
+			var model = GetModel();
+			if (model == null) return new List<RawSapLoad>();
 
-			var areaGeomMap = new Dictionary<string, double>();
-			if (rows.Count > 0)
-			{
-				var areas = GetAllAreasGeometry();
-				foreach (var a in areas) areaGeomMap[a.Name] = a.AverageZ;
-			}
-
-			foreach (var row in rows)
-			{
-				try
-				{
-					if (!row.ContainsKey("Area")) continue;
-
-					double val = ParseDouble(TryGetRowValue(row, "UnifLoad") ?? "0");
-					val = ConvertLoadToKnPerM2(val);
-
-					loads.Add(new RawSapLoad
-					{
-						ElementName = TryGetRowValue(row, "Area") ?? string.Empty,
-						LoadPattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty,
-						Value1 = Math.Abs(val),
-						LoadType = "AreaUniformToFrame",
-						Direction = TryGetRowValue(row, "Dir") ?? "Gravity",
-						DistributionType = TryGetRowValue(row, "DistType") ?? "Two way",
-						CoordSys = TryGetRowValue(row, "CoordSys") ?? "GLOBAL",
-						ElementZ = areaGeomMap.ContainsKey(TryGetRowValue(row, "Area") ?? string.Empty) ? areaGeomMap[TryGetRowValue(row, "Area")] : 0
-					});
-				}
-				catch (Exception ex)
-				{
-					System.Diagnostics.Debug.WriteLine($"GetAllAreaUniformToFrameLoads: row parse failed: {ex}");
-				}
-			}
-			return loads;
+			var inventory = new ModelInventory();
+			inventory.Build();
+			var reader = new SapDatabaseReader(model, inventory);
+			return reader.ReadAllLoads(patternFilter)
+				.Where(l => l.LoadType != null && l.LoadType.IndexOf("AreaUniformToFrame", StringComparison.OrdinalIgnoreCase) >= 0)
+				.ToList();
 		}
 
 		/// <summary>
@@ -1653,113 +1545,15 @@ namespace DTS_Engine.Core.Utils
 		/// </summary>
 		public static List<RawSapLoad> GetAllPointLoads(string patternFilter = null)
 		{
-			var loads = new List<RawSapLoad>();
 			var model = GetModel();
-			if (model == null) return loads;
+			if (model == null) return new List<RawSapLoad>();
 
-			var rows = GetSapTableData("Joint Loads - Force", patternFilter);
-			var pointGeomMap = new Dictionary<string, double>();
-			if (rows.Count > 0)
-			{
-				var points = GetAllPoints();
-				foreach (var p in points) pointGeomMap[p.Name] = p.Z;
-			}
-
-			// Cache load patterns once for existence checking
-			HashSet<string> existingPatterns = null;
-			try
-			{
-				existingPatterns = new HashSet<string>(GetLoadPatterns(), StringComparer.OrdinalIgnoreCase);
-			}
-			catch { existingPatterns = null; }
-
-			foreach (var row in rows)
-			{
-				try
-				{
-					if (!row.ContainsKey("Joint")) continue;
-					string joint = TryGetRowValue(row, "Joint");
-					string pattern = TryGetRowValue(row, "LoadPat") ?? TryGetRowValue(row, "OutputCase") ?? string.Empty;
-					if (!string.IsNullOrEmpty(patternFilter) && !pattern.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Any(p => p.Equals(patternFilter, StringComparison.OrdinalIgnoreCase))) continue;
-
-					if (existingPatterns != null && !existingPatterns.Contains(pattern)) continue;
-
-					string cSys = TryGetRowValue(row, "CoordSys") ?? "GLOBAL";
-					double z = pointGeomMap.ContainsKey(joint) ? pointGeomMap[joint] : 0;
-
-					// Read components
-					double f1 = ParseDouble(TryGetRowValue(row, "F1") ?? "0");
-					double f2 = ParseDouble(TryGetRowValue(row, "F2") ?? "0");
-					double f3 = ParseDouble(TryGetRowValue(row, "F3") ?? "0");
-
-					// FIX BUG #6: Add Vector components to each load
-					if (Math.Abs(f1) > 0.001)
-					{
-						double convertedF1 = ConvertForceToKn(f1);
-						var load = new RawSapLoad
-						{
-							ElementName = joint,
-							LoadPattern = pattern,
-							Value1 = Math.Abs(convertedF1),
-							LoadType = "PointForce",
-							Direction = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "Local-1" : "X",
-							CoordSys = cSys,
-							ElementZ = z,
-							// FIX BUG #6: Set vector components directly
-							DirectionX = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? 0 : convertedF1,
-							DirectionY = 0,
-							DirectionZ = 0
-						};
-						loads.Add(load);
-					}
-
-					if (Math.Abs(f2) > 0.001)
-					{
-						double convertedF2 = ConvertForceToKn(f2);
-						var load = new RawSapLoad
-						{
-							ElementName = joint,
-							LoadPattern = pattern,
-							Value1 = Math.Abs(convertedF2),
-							LoadType = "PointForce",
-							Direction = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "Local-2" : "Y",
-							CoordSys = cSys,
-							ElementZ = z,
-							// FIX BUG #6: Set vector components directly
-							DirectionX = 0,
-							DirectionY = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? 0 : convertedF2,
-							DirectionZ = 0
-						};
-						loads.Add(load);
-					}
-
-					if (Math.Abs(f3) > 0.001)
-					{
-						double convertedF3 = ConvertForceToKn(f3);
-						var load = new RawSapLoad
-						{
-							ElementName = joint,
-							LoadPattern = pattern,
-							Value1 = Math.Abs(convertedF3),
-							LoadType = "PointForce",
-							Direction = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? "Local-3" : "Gravity",
-							CoordSys = cSys,
-							ElementZ = z,
-							// FIX BUG #6: Set vector components directly (F3 is typically vertical/gravity)
-							DirectionX = 0,
-							DirectionY = 0,
-							DirectionZ = cSys.Equals("Local", StringComparison.OrdinalIgnoreCase) ? 0 : -Math.Abs(convertedF3)
-						};
-						loads.Add(load);
-					}
-				}
-				catch (Exception ex)
-				{
-					System.Diagnostics.Debug.WriteLine($"GetAllPointLoads: row parse failed: {ex}");
-				}
-			}
-
-			return loads;
+			var inventory = new ModelInventory();
+			inventory.Build();
+			var reader = new SapDatabaseReader(model, inventory);
+			return reader.ReadAllLoads(patternFilter)
+				.Where(l => l.LoadType != null && l.LoadType.IndexOf("Point", StringComparison.OrdinalIgnoreCase) >= 0)
+				.ToList();
 		}
 
 		/// <summary>

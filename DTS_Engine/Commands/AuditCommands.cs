@@ -56,115 +56,102 @@ namespace DTS_Engine.Commands
                 WriteMessage("\nĐang quét dữ liệu Load Patterns...");
                 var activePatterns = SapUtils.GetActiveLoadPatterns();
                 var allPatterns = SapUtils.GetLoadPatterns();
-
+                
                 if (allPatterns.Count == 0)
                 {
                     WriteError("Không tìm thấy Load Pattern nào trong model.");
                     return;
                 }
 
-                // Map pattern name -> estimated load để hiển thị
-                var loadSummaryMap = activePatterns.ToDictionary(p => p.Name, p => p.TotalEstimatedLoad, StringComparer.OrdinalIgnoreCase);
-
-                // Sắp xếp patterns: Có tải lên trước, sau đó sắp A-Z
-                var displayList = allPatterns.OrderByDescending(name =>
-                    loadSummaryMap.ContainsKey(name) ? loadSummaryMap[name] : -1).ToList();
-
-                // 4. Hiển thị Menu đánh số
-                WriteMessage("\n--- DANH SÁCH LOAD PATTERN ---");
-                int maxDisplay = 30;
-                for (int i = 0; i < displayList.Count; i++)
-                {
-                    if (i >= maxDisplay)
-                    {
-                        WriteMessage($" ... và {displayList.Count - maxDisplay} pattern khác (vẫn có thể chọn bằng tên)");
-                        break;
-                    }
-                    string patName = displayList[i];
-                    double loadVal = loadSummaryMap.ContainsKey(patName) ? loadSummaryMap[patName] : 0;
-                    string info = loadVal > 0.001 ? $"[~{loadVal:N0} kN]" : "[-]";
-                    WriteMessage($" {i + 1,2}. {patName,-15} {info}");
-                }
-                WriteMessage(" --------------------------------------------");
-                WriteMessage(" A. All (Chọn tất cả)");
-                WriteMessage(" 0. Cancel");
-
-                // 5. Yêu cầu nhập (sử dụng string input đơn giản - FIX BUG #1)
+                // ✅ FIX: Sử dụng PromptKeywordOptions với pagination
                 var selectedPatterns = new List<string>();
-                
-                var pso = new PromptStringOptions("\nNhập số thứ tự (VD: 1, 3) hoặc tên Pattern (hoặc 'A' cho tất cả, '0' để hủy): ");
-                pso.AllowSpaces = true;
+                int pageSize = 10;
+                int pageIndex = 0;
+                int totalPages = (int)Math.Ceiling(allPatterns.Count / (double)pageSize);
 
-                PromptResult pres = Ed.GetString(pso);
-                if (pres.Status != PromptStatus.OK) 
+                while (true)
                 {
-                    WriteMessage("Đã hủy do không nhận được input.");
-                    return;
-                }
-
-                string input = (pres.StringResult ?? "").Trim();
-                
-                // Handle empty input
-                if (string.IsNullOrEmpty(input))
-                {
-                    WriteMessage("Không có input. Vui lòng nhập số thứ tự hoặc tên pattern.");
-                    return;
-                }
-                
-                // Xử lý cancel
-                if (input == "0")
-                {
-                    WriteMessage("Đã hủy.");
-                    return;
-                }
-
-                var parts = input.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (var part in parts)
-                {
-                    string p = part.Trim();
-                    if (string.IsNullOrEmpty(p)) continue;
-
-                    if (p.Equals("All", StringComparison.OrdinalIgnoreCase) || p.Equals("A", StringComparison.OrdinalIgnoreCase))
+                    WriteMessage($"\n--- LOAD PATTERNS (Page {pageIndex + 1}/{totalPages}) ---");
+                    
+                    var patOpt = new PromptKeywordOptions("\nChọn Pattern (hoặc Next/Prev/All/Done): ");
+                    patOpt.AllowNone = false;
+                    
+                    // Thêm patterns của trang hiện tại
+                    int start = pageIndex * pageSize;
+                    int end = Math.Min(allPatterns.Count, start + pageSize);
+                    
+                    for (int i = start; i < end; i++)
+                    {
+                        string patName = allPatterns[i];
+                        patOpt.Keywords.Add(patName);
+                        
+                        // Hiển thị info
+                        double loadVal = activePatterns.FirstOrDefault(p => p.Name == patName)?.TotalEstimatedLoad ?? 0;
+                        string info = loadVal > 0.001 ? $"[~{loadVal:N0} kN]" : "[-]";
+                        WriteMessage($" {i + 1,2}. {patName,-15} {info}");
+                    }
+                    
+                    // Navigation keywords
+                    if (pageIndex < totalPages - 1) patOpt.Keywords.Add("Next");
+                    if (pageIndex > 0) patOpt.Keywords.Add("Prev");
+                    patOpt.Keywords.Add("All");
+                    patOpt.Keywords.Add("Done");
+                    
+                    patOpt.Keywords.Default = end < allPatterns.Count ? "Next" : "Done";
+                    
+                    var patRes = Ed.GetKeywords(patOpt);
+                    
+                    if (patRes.Status != PromptStatus.OK)
+                    {
+                        WriteMessage("Đã hủy.");
+                        return;
+                    }
+                    
+                    string choice = patRes.StringResult;
+                    
+                    if (choice == "Next" && pageIndex < totalPages - 1)
+                    {
+                        pageIndex++;
+                    }
+                    else if (choice == "Prev" && pageIndex > 0)
+                    {
+                        pageIndex--;
+                    }
+                    else if (choice == "All")
                     {
                         selectedPatterns = allPatterns.ToList();
                         break;
                     }
-                    else if (int.TryParse(p, out int idx))
+                    else if (choice == "Done")
                     {
-                        if (idx == 0) 
+                        if (selectedPatterns.Count == 0)
                         {
-                            WriteMessage("Đã hủy.");
-                            return;
+                            WriteWarning("Chưa chọn pattern nào.");
+                            continue;
                         }
-                        if (idx > 0 && idx <= displayList.Count)
-                        {
-                            selectedPatterns.Add(displayList[idx - 1]);
-                        }
-                        else
-                        {
-                            WriteWarning($"Số {idx} không hợp lệ (Max: {displayList.Count})");
-                        }
+                        break;
                     }
                     else
                     {
-                        var match = allPatterns.FirstOrDefault(x => x.Equals(p, StringComparison.OrdinalIgnoreCase));
-                        if (match != null) selectedPatterns.Add(match);
+                        // Pattern được chọn
+                        if (!selectedPatterns.Contains(choice))
+                        {
+                            selectedPatterns.Add(choice);
+                            WriteSuccess($"Đã thêm: {choice} (Tổng: {selectedPatterns.Count})");
+                        }
                         else
                         {
-                            string sanitizedInput = p.Replace("-", "").Replace("_", "");
-                            var fuzzyMatch = allPatterns.FirstOrDefault(x => x.Replace("_", "").Replace("-", "").Equals(sanitizedInput, StringComparison.OrdinalIgnoreCase));
-                            if (fuzzyMatch != null) selectedPatterns.Add(fuzzyMatch);
-                            else WriteWarning($"Không tìm thấy pattern '{p}'");
+                            WriteWarning($"{choice} đã được chọn rồi.");
                         }
                     }
                 }
-
+                
                 if (selectedPatterns.Count == 0)
                 {
                     WriteWarning("Không có Load Pattern nào được chọn.");
                     return;
                 }
-
+                
                 selectedPatterns = selectedPatterns.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 WriteMessage($"\n>> Đã chọn {selectedPatterns.Count} patterns: {string.Join(", ", selectedPatterns.Take(5))}{(selectedPatterns.Count > 5 ? "..." : "")}\n");
 

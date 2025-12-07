@@ -348,7 +348,13 @@ namespace DTS_Engine.Core.Utils
 				var areas = SapUtils.GetAllAreasGeometry();
 				var area = areas.FirstOrDefault(a => a.Name.Equals(elementName, StringComparison.OrdinalIgnoreCase));
 				if (area != null)
-					return area.AverageZ;
+				{
+					double minZ = area.ZValues.Count > 0 ? area.ZValues.Min() : area.AverageZ;
+					double maxZ = area.ZValues.Count > 0 ? area.ZValues.Max() : area.AverageZ;
+					bool isVertical = Math.Abs(maxZ - minZ) > Math.Max(area.BoundaryPoints.Select(p => p.X).DefaultIfEmpty().Max() - area.BoundaryPoints.Select(p => p.X).DefaultIfEmpty().Min(),
+																  area.BoundaryPoints.Select(p => p.Y).DefaultIfEmpty().Max() - area.BoundaryPoints.Select(p => p.Y).DefaultIfEmpty().Min()) * 0.5;
+					return isVertical ? minZ : area.AverageZ;
+				}
 			}
 
 			return 0;

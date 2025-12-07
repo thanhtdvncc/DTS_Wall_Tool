@@ -28,10 +28,8 @@ namespace DTS_Engine.Core.Engines
             public double Length { get; set; } // mm
             public double Area { get; set; }   // mm2
             public double AverageZ { get; set; }
-            
-            // FIX BUG #3: Thêm thông tin cao độ chi tiết cho vertical elements
-            public double MinZ { get; set; }  // Cao độ thấp nhất (cho columns)
-            public double MaxZ { get; set; }  // Cao độ cao nhất
+            public double MinZ { get; set; }
+            public double MaxZ { get; set; }
             public bool IsVertical { get; set; }
             
             /// <summary>
@@ -123,7 +121,10 @@ namespace DTS_Engine.Core.Engines
                     LocalAxis1 = Vector3D.UnitX,
                     LocalAxis2 = Vector3D.UnitY,
                     LocalAxis3 = Vector3D.UnitZ,
-                    AverageZ = p.Z
+                    AverageZ = p.Z,
+                    MinZ = p.Z,
+                    MaxZ = p.Z,
+                    IsVertical = false
                 };
             }
         }
@@ -167,6 +168,11 @@ namespace DTS_Engine.Core.Engines
                     local2 = local3.Cross(local1).Normalized;
                 }
 
+                // Determine orientation: vertical if normal is mostly horizontal
+                bool isVertical = Math.Abs(local3.Z) < 0.5;
+                double minZ = area.ZValues.Count > 0 ? area.ZValues.Min() : area.AverageZ;
+                double maxZ = area.ZValues.Count > 0 ? area.ZValues.Max() : area.AverageZ;
+
                 _elements[area.Name] = new ElementInfo
                 {
                     Name = area.Name,
@@ -175,7 +181,10 @@ namespace DTS_Engine.Core.Engines
                     LocalAxis2 = local2,
                     LocalAxis3 = local3,
                     Area = area.Area,
-                    AverageZ = area.AverageZ
+                    AverageZ = area.AverageZ,
+                    MinZ = minZ,
+                    MaxZ = maxZ,
+                    IsVertical = isVertical
                 };
             }
         }
