@@ -142,12 +142,14 @@
     <Compile Include="Core\Interfaces\IIdentifiable.cs" />
     <Compile Include="Core\Interfaces\ILineGeometry.cs" />
     <Compile Include="Core\Interfaces\ILoadBearing.cs" />
+    <Compile Include="Core\Interfaces\ISapLoadReader.cs" />
     <Compile Include="Core\Primitives\BoundingBox.cs" />
     <Compile Include="Core\Primitives\GeometryConstants.cs" />
     <Compile Include="Core\Primitives\LineSegment2D.cs" />
     <Compile Include="Core\Primitives\Point2D.cs" />
     <Compile Include="Core\Primitives\GeometryResults.cs" />
     <Compile Include="Core\Primitives\Vector3D.cs" />
+    <Compile Include="Core\Testing\MockLoadReader.cs" />
     <Compile Include="Core\Utils\AcadUtils.cs" />
     <Compile Include="Core\Utils\LabelPlotter.cs" />
     <Compile Include="Core\Utils\LabelUtils.cs" />
@@ -188,6 +190,9 @@
   <ItemGroup>
     <None Include="app.config" />
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Docs\DEPENDENCY_INJECTION_ARCHITECTURE.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

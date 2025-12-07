@@ -1,0 +1,305 @@
+DEPENDENCY INJECTION ARCHITECTURE - DTS ENGINE v2.9
+=====================================================
+
+## OVERVIEW
+
+H? th?ng ?ã ???c nâng c?p t? Tight Coupling sang Dependency Injection Architecture,
+tuân th? SOLID Principles và ISO/IEC 25010 (Software Quality).
+
+## ARCHITECTURE DIAGRAM
+
+```
+???????????????????????????????????????????????????????????
+?                  Presentation Layer                      ?
+?              (AuditCommands - UI/CLI)                    ?
+???????????????????????????????????????????????????????????
+                  ? Composition Root
+                  ? (Dependency Assembly)
+                  ?
+        ??????????????????????
+        ?                    ?
+        ?                    ?
+?????????????????    ??????????????????????
+? ISapLoadReader??????  SapDatabaseReader ? (Data Access)
+?  (Interface)  ?    ?  + ModelInventory  ?
+?????????????????    ??????????????????????
+        ?                    ?
+        ?                    ? Reads from
+        ?                    ?
+        ?            ??????????????????
+        ?            ?   SAP2000 API   ?
+        ?            ?   Database      ?
+        ?            ???????????????????
+        ?
+        ? Injected into
+        ?
+??????????????????????
+?   AuditEngine      ? (Business Logic)
+?   + Calculation    ?
+?   + Grouping       ?
+?   + Reporting      ?
+??????????????????????
+```
+
+## KEY COMPONENTS
+
+### 1. ISapLoadReader (Interface)
+- **Location**: `Core/Interfaces/ISapLoadReader.cs`
+- **Responsibility**: ??nh ngh?a contract cho vi?c ??c t?i tr?ng
+- **Method**: `List<RawSapLoad> ReadAllLoads(string patternFilter)`
+- **Benefit**: Abstraction - AuditEngine không bi?t ngu?n d? li?u
+
+### 2. SapDatabaseReader (Implementation)
+- **Location**: `Core/Utils/SapDatabaseReader.cs`
+- **Implements**: ISapLoadReader
+- **Dependencies**: 
+  - cSapModel (SAP2000 API)
+  - ModelInventory (Geometry + Vector calculation)
+- **Responsibility**: ??c t?i tr?ng t? SAP2000 (Table/API Hybrid)
+- **Features**:
+  - Automatic fallback Table ? API
+  - Vector calculation (Local ? Global)
+  - Unit conversion (kN/mm ? kN/m)
+
+### 3. AuditEngine (Business Logic)
+- **Location**: `Core/Engines/AuditEngine.cs`
+- **Constructor**: `AuditEngine(ISapLoadReader loadReader)`
+- **Responsibility**: 
+  - Tính toán Vector components (Fx, Fy, Fz)
+  - Phân t?ng theo Story
+  - Gom nhóm theo Grid
+  - T?o báo cáo
+- **No longer depends on**: SapDatabaseReader (ch? ph? thu?c interface)
+
+### 4. Composition Root
+- **Location**: `Commands/AuditCommands.cs` (DTS_AUDIT_SAP2000)
+- **Responsibility**: L?p ráp dependencies theo ?úng th? t?
+- **Workflow**:
+  ```csharp
+  // 1. Infrastructure
+  var model = SapUtils.GetModel();
+  
+  // 2. Data Layer
+  var inventory = new ModelInventory();
+  inventory.Build();
+  
+  // 3. Data Access
+  ISapLoadReader loadReader = new SapDatabaseReader(model, inventory);
+  
+  // 4. Business Logic
+  var engine = new AuditEngine(loadReader);
+  
+  // 5. Execute
+  var report = engine.RunSingleAudit("DL");
+  ```
+
+## BENEFITS
+
+### 1. Testability (ISO/IEC 25010 - Testability)
+- Mock ISapLoadReader thay vì mock SAP API
+- Unit test AuditEngine mà không c?n SAP2000
+- Example: `MockLoadReader.CreateSampleData()`
+
+### 2. Maintainability (ISO/IEC 25010 - Modifiability)
+- Thay ??i data source (Excel, SQL) không s?a Engine
+- S?a logic calculation không ?nh h??ng data reading
+- Separation of Concerns
+
+### 3. Extensibility (SOLID - Open/Closed)
+- Thêm ExcelLoadReader implements ISapLoadReader
+- Thêm SqlLoadReader implements ISapLoadReader
+- Engine không c?n s?a
+
+### 4. Reliability (ISO/IEC 25010 - Fault Tolerance)
+- Reader có Hybrid fallback (Table ? API)
+- Engine không crash n?u Reader fail (tr? v? empty list)
+- Defensive programming
+
+## USAGE EXAMPLES
+
+### Example 1: Normal Usage (Production)
+```csharp
+// Composition Root
+var model = SapUtils.GetModel();
+var inventory = new ModelInventory();
+inventory.Build();
+
+ISapLoadReader reader = new SapDatabaseReader(model, inventory);
+var engine = new AuditEngine(reader);
+
+// Execute
+var report = engine.RunSingleAudit("DL");
+```
+
+### Example 2: Unit Testing
+```csharp
+// Mock data
+var mockReader = new MockLoadReader();
+mockReader.AddMockLoad("B1", "DL", 10.0, "FrameDistributed", 0, 0, -10);
+
+// Test engine
+var engine = new AuditEngine(mockReader);
+var report = engine.RunSingleAudit("DL");
+
+// Assertions
+Assert.Equal(10.0, report.CalculatedFz);
+```
+
+### Example 3: Future Excel Reader
+```csharp
+public class ExcelLoadReader : ISapLoadReader
+{
+    private string _excelPath;
+    
+    public ExcelLoadReader(string path)
+    {
+        _excelPath = path;
+    }
+    
+    public List<RawSapLoad> ReadAllLoads(string pattern)
+    {
+        // Read from Excel using EPPlus/ClosedXML
+        // Convert to RawSapLoad format
+        // Return list
+    }
+}
+
+// Usage (NO CHANGE to AuditEngine)
+ISapLoadReader reader = new ExcelLoadReader("loads.xlsx");
+var engine = new AuditEngine(reader);
+var report = engine.RunSingleAudit("DL");
+```
+
+## DATA CONTRACT (RawSapLoad)
+
+### Essential Fields
+- `ElementName`: Tên ph?n t? (B1, F1, J1)
+- `LoadPattern`: Load Pattern (DL, LL, WX...)
+- `Value1`: Magnitude (kN/m, kN/m², kN)
+- `LoadType`: "FrameDistributed", "AreaUniform", "PointForce"
+- `DirectionX/Y/Z`: Vector components (CRITICAL)
+- `ElementZ`: Elevation (mm) - cho phân t?ng
+
+### Rules
+- DirectionX/Y/Z ph?i ???c tính b?i Reader (dùng ModelInventory)
+- Value1 ph?i ?ã convert sang ??n v? chu?n (kN/m, kN/m², kN)
+- ElementZ c?n có ?? GroupLoadsByStory()
+
+## MIGRATION NOTES
+
+### Breaking Changes
+- **Old**: `new AuditEngine()` ? `engine.RunSingleAudit("DL")`
+- **New**: `new AuditEngine(loadReader)` ? `engine.RunSingleAudit("DL")`
+
+### Backward Compatibility
+- SapUtils methods v?n ho?t ??ng (legacy)
+- Diagnostic commands ?ã update ?? dùng DI
+- Không c?n s?a user scripts (Commands t? x? lý)
+
+## COMPLIANCE
+
+### ISO/IEC 25010 Quality Attributes
+- ? Maintainability (Modifiability, Modularity)
+- ? Testability (Unit test, Mock)
+- ? Reliability (Fault tolerance)
+- ? Performance (Cache inventory, single pass)
+
+### SOLID Principles
+- ? Single Responsibility (Engine ? Reader)
+- ? Open/Closed (Extend without modify)
+- ? Liskov Substitution (ISapLoadReader)
+- ? Interface Segregation (1 method interface)
+- ? Dependency Inversion (Depend on abstraction)
+
+### ISO/IEC 12207 Process
+- ? Architecture Design
+- ? Detailed Design
+- ? Implementation
+- ? Unit Testing (MockLoadReader)
+- ? Documentation (This file)
+
+## TESTING
+
+### Manual Test Commands
+```
+DTS_TEST_AUDIT_FIX      - Test full workflow with DI
+DTS_AUDIT_SAP2000       - Production command with DI
+```
+
+### Automated Test (Future)
+- Create NUnit/xUnit test project
+- Use MockLoadReader for test data
+- Test AuditEngine.RunSingleAudit()
+- Test Vector calculations
+- Test Story grouping logic
+
+## TROUBLESHOOTING
+
+### Error: "ISapLoadReader is required"
+**Cause**: Truy?n null vào AuditEngine constructor
+**Fix**: Kh?i t?o SapDatabaseReader tr??c khi truy?n vào Engine
+
+### Error: "ModelInventory null reference"
+**Cause**: SapDatabaseReader ???c t?o v?i inventory = null
+**Fix**: Build inventory tr??c:
+```csharp
+var inventory = new ModelInventory();
+inventory.Build();
+var reader = new SapDatabaseReader(model, inventory);
+```
+
+### Performance Issue: Slow build
+**Cause**: Inventory build m?i l?n g?i
+**Fix**: Build inventory 1 l?n, tái s? d?ng cho nhi?u patterns:
+```csharp
+var inventory = new ModelInventory();
+inventory.Build();
+var reader = new SapDatabaseReader(model, inventory);
+var engine = new AuditEngine(reader);
+
+foreach (var pattern in patterns)
+{
+    var report = engine.RunSingleAudit(pattern); // Reuse reader
+}
+```
+
+## FUTURE ENHANCEMENTS
+
+### Phase 1 (Current)
+- ? Interface ISapLoadReader
+- ? SapDatabaseReader implements interface
+- ? AuditEngine uses DI
+- ? MockLoadReader for testing
+
+### Phase 2 (Planned)
+- [ ] ExcelLoadReader (EPPlus/ClosedXML)
+- [ ] SqlLoadReader (Entity Framework)
+- [ ] JsonLoadReader (System.Text.Json)
+- [ ] ILoadWriter interface (Export)
+
+### Phase 3 (Advanced)
+- [ ] Dependency Injection Container (Autofac/Unity)
+- [ ] Configuration system (appsettings.json)
+- [ ] Plugin architecture (MEF)
+- [ ] REST API service
+
+## VERSION HISTORY
+
+### v2.9 (Current)
+- Introduced ISapLoadReader interface
+- Refactored AuditEngine to use DI
+- Created Composition Root in AuditCommands
+- Added MockLoadReader for testing
+- Updated all diagnostic commands
+
+### v2.8 (Previous)
+- Vector-based calculation
+- ModelInventory integration
+- Hybrid Table/API reader
+
+---
+
+**Author**: DTS Engineering Team  
+**Date**: 2024  
+**License**: Proprietary  
+**Standards**: ISO/IEC 25010, ISO/IEC 12207, SOLID Principles

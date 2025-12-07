@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.Runtime;
 using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Engines;
+using DTS_Engine.Core.Interfaces;
 using DTS_Engine.Core.Utils;
 using System;
 using System.Collections.Generic;
@@ -156,11 +157,56 @@ namespace DTS_Engine.Commands
                 var unitRes = Ed.GetKeywords(unitOpt);
                 string selectedUnit = (unitRes.Status == PromptStatus.OK) ? unitRes.StringResult : "kN";
 
-                // 8. Chạy Audit
-                WriteMessage($"\n>> Đang xử lý...");
-                WriteMessage($">> [NEW] Sử dụng Vector-based approach với Model Inventory");
+                // ===============================================================
+                // BƯỚC 8: COMPOSITION ROOT - Dependency Injection Assembly
+                // ===============================================================
+                // Đây là nơi duy nhất khởi tạo và lắp ráp các dependencies.
+                // Tuân thủ SOLID: Dependency Inversion Principle.
+                //
+                // WORKFLOW:
+                // 1. Chuẩn bị Infrastructure (SAP Connection)
+                // 2. Khởi tạo ModelInventory (Data Layer Dependency)
+                // 3. Khởi tạo LoadReader với Inventory (Data Access Layer)
+                // 4. Inject LoadReader vào Engine (Business Logic Layer)
+                //
+                // RATIONALE:
+                // - Tất cả dependencies được resolve ở đây, không ở bên trong Engine
+                // - Engine không biết SAP, chỉ biết ISapLoadReader interface
+                // - Dễ test: Mock ISapLoadReader thay vì mock cả SAP API
+                // ===============================================================
+
+                WriteMessage($"\n>> Đang khởi tạo hệ thống...");
+
+                // STEP 1: Infrastructure - Get SAP Model
+                var model = SapUtils.GetModel();
+                if (model == null)
+                {
+                    WriteError("Không thể lấy SAP Model. Vui lòng kiểm tra kết nối.");
+                    return;
+                }
+
+                // STEP 2: Build ModelInventory (CRITICAL for Vector calculation)
+                // Inventory chỉ build 1 lần, tái sử dụng cho mọi pattern
+                WriteMessage("   [1/3] Building Model Inventory...");
+                var inventory = new ModelInventory();
+                inventory.Build();
+                WriteMessage($"   {inventory.GetStatistics()}");
+
+                // STEP 3: Initialize Load Reader (Data Access Layer)
+                WriteMessage("   [2/3] Initializing Load Reader...");
+                ISapLoadReader loadReader = new SapDatabaseReader(model, inventory);
                 
-                var engine = new AuditEngine();
+                // STEP 4: Initialize Audit Engine (Business Logic Layer)
+                WriteMessage("   [3/3] Initializing Audit Engine...");
+                var engine = new AuditEngine(loadReader);
+
+                WriteMessage("   >> System ready. Processing patterns...\n");
+
+                // ===============================================================
+                // END OF COMPOSITION ROOT
+                // ===============================================================
+
+                // 9. Chạy Audit cho từng Pattern
                 string tempFolder = Path.GetTempPath();
                 int fileCounter = 0;
                 string firstFilePath = null;

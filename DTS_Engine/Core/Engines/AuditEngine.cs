@@ -1,4 +1,5 @@
 ﻿using DTS_Engine.Core.Data;
+using DTS_Engine.Core.Interfaces;
 using DTS_Engine.Core.Primitives;
 using DTS_Engine.Core.Utils;
 using NetTopologySuite.Geometries;
@@ -12,11 +13,17 @@ namespace DTS_Engine.Core.Engines
 {
 
     /// <summary>
-    /// Engine kiểm toán tải trọng SAP2000 (Phiên bản v2.4 - Smart Grid & Union) - enhanced with story grouping & word wrap
+    /// Engine kiểm toán tải trọng SAP2000 (Phiên bản v2.5 - Dependency Injection Architecture)
     /// - Sử dụng NetTopologySuite để gộp (Union) hình học, tránh cắt nát phần tử.
     /// - Định vị trục thông minh dựa trên BoundingBox (Range).
     /// - Hỗ trợ đa đơn vị hiển thị qua UnitManager.
     /// - Added: GroupLoadsByStory (sàn đỡ tường trên) và Word Wrap trong GenerateTextReport.
+    /// 
+    /// ARCHITECTURE COMPLIANCE (ISO/IEC 25010 - Maintainability):
+    /// - Dependency Injection: Nhận ISapLoadReader qua Constructor
+    /// - Separation of Concerns: Engine không biết nguồn dữ liệu (SAP/Excel/SQL)
+    /// - Open/Closed Principle: Mở rộng data source mà không sửa Engine
+    /// - Single Responsibility: Chỉ xử lý logic audit, không đọc dữ liệu
     /// </summary>
     public class AuditEngine
     {
@@ -38,15 +45,35 @@ namespace DTS_Engine.Core.Engines
         // NTS Factory
         private GeometryFactory _geometryFactory;
 
-        // NEW: Model Inventory for Vector-based load resolution
-        private ModelInventory _inventory;
+        // CRITICAL: Load Reader injected via Constructor (Dependency Injection)
+        private readonly ISapLoadReader _loadReader;
 
         #endregion
 
         #region Constructor
 
-        public AuditEngine()
+        /// <summary>
+        /// Constructor với Dependency Injection.
+        /// 
+        /// PRECONDITIONS:
+        /// - loadReader phải được khởi tạo đầy đủ (SapModel + ModelInventory)
+        /// - SapUtils.IsConnected = true
+        /// 
+        /// POSTCONDITIONS:
+        /// - _loadReader sẵn sàng gọi ReadAllLoads()
+        /// - Grid và Story data được cache
+        /// 
+        /// DEPENDENCY INJECTION RATIONALE:
+        /// - AuditEngine không tạo Reader → Dễ test (Mock ISapLoadReader)
+        /// - Thay đổi data source (Excel, SQL) không cần sửa Engine
+        /// - Tuân thủ SOLID: Dependency Inversion Principle
+        /// </summary>
+        /// <param name="loadReader">Implementation của ISapLoadReader (VD: SapDatabaseReader)</param>
+        public AuditEngine(ISapLoadReader loadReader)
         {
+            _loadReader = loadReader ?? throw new ArgumentNullException(nameof(loadReader), 
+                "ISapLoadReader is required. Initialize SapDatabaseReader with Model and Inventory before passing to AuditEngine.");
+
             _geometryFactory = new GeometryFactory();
             _frameGeometryCache = new Dictionary<string, SapFrame>();
             _areaGeometryCache = new Dictionary<string, SapArea>();
@@ -97,7 +124,16 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Chạy kiểm toán cho một Load Pattern cụ thể
-        /// REFACTORED: Uses ModelInventory for vector-based load resolution
+        /// REFACTORED: Uses injected ISapLoadReader for data access
+        /// 
+        /// ARCHITECTURE:
+        /// - Data Access: _loadReader.ReadAllLoads() (Abstracted)
+        /// - Business Logic: Calculation, Grouping, Processing (In Engine)
+        /// - Presentation: GenerateTextReport() (Separate method)
+        /// 
+        /// PERFORMANCE:
+        /// - LoadReader đã cache ModelInventory → Không build lại
+        /// - Geometry cache tái sử dụng cho nhiều patterns
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
@@ -112,52 +148,26 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
-            // BƯỚC 1: BUILD INVENTORY (1 lần duy nhất) - CRITICAL for Vector calculation
-            if (_inventory == null)
-            {
-                _inventory = new ModelInventory();
-                _inventory.Build();
-                System.Diagnostics.Debug.WriteLine($"[AuditEngine] {_inventory.GetStatistics()}");
-            }
-
-            // BƯỚC 2: READ LOADS với SapDatabaseReader (truyền Inventory)
-            // Inventory enables accurate DirectionX/Y/Z calculation for all load types
-            var dbReader = new SapDatabaseReader(SapUtils.GetModel(), _inventory);
-            var allLoads = dbReader.ReadAllLoads(loadPattern);
+            // CRITICAL: Đọc tải trọng qua Interface (Dependency Injection)
+            // LoadReader đã có sẵn ModelInventory → Vector đã được tính chính xác
+            var allLoads = _loadReader.ReadAllLoads(loadPattern);
             
             if (allLoads.Count == 0) 
             {
                 report.IsAnalyzed = false;
-                report.SapBaseReaction = 0; // User will check manually
+                report.SapBaseReaction = 0;
                 return report;
             }
 
-            // --- BƯỚC TÍNH TOÁN CHÍNH XÁC (Dựa trên Inventory) ---
-            // OPTIMIZATION: Single-pass calculation instead of nested loops
+            // --- BƯỚC TÍNH TOÁN CHÍNH XÁC (Dựa trên Vector từ Reader) ---
+            // OPTIMIZATION: Single-pass calculation
             double sumFx = 0, sumFy = 0, sumFz = 0;
 
             foreach (var load in allLoads)
             {
-                double multiplier = 0;
-                var elemInfo = _inventory.GetElement(load.ElementName);
+                // Vector đã được Reader tính toán sẵn → Chỉ cần nhân với multiplier
+                double multiplier = CalculateLoadMultiplier(load);
                 
-                if (elemInfo != null)
-                {
-                    if (load.LoadType.Contains("Area"))
-                        multiplier = elemInfo.Area / 1_000_000.0; // mm2 -> m2
-                    else if (load.LoadType.Contains("Frame") && !load.LoadType.Contains("Point"))
-                    {
-                        double len = elemInfo.Length / 1000.0; // mm -> m
-                        // Handle partial distributed loads (distStart != distEnd)
-                        if (!load.IsRelative && Math.Abs(load.DistEnd - load.DistStart) > 0.001)
-                            len = Math.Abs(load.DistEnd - load.DistStart) / 1000.0;
-                        multiplier = len;
-                    }
-                    else if (load.LoadType.Contains("Point"))
-                        multiplier = 1.0;
-                }
-
-                // Accumulate vector components
                 sumFx += load.DirectionX * multiplier;
                 sumFy += load.DirectionY * multiplier;
                 sumFz += load.DirectionZ * multiplier;
@@ -179,9 +189,66 @@ namespace DTS_Engine.Core.Engines
 
             // Base Reaction = 0 (người dùng check thủ công)
             report.SapBaseReaction = 0;
-            report.IsAnalyzed = false; // Mark as "not compared with SAP"
+            report.IsAnalyzed = false;
 
             return report;
+        }
+
+        /// <summary>
+        /// Helper: Tính hệ số nhân cho tải trọng (Area, Length, hoặc Point)
+        /// Extracted để tuân thủ Single Responsibility Principle
+        /// </summary>
+        private double CalculateLoadMultiplier(RawSapLoad load)
+        {
+            // Area loads: Nhân với diện tích (m²)
+            if (load.LoadType.Contains("Area"))
+            {
+                var areaGeom = GetAreaGeometry(load.ElementName);
+                if (areaGeom != null)
+                    return areaGeom.Area / 1_000_000.0; // mm² -> m²
+            }
+            
+            // Frame distributed loads: Nhân với chiều dài (m)
+            if (load.LoadType.Contains("Frame") && !load.LoadType.Contains("Point"))
+            {
+                var frameGeom = GetFrameGeometry(load.ElementName);
+                if (frameGeom != null)
+                {
+                    double len = frameGeom.Length2D / 1000.0; // mm -> m
+                    
+                    // Handle partial distributed loads
+                    if (!load.IsRelative && Math.Abs(load.DistEnd - load.DistStart) > 0.001)
+                        len = Math.Abs(load.DistEnd - load.DistStart) / 1000.0;
+                    
+                    return len;
+                }
+            }
+            
+            // Point loads: Hệ số = 1
+            if (load.LoadType.Contains("Point"))
+                return 1.0;
+
+            return 0.0; // Fallback
+        }
+
+        /// <summary>
+        /// Helper: Lấy geometry của Area (với cache)
+        /// </summary>
+        private SapArea GetAreaGeometry(string areaName)
+        {
+            if (_areaGeometryCache.TryGetValue(areaName, out var area))
+                return area;
+            return null;
+        }
+
+        /// <summary>
+        /// Helper: Lấy geometry của Frame (với cache)
+        /// </summary>
+        private SapFrame GetFrameGeometry(string frameName)
+        {
+            if (_frameGeometryCache.TryGetValue(frameName, out var frame))
+                return frame;
+            return null;
         }
 
         #endregion

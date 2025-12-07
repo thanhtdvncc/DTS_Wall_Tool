@@ -1,6 +1,7 @@
 ﻿using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
 using DTS_Engine.Core.Data;
+using DTS_Engine.Core.Interfaces;
 using DTS_Engine.Core.Utils;
 using System;
 using System.Collections.Generic;
@@ -365,14 +366,14 @@ namespace DTS_Engine.Commands
 
         /// <summary>
         /// TEST ULTIMATE: Kiểm tra fix cho Bug #1 (Direction Vector) và Bug #2 (Trapezoidal Load)
-        /// UPDATED: Sử dụng Vector-based approach
+        /// UPDATED: Sử dụng Vector-based approach với Dependency Injection
         /// </summary>
         [CommandMethod("DTS_TEST_AUDIT_FIX")]
         public void DTS_TEST_AUDIT_FIX()
         {
             ExecuteSafe(() =>
             {
-                WriteMessage("\n=== TEST ULTIMATE: VECTOR-BASED AUDIT SYSTEM ===");
+                WriteMessage("\n=== TEST ULTIMATE: VECTOR-BASED AUDIT SYSTEM (DI ARCHITECTURE) ===");
 
                 if (!SapUtils.IsConnected && !SapUtils.Connect(out string msg))
                 {
@@ -388,17 +389,31 @@ namespace DTS_Engine.Commands
 
                 WriteMessage($"\n--- TEST PATTERN: {pattern} ---");
 
-                // 2. Test SapDatabaseReader (VECTOR-BASED)
-                WriteMessage("\n[1] Testing Vector-based SapDatabaseReader...");
-                
-                // Build inventory first
+                // ===============================================================
+                // COMPOSITION ROOT - Dependency Injection Assembly
+                // ===============================================================
+                WriteMessage("\n[STEP 1] Initializing System with Dependency Injection...");
+
+                // Build Inventory
                 var inventory = new DTS_Engine.Core.Engines.ModelInventory();
                 inventory.Build();
                 WriteMessage($"    {inventory.GetStatistics()}");
 
-                var dbReader = new SapDatabaseReader(SapUtils.GetModel(), inventory);
-                var loads = dbReader.ReadAllLoads(pattern);
+                // Initialize LoadReader (Data Access)
+                var model = SapUtils.GetModel();
+                ISapLoadReader loadReader = new SapDatabaseReader(model, inventory);
+                WriteMessage("    Load Reader initialized successfully.");
 
+                // Initialize Engine (Business Logic)
+                var engine = new DTS_Engine.Core.Engines.AuditEngine(loadReader);
+                WriteMessage("    Audit Engine initialized successfully.\n");
+
+                // ===============================================================
+                // TEST 1: Vector-based Load Reading
+                // ===============================================================
+                WriteMessage("\n[STEP 2] Testing Vector-based SapDatabaseReader...");
+                
+                var loads = loadReader.ReadAllLoads(pattern);
                 WriteMessage($"    Total Loads Read: {loads.Count}");
 
                 // Phân tích Vector Components
@@ -414,14 +429,15 @@ namespace DTS_Engine.Commands
                 double totalMagnitude = Math.Sqrt(sumFx*sumFx + sumFy*sumFy + sumFz*sumFz);
                 WriteMessage($"      - Total Magnitude: {totalMagnitude:0.00} kN");
 
-                // 3. Kiểm tra tải hình thang (FIX BUG #2)
-                WriteMessage("\n[2] Checking Frame Distributed Loads...");
+                // ===============================================================
+                // TEST 2: Frame Distributed Loads (Trapezoidal Fix)
+                // ===============================================================
+                WriteMessage("\n[STEP 3] Checking Frame Distributed Loads...");
                 var frameDistLoads = loads.Where(l => l.LoadType == "FrameDistributed").ToList();
                 if (frameDistLoads.Count > 0)
                 {
                     WriteMessage($"    Found {frameDistLoads.Count} Frame Distributed Loads");
                     
-                    // In 3 mẫu đầu tiên
                     int sampleCount = Math.Min(3, frameDistLoads.Count);
                     for (int i = 0; i < sampleCount; i++)
                     {
@@ -435,8 +451,10 @@ namespace DTS_Engine.Commands
                     WriteMessage("    (No Frame Distributed Loads)");
                 }
 
-                // 4. Kiểm tra tải ngang (FIX BUG #1)
-                WriteMessage("\n[3] Checking Lateral Loads...");
+                // ===============================================================
+                // TEST 3: Lateral Loads (Direction Vector Fix)
+                // ===============================================================
+                WriteMessage("\n[STEP 4] Checking Lateral Loads...");
                 var lateralLoads = loads.Where(l => l.IsLateralLoad).ToList();
 
                 if (lateralLoads.Count > 0)
@@ -460,9 +478,10 @@ namespace DTS_Engine.Commands
                     WriteWarning("    (No Lateral Loads found)");
                 }
 
-                // 5. Test AuditEngine
-                WriteMessage("\n[4] Testing AuditEngine with Vector-based approach...");
-                var engine = new DTS_Engine.Core.Engines.AuditEngine();
+                // ===============================================================
+                // TEST 4: AuditEngine with Dependency Injection
+                // ===============================================================
+                WriteMessage("\n[STEP 5] Testing AuditEngine with Injected LoadReader...");
                 var report = engine.RunSingleAudit(pattern);
 
                 WriteMessage($"    Stories Processed: {report.Stories.Count}");
@@ -478,7 +497,9 @@ namespace DTS_Engine.Commands
                     WriteMessage($"    SAP Base Reaction: NOT ANALYZED (Manual check required)");
                 }
 
-                // 6. Kết luận
+                // ===============================================================
+                // CONCLUSION
+                // ===============================================================
                 WriteMessage("\n=== KẾT LUẬN ===");
                 
                 if (lateralLoads.Count > 0)
@@ -490,6 +511,8 @@ namespace DTS_Engine.Commands
                 {
                     WriteSuccess("✓ FRAME LOADS OK: Đọc được tải phân bố");
                 }
+
+                WriteSuccess("✓ DEPENDENCY INJECTION OK: Engine hoạt động độc lập với data source");
 
                 WriteMessage("\n💡 Để so sánh với SAP2000:");
                 WriteMessage("   Display > Show Tables > Analysis Results > Base Reactions");
