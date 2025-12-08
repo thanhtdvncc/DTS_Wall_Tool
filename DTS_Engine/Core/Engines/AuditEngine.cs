@@ -137,7 +137,6 @@ namespace DTS_Engine.Core.Engines
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
-            // Refresh geometry cache
             CacheGeometry();
 
             var report = new AuditReport
@@ -148,8 +147,6 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
-            // CRITICAL: Đọc tải trọng qua Interface (Dependency Injection)
-            // LoadReader đã có sẵn ModelInventory → Vector đã được tính chính xác
             var allLoads = _loadReader.ReadAllLoads(loadPattern);
 
             if (allLoads.Count == 0)
@@ -159,26 +156,24 @@ namespace DTS_Engine.Core.Engines
                 return report;
             }
 
-            // --- BƯỚC TÍNH TOÁN CHÍNH XÁC (Dựa trên Vector từ Reader) ---
-            // OPTIMIZATION: Single-pass calculation
+            // [FIX]: Tính toán tổng lực Global dựa trên Vector Sum
             double sumFx = 0, sumFy = 0, sumFz = 0;
 
             foreach (var load in allLoads)
             {
-                // Vector đã được Reader tính toán sẵn → Chỉ cần nhân với multiplier
-                double multiplier = CalculateLoadMultiplier(load);
+                // Multiplier dựa trên hình học (Area m2 hoặc Length m)
+                double multiplier = CalculateGeometryMultiplier(load);
 
                 sumFx += load.DirectionX * multiplier;
                 sumFy += load.DirectionY * multiplier;
                 sumFz += load.DirectionZ * multiplier;
             }
 
-            // GÁN KẾT QUẢ VÀO REPORT
             report.CalculatedFx = sumFx;
             report.CalculatedFy = sumFy;
             report.CalculatedFz = sumFz;
 
-            // BƯỚC 4: Group and process by story
+            // Nhóm theo tầng và xử lý chi tiết
             var storyBuckets = GroupLoadsByStory(allLoads);
             foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
@@ -187,11 +182,40 @@ namespace DTS_Engine.Core.Engines
                     report.Stories.Add(storyGroup);
             }
 
-            // Base Reaction = 0 (người dùng check thủ công)
-            report.SapBaseReaction = 0;
             report.IsAnalyzed = false;
-
             return report;
+        }
+
+        private double CalculateGeometryMultiplier(RawSapLoad load)
+        {
+            string elementName = load.ElementName?.Trim();
+            if (string.IsNullOrEmpty(elementName)) return 1.0;
+
+            // Area loads: Nhân với diện tích (m²)
+            if (load.LoadType.Contains("Area"))
+            {
+                var areaGeom = GetAreaGeometry(elementName);
+                if (areaGeom != null)
+                {
+                    double areaM2 = areaGeom.Area / 1_000_000.0; // mm² -> m²
+                    return areaM2 > 0 ? areaM2 : 1.0;
+                }
+            }
+
+            // Frame loads: Nhân với chiều dài (m)
+            if (load.LoadType.Contains("Frame") && !load.LoadType.Contains("Point"))
+            {
+                var frameGeom = GetFrameGeometry(elementName);
+                if (frameGeom != null)
+                {
+                    double startMeters, endMeters;
+                    double coveredM = CalculateCoveredLengthMeters(load, frameGeom, out startMeters, out endMeters);
+                    return coveredM > 0 ? coveredM : 1.0;
+                }
+            }
+
+            // Point loads: Nhân với 1
+            return 1.0;
         }
 
         /// <summary>
@@ -1544,15 +1568,26 @@ namespace DTS_Engine.Core.Engines
         // Short direction formatter used in report rows
         private string FormatDirection(string dir, AuditEntry entry)
         {
+            // Keep empty safety
             if (string.IsNullOrEmpty(dir)) return "";
+
             var d = dir.ToUpperInvariant();
-            if (d.Contains("GRAV")) return "G";
-            if (d.Contains("+X") || d.Contains("-X") || d == "X") return "X";
-            if (d.Contains("+Y") || d.Contains("-Y") || d == "Y") return "Y";
-            if (d.Contains("+Z") || d.Contains("-Z") || d == "Z") return "Z";
+
+            // Map GRAV to Z
+            if (d.Contains("GRAV")) return "Z";
+
+            // Special rule: exact axis names -> "Check!!"
+            if (d == "X" || d == "Y" || d == "Z") return "Check!!";
+
+            // Keep signed axes (+X, -X, +Y, -Y, ...)
+            if (d == "+X" || d == "-X") return d;
+            if (d == "+Y" || d == "-Y") return d;
+            if (d == "+Z" || d == "-Z") return d;
+
             // Fallback: trim to 8 chars
             return d.Length <= 8 ? d : d.Substring(0, 8);
         }
+
 
     } // class AuditEngine
 } // namespace DTS_Engine.Core.Engines

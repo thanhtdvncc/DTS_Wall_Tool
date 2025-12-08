@@ -992,20 +992,29 @@ namespace DTS_Engine.Core.Utils
 				if (ret != 0 || matrix == null || matrix.Length < 9)
 					return null;
 
-				// Ma trận SAP2000 lưu theo hàng (row-major):
-				// [L1x, L2x, L3x,
-				//  L1y, L2y, L3y,
-				//  L1z, L2z, L3z]
-				//
-				// Mỗi CỘT là 1 vector trục địa phương trong hệ Global
+                // [SỬA LỖI QUAN TRỌNG]: Dựa trên tài liệu API SAP2000
+                // Ma trận biến đổi Local -> Global:
+                // [ c0 c1 c2 ]   [L1]   [GX]
+                // [ c3 c4 c5 ] x [L2] = [GY]
+                // [ c6 c7 c8 ]   [L3]   [GZ]
+                //
+                // Trục Local 1 (L1=1, L2=0, L3=0) => Vector Global là cột 1: (c0, c3, c6)
+                // Trục Local 2 (L1=0, L2=1, L3=0) => Vector Global là cột 2: (c1, c4, c7)
+                // Trục Local 3 (L1=0, L2=0, L3=1) => Vector Global là cột 3: (c2, c5, c8)
 
-				return new ElementVectors
-				{
-					L1 = new Vector3D(matrix[0], matrix[1], matrix[2]),
-					L2 = new Vector3D(matrix[3], matrix[4], matrix[5]),
-					L3 = new Vector3D(matrix[6], matrix[7], matrix[8])
-				};
-			}
+                return new ElementVectors
+                {
+                    // Cột 1: c0, c3, c6 (Index 0, 3, 6)
+                    L1 = new Vector3D(matrix[0], matrix[3], matrix[6]),
+
+                    // Cột 2: c1, c4, c7 (Index 1, 4, 7)
+                    L2 = new Vector3D(matrix[1], matrix[4], matrix[7]),
+
+                    // Cột 3: c2, c5, c8 (Index 2, 5, 8)
+                    L3 = new Vector3D(matrix[2], matrix[5], matrix[8])
+                };
+
+            }
 			catch (Exception ex)
 			{
 				System.Diagnostics.Debug.WriteLine($"GetElementVectors failed for '{elementName}': {ex.Message}");
