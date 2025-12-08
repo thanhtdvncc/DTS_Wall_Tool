@@ -1479,7 +1479,7 @@ namespace DTS_Engine.Core.Engines
             var sb = new StringBuilder();
             double forceFactor = 1.0;
 
-            // Unit conversion
+            // Unit conversion setup (giữ nguyên logic cũ)
             if (string.IsNullOrWhiteSpace(targetUnit)) targetUnit = UnitManager.Info.ForceUnit;
             if (targetUnit.Equals("Ton", StringComparison.OrdinalIgnoreCase) || targetUnit.Equals("Tonf", StringComparison.OrdinalIgnoreCase))
                 forceFactor = 1.0 / 9.81;
@@ -1488,7 +1488,7 @@ namespace DTS_Engine.Core.Engines
 
             bool isVN = language.Equals("Vietnamese", StringComparison.OrdinalIgnoreCase);
 
-            // HEADER
+            // HEADER CHUNG (Giữ nguyên)
             sb.AppendLine("".PadRight(150, '='));
             sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.2)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.2)");
             sb.AppendLine($"   {(isVN ? "Dự án" : "Project")}: {report.ModelName ?? "Unknown"}");
@@ -1500,44 +1500,32 @@ namespace DTS_Engine.Core.Engines
 
             foreach (var story in report.Stories.OrderByDescending(s => s.Elevation))
             {
-                // FIX v4.2.1: Calculate story total from vector components
+                // Tính tổng vector tầng
                 double storyFx = story.LoadTypes.Sum(lt => lt.SubTotalFx) * forceFactor;
                 double storyFy = story.LoadTypes.Sum(lt => lt.SubTotalFy) * forceFactor;
                 double storyFz = story.LoadTypes.Sum(lt => lt.SubTotalFz) * forceFactor;
-                double storyTotal = Math.Sqrt(
-                    (storyFx * storyFx) + 
-                    (storyFy * storyFy) + 
-                    (storyFz * storyFz));
 
-                // FIX v4.2.1: Show vector breakdown in story header
-                sb.AppendLine($">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm");
-                sb.AppendLine($"   {(isVN ? "Tổng" : "Total")}: {storyTotal:0.00} {targetUnit} [Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]");
-                sb.AppendLine();
+                // [SỬA 1] Header Tầng gọn gàng: [>] STORY ... [Fx=..., Fy=..., Fz=...]
+                sb.AppendLine($"[>] {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm [Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]");
 
                 foreach (var loadType in story.LoadTypes)
                 {
                     string typeName = GetSpecificLoadTypeName(loadType, isVN);
-                    
-                    // FIX v4.2.1: Use vector-based subtotal with component breakdown
+
+                    // Tính tổng vector loại tải
                     double typeFx = loadType.SubTotalFx * forceFactor;
                     double typeFy = loadType.SubTotalFy * forceFactor;
                     double typeFz = loadType.SubTotalFz * forceFactor;
-                    double typeTotal = Math.Sqrt(
-                        (typeFx * typeFx) + 
-                        (typeFy * typeFy) + 
-                        (typeFz * typeFz));
 
-                    sb.AppendLine($"  [{typeName}]");
-                    sb.AppendLine($"    {(isVN ? "Tổng phụ" : "Subtotal")}: {typeTotal:0.00} {targetUnit} [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]");
-                    sb.AppendLine();
-                    
-                    // FIX v4.2: New column layout
-                    // Grid Location(30) | Calculator(35) | Value(15) | Unit Load(20) | Dir(8) | Force(15) | Elements(remaining)
+                    // [SỬA 2] Header Loại tải gọn gàng, bỏ dòng Subtotal riêng
+                    sb.AppendLine($"  [{typeName}] [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]");
+
+                    // Setup cột (Giữ nguyên)
+                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
+
+                    // Column Header formatting
                     string hGrid = (isVN ? "Vị trí trục" : "Grid Location").PadRight(30);
                     string hCalc = (isVN ? "Chi tiết" : "Calculator").PadRight(35);
-                    
-                    // Determine unit type from first entry
-                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
                     string hValue = $"Value({valueUnit})".PadRight(15);
                     string hUnit = $"Unit Load({targetUnit}/{valueUnit})".PadRight(20);
                     string hDir = (isVN ? "Hướng" : "Dir").PadRight(8);
@@ -1545,7 +1533,7 @@ namespace DTS_Engine.Core.Engines
                     string hElem = (isVN ? "Phần tử" : "Elements");
 
                     sb.AppendLine($"    {hGrid}{hCalc}{hValue}{hUnit}{hDir}{hForce}{hElem}");
-                    sb.AppendLine($"    {new string('-', 150)}");
+                    sb.AppendLine($"    {new string('-', 160)}");
 
                     var allEntries = loadType.Entries;
 
@@ -1555,18 +1543,16 @@ namespace DTS_Engine.Core.Engines
                     }
                     sb.AppendLine();
                 }
+                sb.AppendLine(); // Dòng trống giữa các tầng
             }
 
-            // SUMMARY
+            // SUMMARY (Giữ nguyên hoặc làm gọn tùy ý, ở đây giữ nguyên logic cũ)
             sb.AppendLine("".PadRight(150, '='));
             sb.AppendLine(isVN ? "TỔNG HỢP LỰC (GLOBAL):" : "AUDIT SUMMARY (GLOBAL RESULTANTS):");
             sb.AppendLine();
-            
             sb.AppendLine($"   Fx (Global): {report.CalculatedFx * forceFactor:0.00} {targetUnit}");
             sb.AppendLine($"   Fy (Global): {report.CalculatedFy * forceFactor:0.00} {targetUnit}");
             sb.AppendLine($"   Fz (Global): {report.CalculatedFz * forceFactor:0.00} {targetUnit}");
-            sb.AppendLine($"   Total Vector Magnitude: {report.TotalCalculatedForce * forceFactor:0.00} {targetUnit}");
-            
             sb.AppendLine();
             sb.AppendLine("".PadRight(150, '='));
 
@@ -1579,7 +1565,7 @@ namespace DTS_Engine.Core.Engines
         /// </summary>
         private void FormatDataRow(StringBuilder sb, AuditEntry entry, double forceFactor, string targetUnit)
         {
-            // Column widths
+            // Column widths (khớp với header ở trên)
             const int gridWidth = 30;
             const int calcWidth = 35;
             const int valueWidth = 15;
@@ -1587,28 +1573,29 @@ namespace DTS_Engine.Core.Engines
             const int dirWidth = 8;
             const int forceWidth = 15;
 
-            // Grid Location
+            // 1. Grid Location
             string grid = TruncateString(entry.GridLocation ?? "", gridWidth - 2).PadRight(gridWidth);
 
-            // Calculator (segment details for frames, formula for areas)
+            // 2. Calculator
             string calc = TruncateString(entry.Explanation ?? "", calcWidth - 2).PadRight(calcWidth);
 
-            // Value (Quantity)
+            // 3. Value (Quantity) - Giữ 2 số thập phân chuẩn
             string value = $"{entry.Quantity:0.00}".PadRight(valueWidth);
 
-            // FIX v4.2.1: Apply forceFactor to UnitLoad for display consistency
-            // If report unit is Ton, convert kN/m² to Ton/m² to match header
+            // 4. Unit Load (Giá trị hiển thị)
             double displayUnitLoad = entry.UnitLoad * forceFactor;
             string unitLoad = $"{displayUnitLoad:0.00}".PadRight(unitWidth);
 
-            // Direction (keep short)
+            // 5. Direction
             string dir = FormatDirection(entry.Direction, entry).PadRight(dirWidth);
 
-            // FIX v4.2.1: TotalForce already includes sign, just apply unit conversion
-            double displayForce = entry.TotalForce * forceFactor;
-            string force = $"{displayForce:0.00}".PadRight(forceWidth);
+            // [QUAN TRỌNG NHẤT] 6. Force = Value * UnitLoad * Sign
+            // Thay vì lấy TotalForce lưu trong DB, ta nhân trực tiếp các số đang hiển thị
+            // để đảm bảo người dùng nhân tay cũng ra khớp 100%.
+            double visualForce = entry.Quantity * displayUnitLoad * entry.DirectionSign;
+            string force = $"{visualForce:0.00}".PadRight(forceWidth);
 
-            // Elements: Use compression for text report
+            // 7. Elements
             string elements = CompressElementList(entry.ElementList ?? new List<string>(), maxDisplay: 80);
 
             sb.AppendLine($"    {grid}{calc}{value}{unitLoad}{dir}{force}{elements}");

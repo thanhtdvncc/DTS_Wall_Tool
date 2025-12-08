@@ -1,11 +1,9 @@
 ﻿using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
-using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Engines;
 using DTS_Engine.Core.Interfaces;
 using DTS_Engine.Core.Utils;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -55,7 +53,7 @@ namespace DTS_Engine.Commands
                 // 3. Lấy dữ liệu Pattern và chọn 1 pattern duy nhất
                 WriteMessage("\nĐang quét dữ liệu Load Patterns...");
                 var activePatterns = SapUtils.GetActiveLoadPatterns();
-                
+
                 if (activePatterns.Count == 0)
                 {
                     WriteError("Không tìm thấy Load Pattern nào trong model.");
@@ -69,8 +67,8 @@ namespace DTS_Engine.Commands
                 for (int i = 0; i < sortedPatterns.Count; i++)
                 {
                     var pattern = sortedPatterns[i];
-                    string info = pattern.TotalEstimatedLoad > 0.001 
-                        ? $"(~{pattern.TotalEstimatedLoad:N0} kN)" 
+                    string info = pattern.TotalEstimatedLoad > 0.001
+                        ? $"(~{pattern.TotalEstimatedLoad:N0} kN)"
                         : string.Empty;
                     WriteMessage($"[{i + 1}] {pattern.Name} {info}");
                 }
@@ -181,10 +179,10 @@ namespace DTS_Engine.Commands
                     WriteError("Không thể khởi tạo SapDatabaseReader (API). Kiểm tra kết nối SAP.");
                     return;
                 }
-                 
-                 // STEP 4: Initialize Audit Engine (Business Logic Layer)
-                 WriteMessage("   [3/3] Initializing Audit Engine...");
-                 var engine = new AuditEngine(loadReader);
+
+                // STEP 4: Initialize Audit Engine (Business Logic Layer)
+                WriteMessage("   [3/3] Initializing Audit Engine...");
+                var engine = new AuditEngine(loadReader);
 
                 WriteMessage("   >> System ready. Processing pattern...\n");
 
@@ -195,7 +193,7 @@ namespace DTS_Engine.Commands
                 // 9. Chạy Audit cho Pattern đã chọn
                 WriteMessage($"\n   Processing: {selectedPattern}...");
                 var report = engine.RunSingleAudit(selectedPattern);
-                
+
                 string tempFolder = Path.GetTempPath();
                 string safeModel = string.IsNullOrWhiteSpace(report.ModelName) ? "Model" : Path.GetFileNameWithoutExtension(report.ModelName);
                 string filePath = null;
@@ -204,31 +202,31 @@ namespace DTS_Engine.Commands
                 {
                     // Excel export using ClosedXML
                     WriteMessage("\n   Generating Excel report...");
-                    
+
                     try
                     {
                         string excelPath = ExcelReportGenerator.GenerateExcelReport(
-                            report, 
-                            selectedUnit, 
+                            report,
+                            selectedUnit,
                             selectedLang);
 
                         filePath = excelPath;
                         WriteSuccess($"\nCompleted! Excel report generated at:");
                         WriteMessage($"  {filePath}");
-                        
+
                         try { Process.Start(filePath); } catch { }
                     }
                     catch (System.Exception ex)
                     {
                         WriteError($"\n   Excel generation failed: {ex.Message}");
                         WriteMessage("\n   Falling back to Text export...");
-                        
+
                         // Fallback to text
                         string content = engine.GenerateTextReport(report, selectedUnit, selectedLang);
                         string fileName = $"DTS_Audit_{safeModel}_{selectedPattern}.txt";
                         filePath = Path.Combine(tempFolder, fileName);
                         File.WriteAllText(filePath, content, Encoding.UTF8);
-                        
+
                         WriteSuccess($"\nText report created at:");
                         WriteMessage($"  {filePath}");
                         try { Process.Start(filePath); } catch { }
@@ -244,7 +242,7 @@ namespace DTS_Engine.Commands
 
                     WriteSuccess($"\nCompleted! Text report created at:");
                     WriteMessage($"  {filePath}");
-                    
+
                     try { Process.Start(filePath); } catch { }
                 }
             });
