@@ -161,7 +161,7 @@ namespace DTS_Engine.Core.Engines
 
             foreach (var load in allLoads)
             {
-                // Multiplier dựa trên hình học (Area m2 hoặc Length m)
+                // Multiplier dựa trên hình geometry (Area m2 hoặc Length m)
                 double multiplier = CalculateGeometryMultiplier(load);
 
                 sumFx += load.DirectionX * multiplier;
@@ -500,7 +500,6 @@ namespace DTS_Engine.Core.Engines
                 ValueGroups = new List<AuditValueGroup>()
             };
 
-            // Group internally for processing but produce a flat list of entries
             var valueGroups = loads.GroupBy(l => new { Val = Math.Round(l.Value1, 3), Dir = l.Direction });
 
             foreach (var group in valueGroups.OrderByDescending(g => g.Key.Val))
@@ -523,13 +522,21 @@ namespace DTS_Engine.Core.Engines
                 }
             }
 
-            // Sort entries
+            // FIX v4.2: Calculate vector subtotals for load type
+            typeGroup.SubTotalFx = typeGroup.Entries.Sum(e => e.ForceX);
+            typeGroup.SubTotalFy = typeGroup.Entries.Sum(e => e.ForceY);
+            typeGroup.SubTotalFz = typeGroup.Entries.Sum(e => e.ForceZ);
+
             typeGroup.Entries = typeGroup.Entries.OrderBy(e => e.GridLocation).ToList();
 
             return typeGroup;
         }
 
         // --- XỬ LÝ TẢI DIỆN TÍCH (AREA - SMART GEOMETRY RECOGNITION & DECOMPOSITION) ---
+        /// <summary>
+        /// Process area loads with vector-aware force calculation
+        /// FIX v4.2: Calculate force with proper directional sign
+        /// </summary>
         private void ProcessAreaLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             var validLoads = new List<RawSapLoad>();
@@ -560,7 +567,6 @@ namespace DTS_Engine.Core.Engines
             }
             catch
             {
-                // Fallback: Nếu lỗi thư viện NTS, dùng GeometryCollection (không gộp nhưng không mất)
                 processedGeometry = _geometryFactory.CreateGeometryCollection(geometries.ToArray());
             }
 
@@ -572,21 +578,59 @@ namespace DTS_Engine.Core.Engines
 
                 double areaM2 = geom.Area / 1.0e6;
 
-                // ✅ FIX: Gọi Smart Shape Analysis
+                // Smart Shape Analysis
                 var shapeResult = AnalyzeShapeStrategy(geom);
-                string formula = shapeResult.IsExact ? shapeResult.Formula : $"~{areaM2:0.00}m²";
+                string formula = shapeResult.IsExact ? shapeResult.Formula : $"~{areaM2:0.00}";
+
+                // FIX v4.2: Calculate directional sign from load vector
+                double dirSign = 1.0;
+                if (validLoads.Count > 0)
+                {
+                    var sampleLoad = validLoads[0];
+                    // Determine sign based on primary direction
+                    if (sampleLoad.DirectionX != 0) dirSign = Math.Sign(sampleLoad.DirectionX);
+                    else if (sampleLoad.DirectionY != 0) dirSign = Math.Sign(sampleLoad.DirectionY);
+                    else if (sampleLoad.DirectionZ != 0) dirSign = Math.Sign(sampleLoad.DirectionZ);
+                }
+
+                // FIX v4.2: Calculate signed force = Quantity * UnitLoad * DirectionSign
+                double signedForce = areaM2 * loadVal * dirSign;
+
+                // FIX v4.2: Calculate vector components
+                double fx = 0, fy = 0, fz = 0;
+                if (validLoads.Count > 0)
+                {
+                    var sampleLoad = validLoads[0];
+                    var forceVec = sampleLoad.GetForceVector();
+                    if (forceVec.Length > 1e-6)
+                    {
+                        forceVec = forceVec.Normalized * Math.Abs(signedForce);
+                        fx = forceVec.X;
+                        fy = forceVec.Y;
+                        fz = forceVec.Z;
+                    }
+                    else
+                    {
+                        // Fallback: assume gravity
+                        fz = signedForce;
+                    }
+                }
 
                 targetList.Add(new AuditEntry
                 {
                     GridLocation = GetGridRangeDescription(geom.EnvelopeInternal),
-                    Explanation = formula, // ← Hiện công thức thay vì chỉ số
+                    Explanation = formula,
                     Quantity = areaM2,
                     QuantityUnit = "m²",
                     UnitLoad = loadVal,
-                    UnitLoadString = $"{loadVal:0.00} {UnitManager.Info.ForceUnit}/m²",
-                    TotalForce = areaM2 * loadVal,
+                    UnitLoadString = $"{loadVal:0.00}",
+                    TotalForce = Math.Abs(signedForce),
                     Direction = dir,
-                    ElementList = validLoads.Select(l => l.ElementName).Distinct().ToList() // ← FIX #5 luôn
+                    DirectionSign = dirSign,
+                    ForceX = fx,
+                    ForceY = fy,
+                    ForceZ = fz,
+                    ElementList = validLoads.Select(l => l.ElementName).Distinct().ToList()
                 });
             }
         }
@@ -914,7 +958,10 @@ namespace DTS_Engine.Core.Engines
         }
 
         // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
-        // Gom nhóm theo trục chính (Primary Grid) thay vì union hình học để tránh cắt nát
+        /// <summary>
+        /// Process frame loads with vector-aware force calculation
+        /// FIX v4.2: Calculate force with proper directional sign and segment details
+        /// </summary>
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             var frameItems = new List<FrameAuditItem>();
@@ -939,7 +986,7 @@ namespace DTS_Engine.Core.Engines
                     Load = load,
                     Frame = frame,
                     PrimaryGrid = primaryGrid,
-                    Length = coveredLength, // ← Dùng covered length thay vì full length
+                    Length = coveredLength,
                     StartM = startM,
                     EndM = endM
                 });
@@ -952,31 +999,61 @@ namespace DTS_Engine.Core.Engines
             foreach (var grp in groups)
             {
                 string gridName = grp.Key;
-                double totalLength = grp.Sum(f => f.Length); // ← Giờ đây đúng rồi
-                double totalForce = totalLength * loadVal;
+                double totalLength = grp.Sum(f => f.Length);
+
+                // FIX v4.2: Calculate directional sign
+                double dirSign = 1.0;
+                var sampleLoad = grp.First().Load;
+                if (sampleLoad.DirectionX != 0) dirSign = Math.Sign(sampleLoad.DirectionX);
+                else if (sampleLoad.DirectionY != 0) dirSign = Math.Sign(sampleLoad.DirectionY);
+                else if (sampleLoad.DirectionZ != 0) dirSign = Math.Sign(sampleLoad.DirectionZ);
+
+                // FIX v4.2: Signed force
+                double signedForce = totalLength * loadVal * dirSign;
+
+                // FIX v4.2: Vector components
+                double fx = 0, fy = 0, fz = 0;
+                var forceVec = sampleLoad.GetForceVector();
+                if (forceVec.Length > 1e-6)
+                {
+                    forceVec = forceVec.Normalized * Math.Abs(signedForce);
+                    fx = forceVec.X;
+                    fy = forceVec.Y;
+                    fz = forceVec.Z;
+                }
+                else
+                {
+                    fz = signedForce;
+                }
 
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
-                string location = gridName;
+                
+                // FIX v4.2: Build segment details for partial loads
+                var partialSegments = grp.Where(f => f.StartM > 0.01 || Math.Abs(f.EndM - f.Frame.Length2D * UnitManager.Info.LengthScaleToMeter) > 0.01)
+                    .Select(f => $"{f.Load.ElementName}_{f.StartM:0.##}to{f.EndM:0.##}")
+                    .ToList();
 
-                // ✅ FIX: Thêm info I-J vào Explanation
-                var segments = grp.Select(f => $"{f.Load.ElementName}[{f.StartM:0.00}-{f.EndM:0.00}m]").ToList();
-                string explanation = string.IsNullOrEmpty(rangeDesc)
-                    ? $"L = {totalLength:0.00}m"
-                    : $"{rangeDesc} (L={totalLength:0.00}m) | {string.Join(", ", segments.Take(3))}{(segments.Count > 3 ? "..." : "")}";
+                string explanation = partialSegments.Count > 0
+                    ? string.Join(",", partialSegments)
+                    : "";
 
                 var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
 
                 targetList.Add(new AuditEntry
                 {
-                    GridLocation = location,
+                    GridLocation = $"{gridName} x {rangeDesc}",
                     Explanation = explanation,
                     Quantity = totalLength,
                     QuantityUnit = "m",
                     UnitLoad = loadVal,
-                    UnitLoadString = $"{loadVal:0.00} {UnitManager.Info.ForceUnit}/m",
-                    TotalForce = totalForce,
+                    UnitLoadString = $"{loadVal:0.00}",
+                    TotalForce = Math.Abs(signedForce),
                     Direction = dir,
-                    ElementList = elementNames // ← FIX #5
+                    DirectionSign = dirSign,
+                    ForceX = fx,
+                    ForceY = fy,
+                    ForceZ = fz,
+                    ElementList = elementNames
                 });
             }
         }
@@ -1099,11 +1176,14 @@ namespace DTS_Engine.Core.Engines
         }
 
         // --- XỬ LÝ TẢI ĐIỂM (POINT) - IMPROVED GROUPING ---
+        /// <summary>
+        /// Process point loads with vector-aware force calculation
+        /// FIX v4.2: Calculate force with proper directional sign
+        /// </summary>
         private void ProcessPointLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             var allPoints = SapUtils.GetAllPoints();
 
-            // Group by grid intersection
             var pointGroups = new Dictionary<string, List<(RawSapLoad load, SapUtils.SapPoint coord)>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var load in loads)
@@ -1119,7 +1199,6 @@ namespace DTS_Engine.Core.Engines
                 pointGroups[loc].Add((load, ptCoord));
             }
 
-            // Sort by count descending (most loads first)
             var sortedGroups = pointGroups.OrderByDescending(g => g.Value.Count);
 
             foreach (var group in sortedGroups)
@@ -1127,29 +1206,54 @@ namespace DTS_Engine.Core.Engines
                 string location = group.Key;
                 var groupLoads = group.Value;
                 int count = groupLoads.Count;
-                double totalForce = count * loadVal;
 
-                // Sort points left to right along primary axis
+                // FIX v4.2: Calculate directional sign
+                double dirSign = 1.0;
+                if (groupLoads.Count > 0)
+                {
+                    var sampleLoad = groupLoads[0].load;
+                    if (sampleLoad.DirectionX != 0) dirSign = Math.Sign(sampleLoad.DirectionX);
+                    else if (sampleLoad.DirectionY != 0) dirSign = Math.Sign(sampleLoad.DirectionY);
+                    else if (sampleLoad.DirectionZ != 0) dirSign = Math.Sign(sampleLoad.DirectionZ);
+                }
+
+                double signedForce = count * loadVal * dirSign;
+
+                // FIX v4.2: Vector components
+                double fx = 0, fy = 0, fz = 0;
+                if (groupLoads.Count > 0)
+                {
+                    var forceVec = groupLoads[0].load.GetForceVector();
+                    if (forceVec.Length > 1e-6)
+                    {
+                        forceVec = forceVec.Normalized * Math.Abs(signedForce);
+                        fx = forceVec.X;
+                        fy = forceVec.Y;
+                        fz = forceVec.Z;
+                    }
+                    else
+                    {
+                        fz = signedForce;
+                    }
+                }
+
                 var sorted = SortPointsLeftToRight(groupLoads);
-
-                // Create formula: 124+876+...
-                var loadValues = sorted.Select(p => $"{loadVal:0.##}").ToList();
-                string formula = count > 1
-                    ? string.Join("+", loadValues)
-                    : sorted[0].load.ElementName;
-
                 var elementNames = sorted.Select(p => p.load.ElementName).ToList();
 
                 targetList.Add(new AuditEntry
                 {
                     GridLocation = location,
-                    Explanation = formula,
+                    Explanation = "",
                     Quantity = count,
                     QuantityUnit = "ea",
                     UnitLoad = loadVal,
-                    UnitLoadString = count > 1 ? "" : $"{loadVal:0.00} {UnitManager.Info.ForceUnit}", // Hide for grouped
-                    TotalForce = totalForce,
+                    UnitLoadString = $"{loadVal:0.00}",
+                    TotalForce = Math.Abs(signedForce),
                     Direction = dir,
+                    DirectionSign = dirSign,
+                    ForceX = fx,
+                    ForceY = fy,
+                    ForceZ = fz,
                     ElementList = elementNames
                 });
             }
@@ -1374,11 +1478,12 @@ namespace DTS_Engine.Core.Engines
 
         #endregion
 
-        #region Report Generation (With Unit Conversion & Word Wrap)
+        #region Report Generation (With Unit Conversion & New Format v4.2)
 
         /// <summary>
         /// Generate formatted text audit report.
-        /// ⚠️ MAJOR REFACTOR v4.0: All 15 requirements implemented
+        /// UPDATED v4.2: New column layout - removed Type, added Value, reordered Dir before Force
+        /// Format: Grid Location | Calculator | Value(unit) | Unit Load(unit) | Dir | Force(unit) | Elements
         /// </summary>
         public string GenerateTextReport(AuditReport report, string targetUnit = "kN", string language = "English")
         {
@@ -1388,7 +1493,7 @@ namespace DTS_Engine.Core.Engines
             // Unit conversion
             if (string.IsNullOrWhiteSpace(targetUnit)) targetUnit = UnitManager.Info.ForceUnit;
             if (targetUnit.Equals("Ton", StringComparison.OrdinalIgnoreCase) || targetUnit.Equals("Tonf", StringComparison.OrdinalIgnoreCase))
-                forceFactor = 1.0 / 9.81; // Approximate conversion for display
+                forceFactor = 1.0 / 9.81;
             else if (targetUnit.Equals("kgf", StringComparison.OrdinalIgnoreCase)) forceFactor = 101.97;
             else { targetUnit = "kN"; forceFactor = 1.0; }
 
@@ -1396,7 +1501,7 @@ namespace DTS_Engine.Core.Engines
 
             // HEADER
             sb.AppendLine("".PadRight(150, '='));
-            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.1 - FIXED)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.1 - FIXED)");
+            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.2)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.2)");
             sb.AppendLine($"   {(isVN ? "Dự án" : "Project")}: {report.ModelName ?? "Unknown"}");
             sb.AppendLine($"   {(isVN ? "Tổ hợp tải" : "Load Pattern")}: {report.LoadPattern}");
             sb.AppendLine($"   {(isVN ? "Ngày tính" : "Audit Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
@@ -1406,41 +1511,49 @@ namespace DTS_Engine.Core.Engines
 
             foreach (var story in report.Stories.OrderByDescending(s => s.Elevation))
             {
-                double storyTotal = story.TotalForce * forceFactor;
+                // FIX v4.2: Calculate story total from vector components
+                double storyFx = story.LoadTypes.Sum(lt => lt.SubTotalFx);
+                double storyFy = story.LoadTypes.Sum(lt => lt.SubTotalFy);
+                double storyFz = story.LoadTypes.Sum(lt => lt.SubTotalFz);
+                double storyTotal = Math.Sqrt(storyFx * storyFx + storyFy * storyFy + storyFz * storyFz) * forceFactor;
+
                 sb.AppendLine($">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm | {(isVN ? "Tổng" : "Total")}: {storyTotal:0.00} {targetUnit}");
                 sb.AppendLine();
 
                 foreach (var loadType in story.LoadTypes)
                 {
                     string typeName = GetSpecificLoadTypeName(loadType, isVN);
-                    double typeTotal = loadType.TotalForce * forceFactor;
+                    
+                    // FIX v4.2: Use vector-based subtotal
+                    double typeTotal = Math.Sqrt(
+                        loadType.SubTotalFx * loadType.SubTotalFx + 
+                        loadType.SubTotalFy * loadType.SubTotalFy + 
+                        loadType.SubTotalFz * loadType.SubTotalFz) * forceFactor;
+
                     sb.AppendLine($"  [{typeName}] {(isVN ? "Tổng phụ" : "Subtotal")}: {typeTotal:0.00} {targetUnit}");
                     sb.AppendLine();
 
-                    // FIX BUG #3: Layout cột cố định an toàn hơn
-                    // Tổng width = 150
-                    // Axis(35) | Calc(35) | Type(10) | UnitLoad(15) | Force(15) | Dir(8) | Elements(30)
-                    string hAxis = (isVN ? "Vị trí trục" : "Grid Location").PadRight(35);
-                    string hCalc = (isVN ? "Công thức tính" : "Calculator").PadRight(35);
-                    string hType = (isVN ? "Loại" : "Type").PadRight(10);
-                    string hUnit = (isVN ? "Tải đơn vị" : "Unit Load").PadRight(15);
-                    string hForce = (isVN ? "Lực" : "Force").PadRight(15);
+                    // FIX v4.2: New column layout
+                    // Grid Location(30) | Calculator(35) | Value(15) | Unit Load(20) | Dir(8) | Force(15) | Elements(remaining)
+                    string hGrid = (isVN ? "Vị trí trục" : "Grid Location").PadRight(30);
+                    string hCalc = (isVN ? "Chi tiết" : "Calculator").PadRight(35);
+                    
+                    // Determine unit type from first entry
+                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
+                    string hValue = $"Value({valueUnit})".PadRight(15);
+                    string hUnit = $"Unit Load({targetUnit}/{valueUnit})".PadRight(20);
                     string hDir = (isVN ? "Hướng" : "Dir").PadRight(8);
-                    string hElem = (isVN ? "Danh sách phần tử" : "Elements").PadRight(30);
+                    string hForce = $"Force({targetUnit})".PadRight(15);
+                    string hElem = (isVN ? "Phần tử" : "Elements");
 
-                    sb.AppendLine($"    {hAxis}{hCalc}{hType}{hUnit}{hForce}{hDir}{hElem}");
+                    sb.AppendLine($"    {hGrid}{hCalc}{hValue}{hUnit}{hDir}{hForce}{hElem}");
                     sb.AppendLine($"    {new string('-', 150)}");
 
-                    // Process Rows
-                    var allEntries = new List<AuditEntry>();
-                    if (loadType.ValueGroups?.Any() == true)
-                        allEntries = loadType.ValueGroups.SelectMany(g => g.Entries).ToList();
-                    else 
-                        allEntries = loadType.Entries;
+                    var allEntries = loadType.Entries;
 
                     foreach (var entry in allEntries.OrderByDescending(e => Math.Abs(e.TotalForce)))
                     {
-                        FormatDataRow(sb, entry, forceFactor, targetUnit, loadType.LoadTypeName);
+                        FormatDataRow(sb, entry, forceFactor, targetUnit);
                     }
                     sb.AppendLine();
                 }
@@ -1451,7 +1564,6 @@ namespace DTS_Engine.Core.Engines
             sb.AppendLine(isVN ? "TỔNG HỢP LỰC (GLOBAL):" : "AUDIT SUMMARY (GLOBAL RESULTANTS):");
             sb.AppendLine();
             
-            // FIX BUG #2: Summary phải chuẩn xác theo vector
             sb.AppendLine($"   Fx (Global): {report.CalculatedFx * forceFactor:0.00} {targetUnit}");
             sb.AppendLine($"   Fy (Global): {report.CalculatedFy * forceFactor:0.00} {targetUnit}");
             sb.AppendLine($"   Fz (Global): {report.CalculatedFz * forceFactor:0.00} {targetUnit}");
@@ -1463,30 +1575,47 @@ namespace DTS_Engine.Core.Engines
             return sb.ToString();
         }
 
-        // FIX BUG #3: Formatting Row chuẩn
-        private void FormatDataRow(StringBuilder sb, AuditEntry entry, double forceFactor, string targetUnit, string loadType)
+        /// <summary>
+        /// Format data row with new column layout
+        /// FIX v4.2: Grid | Calculator | Value | UnitLoad | Dir | Force | Elements (full list)
+        /// Example: Axis 1-12 x G(+0.5)-F(+1.5) | 12x1.5 | 6.05 | -2.26 | -Y | 4.14 | 70,75,94,97
+        /// </summary>
+        private void FormatDataRow(StringBuilder sb, AuditEntry entry, double forceFactor, string targetUnit)
         {
-            // Cột cố định
-            string type = FormatLoadType(entry, loadType).PadRight(10);
-            string unit = (entry.UnitLoadString ?? "").PadRight(15);
-            string force = $"{entry.TotalForce * forceFactor:0.00}".PadRight(15);
-            string dir = FormatDirection(entry.Direction, entry).PadRight(8);
+            // Column widths
+            const int gridWidth = 30;
+            const int calcWidth = 35;
+            const int valueWidth = 15;
+            const int unitWidth = 20;
+            const int dirWidth = 8;
+            const int forceWidth = 15;
 
-            // Cột động: Axis & Calc (Cắt chuỗi nếu quá dài để không đẩy cột Force)
-            string axis = TruncateString(entry.GridLocation, 33).PadRight(35); // 35 - 2 padding
-            string calc = TruncateString(entry.Explanation, 33).PadRight(35);
+            // Grid Location
+            string grid = TruncateString(entry.GridLocation ?? "", gridWidth - 2).PadRight(gridWidth);
 
-            // FIX BUG #4: Elements hiển thị đầy đủ hơn với 'to'
-            string elemStr = "";
-            if (entry.ElementCount > 0)
-            {
-                elemStr = CompressElementList(entry.ElementList, 20); // Tăng max count
-                elemStr = TruncateString(elemStr, 28); // Cắt gọn nếu vẫn quá dài
-            }
-            elemStr = elemStr.PadRight(30);
+            // Calculator (segment details for frames, formula for areas)
+            string calc = TruncateString(entry.Explanation ?? "", calcWidth - 2).PadRight(calcWidth);
 
-            sb.AppendLine($"    {axis}{calc}{type}{unit}{force}{dir}{elemStr}");
+            // Value (Quantity)
+            string value = $"{entry.Quantity:0.00}".PadRight(valueWidth);
+
+            // Unit Load (with sign)
+            string unitLoad = $"{entry.UnitLoad:0.00}".PadRight(unitWidth);
+
+            // Direction (keep short)
+            string dir = FormatDirection(entry.Direction, entry).PadRight(dirWidth);
+
+            // Force (signed)
+            double signedForce = entry.TotalForce * entry.DirectionSign * forceFactor;
+            string force = $"{signedForce:0.00}".PadRight(forceWidth);
+
+            // Elements (FULL LIST - no truncation for text report per requirement)
+            string elements = string.Join(",", entry.ElementList ?? new List<string>());
+
+            sb.AppendLine($"    {grid}{calc}{value}{unitLoad}{dir}{force}{elements}");
         }
+
+        #endregion
 
         // Helper cắt chuỗi an toàn
         private string TruncateString(string val, int maxLen)
@@ -1496,88 +1625,23 @@ namespace DTS_Engine.Core.Engines
             return val.Substring(0, maxLen - 2) + "..";
         }
 
-        // FIX BUG #4: Compress list with 'to' and sorting
-        private string CompressElementList(List<string> elements, int maxDisplayCount)
-        {
-            if (elements == null || elements.Count == 0) return "";
-
-            // 1. Tách số và chữ
-            var nums = new List<int>();
-            var nonNums = new List<string>();
-            foreach (var e in elements)
-            {
-                if (int.TryParse(e, out int n)) nums.Add(n);
-                else nonNums.Add(e);
-            }
-            nums.Sort();
-            nonNums.Sort();
-
-            // 2. Gom nhóm số: 1,2,3 -> 1to3
-            var parts = new List<string>();
-            int i = 0;
-            while (i < nums.Count)
-            {
-                int start = nums[i];
-                int end = start;
-                while (i + 1 < nums.Count && nums[i + 1] == end + 1)
-                {
-                    end = nums[i + 1];
-                    i++;
-                }
-
-                if (end - start >= 2) parts.Add($"{start}to{end}"); // Dùng 'to' cho rõ ràng
-                else if (end - start == 1) { parts.Add($"{start}"); parts.Add($"{end}"); }
-                else parts.Add($"{start}");
-                
-                i++;
-            }
-
-            // 3. Kết hợp
-            parts.AddRange(nonNums);
-
-            // 4. Cắt gọn thông minh
-            if (parts.Count > maxDisplayCount)
-            {
-                return string.Join(",", parts.Take(maxDisplayCount)) + $",+{parts.Count - maxDisplayCount}";
-            }
-            return string.Join(",", parts);
-        }
-
-        #endregion
-
         // Helper to get display name for a load type group
         private string GetSpecificLoadTypeName(AuditLoadTypeGroup loadType, bool isVN)
         {
             if (loadType == null) return "";
-            // Prefer the provided display name; localize if requested
             var name = loadType.LoadTypeName ?? "UNKNOWN";
             return name;
-        }
-
-        // Short format for load type in table rows
-        private string FormatLoadType(AuditEntry entry, string loadType)
-        {
-            if (string.IsNullOrEmpty(loadType)) return "";
-            var lt = loadType.ToLowerInvariant();
-            if (lt.Contains("area")) return "AREA";
-            if (lt.Contains("frame")) return "FRAME";
-            if (lt.Contains("point")) return "POINT";
-            return loadType.ToUpperInvariant();
         }
 
         // Short direction formatter used in report rows
         private string FormatDirection(string dir, AuditEntry entry)
         {
-            // Keep empty safety
             if (string.IsNullOrEmpty(dir)) return "";
 
             var d = dir.ToUpperInvariant();
 
             // Map GRAV to Z
             if (d.Contains("GRAV")) return "Z";
-
-            // Special rule: exact axis names -> "Check!!"
-            if (d == "X" || d == "Y" || d == "Z") return "Check!!";
 
             // Keep signed axes (+X, -X, +Y, -Y, ...)
             if (d == "+X" || d == "-X") return d;

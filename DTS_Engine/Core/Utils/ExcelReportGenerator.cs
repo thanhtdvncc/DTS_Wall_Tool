@@ -167,9 +167,14 @@ namespace DTS_Engine.Core.Utils
 
             foreach (var story in report.Stories.OrderByDescending(s => s.Elevation))
             {
+                // FIX v4.2: Calculate story total from vector components
+                double storyFx = story.LoadTypes.Sum(lt => lt.SubTotalFx);
+                double storyFy = story.LoadTypes.Sum(lt => lt.SubTotalFy);
+                double storyFz = story.LoadTypes.Sum(lt => lt.SubTotalFz);
+                double storyTotal = Math.Sqrt(storyFx * storyFx + storyFy * storyFy + storyFz * storyFz) * forceFactor;
+
                 // Story Header
                 var storyHeaderCell = ws.Cell(row, 1);
-                double storyTotal = story.TotalForce * forceFactor;
                 storyHeaderCell.Value = $">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm | {(isVN ? "Tổng" : "Total")}: {storyTotal:0.00} {targetUnit}";
                 storyHeaderCell.Style.Font.Bold = true;
                 storyHeaderCell.Style.Fill.BackgroundColor = STORY_HEADER_COLOR;
@@ -178,18 +183,25 @@ namespace DTS_Engine.Core.Utils
 
                 foreach (var loadType in story.LoadTypes)
                 {
+                    // FIX v4.2: Use vector-based subtotal
+                    double typeTotal = Math.Sqrt(
+                        loadType.SubTotalFx * loadType.SubTotalFx + 
+                        loadType.SubTotalFy * loadType.SubTotalFy + 
+                        loadType.SubTotalFz * loadType.SubTotalFz) * forceFactor;
+
                     // Load Type Header
-                    double typeTotal = loadType.TotalForce * forceFactor;
                     var typeHeaderCell = ws.Cell(row, 1);
                     typeHeaderCell.Value = $"[{loadType.LoadTypeName}] {(isVN ? "Tổng phụ" : "Subtotal")}: {typeTotal:0.00} {targetUnit}";
                     typeHeaderCell.Style.Font.Bold = true;
                     ws.Range(row, 1, row, 7).Merge();
                     row++;
 
-                    // Column Headers
+                    // FIX v4.2: New column headers - removed Type, added Value, reordered
+                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
+                    
                     string[] headers = isVN
-                        ? new[] { "Vị trí trục", "Công thức tính", "Loại gán", "Tải trọng", $"Lực ({targetUnit})", "Hướng", "Phần tử" }
-                        : new[] { "Grid Location", "Calculator", "Type", "Unit Load", $"Force ({targetUnit})", "Dir", "Elements" };
+                        ? new[] { "Vị trí trục", "Chi tiết", $"Value({valueUnit})", $"Unit Load({targetUnit}/{valueUnit})", "Hướng", $"Force({targetUnit})", "Phần tử" }
+                        : new[] { "Grid Location", "Calculator", $"Value({valueUnit})", $"Unit Load({targetUnit}/{valueUnit})", "Dir", $"Force({targetUnit})", "Elements" };
 
                     for (int i = 0; i < headers.Length; i++)
                     {
@@ -202,18 +214,27 @@ namespace DTS_Engine.Core.Utils
                     row++;
 
                     // Data Rows
-                    var entries = loadType.Entries?.OrderByDescending(e => e.TotalForce) ?? Enumerable.Empty<AuditEntry>();
+                    var entries = loadType.Entries?.OrderByDescending(e => Math.Abs(e.TotalForce)) ?? Enumerable.Empty<AuditEntry>();
                     foreach (var entry in entries)
                     {
                         ws.Cell(row, 1).Value = entry.GridLocation;
                         ws.Cell(row, 2).Value = entry.Explanation;
-                        ws.Cell(row, 3).Value = entry.QuantityUnit;
-                        ws.Cell(row, 4).Value = entry.UnitLoadString;
-                        ws.Cell(row, 5).Value = entry.TotalForce * forceFactor;
-                        ws.Cell(row, 5).Style.NumberFormat.Format = "0.00";
-                        ws.Cell(row, 6).Value = entry.Direction;
+                        ws.Cell(row, 3).Value = entry.Quantity;
+                        ws.Cell(row, 3).Style.NumberFormat.Format = "0.00";
+                        ws.Cell(row, 4).Value = entry.UnitLoad;
+                        ws.Cell(row, 4).Style.NumberFormat.Format = "0.00";
+                        
+                        // Direction
+                        ws.Cell(row, 5).Value = entry.Direction;
+                        
+                        // FIX v4.2: Signed force = Quantity * UnitLoad * DirectionSign
+                        double signedForce = entry.TotalForce * entry.DirectionSign * forceFactor;
+                        ws.Cell(row, 6).Value = signedForce;
+                        ws.Cell(row, 6).Style.NumberFormat.Format = "0.00";
+                        
+                        // FIX v4.2: Full element list (no truncation for Excel)
                         ws.Cell(row, 7).Value = entry.ElementCount > 0 
-                            ? $"({entry.ElementCount}) {string.Join(", ", entry.ElementList.Take(5))}{(entry.ElementCount > 5 ? "..." : "")}"
+                            ? string.Join(", ", entry.ElementList)
                             : "";
 
                         // Apply borders

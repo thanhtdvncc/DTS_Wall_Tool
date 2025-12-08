@@ -170,13 +170,17 @@ namespace DTS_Engine.Core.Data
         // Group by value buckets (used by AuditEngine)
         public List<AuditValueGroup> ValueGroups { get; set; } = new List<AuditValueGroup>();
 
+        // NEW v4.2: Vector components for load type subtotal
+        public double SubTotalFx { get; set; }
+        public double SubTotalFy { get; set; }
+        public double SubTotalFz { get; set; }
+
         public double TotalForce
         {
             get
             {
-                if (ValueGroups != null && ValueGroups.Count > 0)
-                    return ValueGroups.Sum(v => v.TotalForce);
-                return Entries?.Sum(e => e.TotalForce) ?? 0;
+                // Calculate magnitude from vector components
+                return Math.Sqrt(SubTotalFx * SubTotalFx + SubTotalFy * SubTotalFy + SubTotalFz * SubTotalFz);
             }
         }
 
@@ -206,6 +210,7 @@ namespace DTS_Engine.Core.Data
 
     /// <summary>
     /// Single row in the report table
+    /// UPDATED v4.2: Added vector components for accurate directional summation
     /// </summary>
     public class AuditEntry
     {
@@ -218,12 +223,19 @@ namespace DTS_Engine.Core.Data
         public double UnitLoad { get; set; } // The load value (kN/m, kN/m2, kN)
         public string UnitLoadString { get; set; } // "12.5 kN/m"
 
-        public double TotalForce { get; set; } // Calculated Force (kN)
+        public double TotalForce { get; set; } // Calculated Force (kN) - SCALAR magnitude
 
         public string Direction { get; set; } // Gravity, X, Y
+        public double DirectionSign { get; set; } = -1.0; // +1 or -1 for force direction
+
+        // NEW v4.2: Vector components for accurate summation
+        public double ForceX { get; set; }
+        public double ForceY { get; set; }
+        public double ForceZ { get; set; }
 
         public List<string> ElementList { get; set; } = new List<string>();
         public int ElementCount => ElementList?.Count ?? 0;
+        
         // Backward-compatible property used in engines
         public double Force
         {
