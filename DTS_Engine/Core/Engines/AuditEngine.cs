@@ -29,7 +29,7 @@ namespace DTS_Engine.Core.Engines
     {
         #region Constants & Fields
 
-        private const double STORY_TOLERANCE = 500.0; // mm
+        private const double STORY_TOLERANCE = 200.0; // mm
         private const double GRID_SNAP_TOLERANCE = 250.0; // mm (increased slightly for better snapping)
         private const double MIN_AREA_THRESHOLD_M2 = 0.05;
 
