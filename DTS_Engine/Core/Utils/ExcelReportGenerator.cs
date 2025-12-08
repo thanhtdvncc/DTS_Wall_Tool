@@ -7,25 +7,22 @@ using System.Linq;
 namespace DTS_Engine.Core.Utils
 {
     /// <summary>
-    /// Excel Report Generator using ClosedXML
-    /// FIX BUG #6: Complete Excel export implementation
+    /// Excel Report Generator using ClosedXML.
     /// 
-    /// ARCHITECTURE:
-    /// - Clean separation: Reads AuditReport data model
-    /// - Generates formatted Excel workbook with styling
-    /// - Supports unit conversion and bilingual output
+    /// OUTPUT FORMAT (matches text report exactly):
+    /// Location | Explanation | Quantity | UnitLoad | Fx | Fy | Fz | Elements
     /// 
-    /// ISO/IEC 25010 Compliance:
-    /// - Usability: Professional formatting with merged cells and colors
-    /// - Maintainability: Single responsibility - Excel generation only
-    /// - Performance: Single-pass write with efficient ClosedXML API
+    /// FORCE FORMULA:
+    /// Force_Vector = Quantity × UnitLoad × Direction
+    /// 
+    /// ISO/IEC 25010: Usability + Maintainability
     /// </summary>
     public class ExcelReportGenerator
     {
         #region Constants
 
         private const string SHEET_NAME = "Load Audit Report";
-        
+
         // Colors (ClosedXML format)
         private static readonly XLColor HEADER_COLOR = XLColor.FromArgb(68, 114, 196); // Blue
         private static readonly XLColor SUBHEADER_COLOR = XLColor.FromArgb(217, 225, 242); // Light blue
@@ -41,23 +38,21 @@ namespace DTS_Engine.Core.Utils
         /// Returns the full path to the generated file.
         /// </summary>
         public static string GenerateExcelReport(
-            AuditReport report, 
-            string targetUnit = "kN", 
+            AuditReport report,
+            string targetUnit = "kN",
             string language = "English",
             string outputPath = null)
         {
             if (report == null)
                 throw new ArgumentNullException(nameof(report));
 
-            // Calculate force factor for unit conversion
             double forceFactor = CalculateForceFactor(targetUnit);
             bool isVN = language.Equals("Vietnamese", StringComparison.OrdinalIgnoreCase);
 
-            // Create workbook
             using (var workbook = new XLWorkbook())
             {
                 var worksheet = workbook.Worksheets.Add(SHEET_NAME);
-                
+
                 int currentRow = 1;
 
                 // 1. Report Header
@@ -76,8 +71,8 @@ namespace DTS_Engine.Core.Utils
                 if (string.IsNullOrEmpty(outputPath))
                 {
                     string tempFolder = Path.GetTempPath();
-                    string safeModel = string.IsNullOrWhiteSpace(report.ModelName) 
-                        ? "Model" 
+                    string safeModel = string.IsNullOrWhiteSpace(report.ModelName)
+                        ? "Model"
                         : Path.GetFileNameWithoutExtension(report.ModelName);
                     string fileName = $"DTS_Audit_{safeModel}_{report.LoadPattern}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
                     outputPath = Path.Combine(tempFolder, fileName);
@@ -104,7 +99,7 @@ namespace DTS_Engine.Core.Utils
             else if (targetUnit.Equals("lb", StringComparison.OrdinalIgnoreCase))
                 return 224.8;
             else
-                return 1.0; // Default to kN
+                return 1.0;
         }
 
         #endregion
@@ -117,14 +112,14 @@ namespace DTS_Engine.Core.Utils
 
             // Title
             var titleCell = ws.Cell(row, 1);
-            titleCell.Value = isVN 
-                ? "KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.0)" 
-                : "SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.0)";
+            titleCell.Value = isVN
+                ? "KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v5.0)"
+                : "SAP2000 LOAD AUDIT REPORT (DTS ENGINE v5.0)";
             titleCell.Style.Font.Bold = true;
             titleCell.Style.Font.FontSize = 14;
             titleCell.Style.Fill.BackgroundColor = HEADER_COLOR;
             titleCell.Style.Font.FontColor = XLColor.White;
-            ws.Range(row, 1, row, 7).Merge().Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Range(row, 1, row, 8).Merge().Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             row++;
 
             // Project Info
@@ -142,17 +137,17 @@ namespace DTS_Engine.Core.Utils
 
             ws.Cell(row, 1).Value = isVN ? "Đơn vị:" : "Report Unit:";
             ws.Cell(row, 2).Value = targetUnit;
-            row += 2; // Empty row
+            row += 2;
 
             return row;
         }
 
         private static int WriteStoryDetails(
-            IXLWorksheet ws, 
-            AuditReport report, 
-            double forceFactor, 
-            string targetUnit, 
-            bool isVN, 
+            IXLWorksheet ws,
+            AuditReport report,
+            double forceFactor,
+            string targetUnit,
+            bool isVN,
             int startRow)
         {
             int row = startRow;
@@ -162,51 +157,47 @@ namespace DTS_Engine.Core.Utils
             sectionCell.Value = isVN ? "CHI TIẾT THEO TẦNG:" : "DETAIL BY STORY:";
             sectionCell.Style.Font.Bold = true;
             sectionCell.Style.Font.FontSize = 12;
-            ws.Range(row, 1, row, 7).Merge();
+            ws.Range(row, 1, row, 8).Merge();
             row += 2;
 
             foreach (var story in report.Stories.OrderByDescending(s => s.Elevation))
             {
-                // FIX v4.2.1: Calculate story total from vector components
+                // Calculate story totals from vector components
                 double storyFx = story.LoadTypes.Sum(lt => lt.SubTotalFx) * forceFactor;
                 double storyFy = story.LoadTypes.Sum(lt => lt.SubTotalFy) * forceFactor;
                 double storyFz = story.LoadTypes.Sum(lt => lt.SubTotalFz) * forceFactor;
-                double storyTotal = Math.Sqrt(storyFx * storyFx + storyFy * storyFy + storyFz * storyFz);
 
-                // Story Header with vector breakdown
+                // Story Header
                 var storyHeaderCell = ws.Cell(row, 1);
                 storyHeaderCell.Value = $">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm | " +
-                    $"{(isVN ? "Tổng" : "Total")}: {storyTotal:0.00} {targetUnit} [Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]";
+                    $"Fx={storyFx:0.00} Fy={storyFy:0.00} Fz={storyFz:0.00} {targetUnit}";
                 storyHeaderCell.Style.Font.Bold = true;
                 storyHeaderCell.Style.Fill.BackgroundColor = STORY_HEADER_COLOR;
-                ws.Range(row, 1, row, 7).Merge();
+                ws.Range(row, 1, row, 8).Merge();
                 row += 2;
 
                 foreach (var loadType in story.LoadTypes)
                 {
-                    // FIX v4.2.1: Use vector-based subtotal with component breakdown
+                    // Load Type subtotals
                     double typeFx = loadType.SubTotalFx * forceFactor;
                     double typeFy = loadType.SubTotalFy * forceFactor;
                     double typeFz = loadType.SubTotalFz * forceFactor;
-                    double typeTotal = Math.Sqrt(
-                        typeFx * typeFx + 
-                        typeFy * typeFy + 
-                        typeFz * typeFz);
 
-                    // Load Type Header with vector breakdown
+                    // Load Type Header
                     var typeHeaderCell = ws.Cell(row, 1);
                     typeHeaderCell.Value = $"[{loadType.LoadTypeName}] " +
-                        $"{(isVN ? "Tổng phụ" : "Subtotal")}: {typeTotal:0.00} {targetUnit} [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]";
+                        $"Subtotal: Fx={typeFx:0.00} Fy={typeFy:0.00} Fz={typeFz:0.00} {targetUnit}";
                     typeHeaderCell.Style.Font.Bold = true;
-                    ws.Range(row, 1, row, 7).Merge();
+                    ws.Range(row, 1, row, 8).Merge();
                     row++;
 
-                    // FIX v4.2: New column headers - removed Type, added Value, reordered
-                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
-                    
+                    // Column headers - NEW FORMAT
+                    // Location | Explanation | Quantity | UnitLoad | Fx | Fy | Fz | Elements
+                    string qtyUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
+
                     string[] headers = isVN
-                        ? new[] { "Vị trí trục", "Chi tiết", $"Value({valueUnit})", $"Unit Load({targetUnit}/{valueUnit})", "Hướng", $"Force({targetUnit})", "Phần tử" }
-                        : new[] { "Grid Location", "Calculator", $"Value({valueUnit})", $"Unit Load({targetUnit}/{valueUnit})", "Dir", $"Force({targetUnit})", "Elements" };
+                        ? new[] { "Vị trí", "Diễn giải", $"Khối lượng({qtyUnit})", $"Tải đơn vị({targetUnit}/{qtyUnit})", $"Fx({targetUnit})", $"Fy({targetUnit})", $"Fz({targetUnit})", "Phần tử" }
+                        : new[] { "Location", "Explanation", $"Quantity({qtyUnit})", $"UnitLoad({targetUnit}/{qtyUnit})", $"Fx({targetUnit})", $"Fy({targetUnit})", $"Fz({targetUnit})", "Elements" };
 
                     for (int i = 0; i < headers.Length; i++)
                     {
@@ -222,31 +213,34 @@ namespace DTS_Engine.Core.Utils
                     var entries = loadType.Entries?.OrderByDescending(e => Math.Abs(e.TotalForce)) ?? Enumerable.Empty<AuditEntry>();
                     foreach (var entry in entries)
                     {
-                        ws.Cell(row, 1).Value = entry.GridLocation;
-                        ws.Cell(row, 2).Value = entry.Explanation;
+                        ws.Cell(row, 1).Value = entry.GridLocation ?? "Unknown";
+
+                        ws.Cell(row, 2).Value = entry.Explanation ?? "";
+
                         ws.Cell(row, 3).Value = entry.Quantity;
                         ws.Cell(row, 3).Style.NumberFormat.Format = "0.00";
-                        
-                        // FIX v4.2.1: Apply forceFactor to UnitLoad for display consistency
-                        double displayUnitLoad = entry.UnitLoad * forceFactor;
-                        ws.Cell(row, 4).Value = displayUnitLoad;
+
+                        // UnitLoad with unit conversion
+                        ws.Cell(row, 4).Value = entry.UnitLoad * forceFactor;
                         ws.Cell(row, 4).Style.NumberFormat.Format = "0.00";
-                        
-                        // Direction
-                        ws.Cell(row, 5).Value = entry.Direction;
-                        
-                        // FIX v4.2.1: TotalForce already signed, just apply unit conversion
-                        double displayForce = entry.TotalForce * forceFactor;
-                        ws.Cell(row, 6).Value = displayForce;
+
+                        // Force components with unit conversion
+                        ws.Cell(row, 5).Value = entry.ForceX * forceFactor;
+                        ws.Cell(row, 5).Style.NumberFormat.Format = "0.00";
+
+                        ws.Cell(row, 6).Value = entry.ForceY * forceFactor;
                         ws.Cell(row, 6).Style.NumberFormat.Format = "0.00";
-                        
-                        // FIX v4.2: Full element list (no truncation for Excel)
-                        ws.Cell(row, 7).Value = entry.ElementCount > 0 
+
+                        ws.Cell(row, 7).Value = entry.ForceZ * forceFactor;
+                        ws.Cell(row, 7).Style.NumberFormat.Format = "0.00";
+
+                        // Full element list (no truncation for Excel)
+                        ws.Cell(row, 8).Value = entry.ElementCount > 0
                             ? string.Join(", ", entry.ElementList)
                             : "";
 
                         // Apply borders
-                        ws.Range(row, 1, row, 7).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                        ws.Range(row, 1, row, 8).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
                         row++;
                     }
 
@@ -260,11 +254,11 @@ namespace DTS_Engine.Core.Utils
         }
 
         private static int WriteSummary(
-            IXLWorksheet ws, 
-            AuditReport report, 
-            double forceFactor, 
-            string targetUnit, 
-            bool isVN, 
+            IXLWorksheet ws,
+            AuditReport report,
+            double forceFactor,
+            string targetUnit,
+            bool isVN,
             int startRow)
         {
             int row = startRow;
@@ -275,34 +269,22 @@ namespace DTS_Engine.Core.Utils
             summaryHeaderCell.Style.Font.Bold = true;
             summaryHeaderCell.Style.Font.FontSize = 12;
             summaryHeaderCell.Style.Fill.BackgroundColor = SUMMARY_COLOR;
-            ws.Range(row, 1, row, 3).Merge();
+            ws.Range(row, 1, row, 4).Merge();
             row += 2;
 
-            // ====================================================================================
-            // CRITICAL FIX v4.3: RECALCULATE FROM VISUAL DATA
-            // Tính lại từ report.Stories thay vì tin report.CalculatedFx (có thể từ Raw Data)
-            // ====================================================================================
-
-            // 1. Calculate Visual Sums from Processed Data
-            double visualFx = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFx));
-            double visualFy = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFy));
-            double visualFz = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFz));
-
-            // 2. Apply unit conversion
-            double displayFx = visualFx * forceFactor;
-            double displayFy = visualFy * forceFactor;
-            double displayFz = visualFz * forceFactor;
-
-            // 3. Calculate magnitude
-            double displayTotal = Math.Sqrt(displayFx * displayFx + displayFy * displayFy + displayFz * displayFz);
+            // Recalculate from entries for consistency
+            double totalFx = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFx)) * forceFactor;
+            double totalFy = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFy)) * forceFactor;
+            double totalFz = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFz)) * forceFactor;
+            double totalMagnitude = Math.Sqrt(totalFx * totalFx + totalFy * totalFy + totalFz * totalFz);
 
             // Summary data
             var summaryData = new[]
             {
-                (isVN ? "Tổng lực tính toán:" : "Total Calculated Force:", displayTotal),
-                (isVN ? "Thành phần Fx:" : "Force Component Fx:", displayFx),
-                (isVN ? "Thành phần Fy:" : "Force Component Fy:", displayFy),
-                (isVN ? "Thành phần Fz:" : "Force Component Fz:", displayFz)
+                (isVN ? "Tổng lực (Magnitude):" : "Total Force (Mag):", totalMagnitude),
+                (isVN ? "Thành phần Fx:" : "Component Fx:", totalFx),
+                (isVN ? "Thành phần Fy:" : "Component Fy:", totalFy),
+                (isVN ? "Thành phần Fz:" : "Component Fz:", totalFz)
             };
 
             foreach (var (label, value) in summaryData)
@@ -318,7 +300,7 @@ namespace DTS_Engine.Core.Utils
             if (report.IsAnalyzed)
             {
                 double sapReaction = Math.Abs(report.SapBaseReaction) * forceFactor;
-                double diff = displayTotal - sapReaction;
+                double diff = totalMagnitude - sapReaction;
                 double diffPercent = (sapReaction > 0) ? (diff / sapReaction) * 100.0 : 0;
 
                 ws.Cell(row, 1).Value = isVN ? "Phản lực SAP:" : "SAP Base Reaction:";
@@ -337,10 +319,10 @@ namespace DTS_Engine.Core.Utils
             }
             else
             {
-                ws.Cell(row, 1).Value = isVN 
-                    ? "Lưu ý: Chưa phân tích - Vui lòng kiểm tra thủ công" 
+                ws.Cell(row, 1).Value = isVN
+                    ? "Lưu ý: Chưa phân tích - Vui lòng kiểm tra thủ công"
                     : "Note: Not analyzed - Please verify manually";
-                ws.Range(row, 1, row, 3).Merge();
+                ws.Range(row, 1, row, 4).Merge();
                 row++;
             }
 

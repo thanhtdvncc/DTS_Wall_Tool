@@ -6,55 +6,59 @@ using System.Linq;
 namespace DTS_Engine.Core.Data
 {
     /// <summary>
-    /// Raw data from SAP2000
-    /// NEW: Hỗ trợ Global Axis và Direction Sign để phân biệt chính xác X/Y/Z
-    /// ENRICHED v4.5: Pre-calculated Location & Vector Key for Smart Grouping
+    /// Raw load data from SAP2000 with enrichment fields.
+    /// 
+    /// LIFECYCLE:
+    /// 1. Read from SAP API (Value1, DirectionCode, ElementZ)
+    /// 2. Enriched by LoadEnricher (GlobalCenter, PreCalculatedGridLoc, VectorKey)
+    /// 3. Grouped by LoadGrouper (no modification)
+    /// 4. Processed by ReportBuilder (geometry calculations)
     /// </summary>
     public class RawSapLoad
     {
+        #region Core Properties (from SAP API)
+
         public string ElementName { get; set; }
         public string LoadPattern { get; set; }
-        public double Value1 { get; set; }
-        public double Value2 { get; set; }
-        public string LoadType { get; set; } // FrameDistributed, FramePoint, AreaUniform, PointForce
-        public string Direction { get; set; } // Legacy: "Gravity", "Local 1"...
-        public int DirectionCode { get; set; } // SAP2000 direction code (4=X,5=Y,6=Z,10/11=Gravity)
+        public double Value1 { get; set; } // Primary load value
+        public double Value2 { get; set; } // Secondary value (for trapezoidal loads)
+        public string LoadType { get; set; } // FrameDistributed, AreaUniform, PointForce
+        public string Direction { get; set; } // Legacy: "Gravity", "Local 1", etc.
+        public int DirectionCode { get; set; } // SAP2000 direction code
+        public double ElementZ { get; set; } // Elevation for story assignment
 
-        // NEW: Global Axis resolution
-        public string GlobalAxis { get; set; } // "X", "Y", "Z" after local→global conversion
-        public double DirectionSign { get; set; } = -1.0; // +1 or -1 (direction của lực)
+        #endregion
 
-        // Resolved global components of the load (in same unit as Value1)
-        // These are calculated by transforming the local/load direction into global X/Y/Z components.
+        #region Vector Properties (calculated during read)
+
         public double DirectionX { get; set; }
         public double DirectionY { get; set; }
         public double DirectionZ { get; set; }
+        public string GlobalAxis { get; set; } // "X", "Y", "Z"
+        public double DirectionSign { get; set; } = -1.0;
 
-        // NEW v4.5: STAGE 1 ENRICHMENT FIELDS (Pre-calculated before grouping)
-        /// <summary>
-        /// Pre-calculated global center (Centroid for areas, Midpoint for frames, Exact for points)
-        /// Calculated immediately after reading from SAP
-        /// </summary>
+        #endregion
+
+        #region Enrichment Properties (calculated by LoadEnricher)
+
         public Point2D GlobalCenter { get; set; }
-
-        /// <summary>
-        /// Pre-calculated Grid Location string (e.g., "Grid 1-2 x A-B")
-        /// Calculated using GlobalCenter and grid snapping logic
-        /// Used for Stage 2 Location-based grouping
-        /// </summary>
         public string PreCalculatedGridLoc { get; set; }
-
-        /// <summary>
-        /// Vector Key for grouping same-direction forces
-        /// Format: "Dir_{Fx:0.00}_{Fy:0.00}_{Fz:0.00}"
-        /// Used for Stage 2 Vector-based sub-grouping within same location
-        /// </summary>
         public string VectorKey { get; set; }
 
-        /// <summary>
-        /// Is this load primarily lateral (X or Y) compared to Z?
-        /// Uses a simple dominance test: max(|X|,|Y|) > 0.5 * |Z|
-        /// </summary>
+        #endregion
+
+        #region Load Distribution (for partial loads)
+
+        public string DistributionType { get; set; }
+        public double DistStart { get; set; }
+        public double DistEnd { get; set; }
+        public bool IsRelative { get; set; }
+        public string CoordSys { get; set; } = "Global";
+
+        #endregion
+
+        #region Computed Properties
+
         public bool IsLateralLoad
         {
             get
@@ -62,17 +66,9 @@ namespace DTS_Engine.Core.Data
                 double absX = Math.Abs(DirectionX);
                 double absY = Math.Abs(DirectionY);
                 double absZ = Math.Abs(DirectionZ);
-                double lateralMag = Math.Max(absX, absY);
-                return lateralMag > absZ * 0.5;
+                return Math.Max(absX, absY) > absZ * 0.5;
             }
         }
-
-        public string DistributionType { get; set; }
-        public double DistStart { get; set; }
-        public double DistEnd { get; set; }
-        public bool IsRelative { get; set; }
-        public string CoordSys { get; set; } = "Global";
-        public double ElementZ { get; set; }
 
         public string GetUnitString()
         {
@@ -85,31 +81,17 @@ namespace DTS_Engine.Core.Data
             }
         }
 
-        /// <summary>
-        /// Kiểm tra xem tải có theo phương Global nào không
-        /// </summary>
-        public bool IsGlobalX => !string.IsNullOrEmpty(GlobalAxis) && GlobalAxis.Equals("X", StringComparison.OrdinalIgnoreCase);
-        public bool IsGlobalY => !string.IsNullOrEmpty(GlobalAxis) && GlobalAxis.Equals("Y", StringComparison.OrdinalIgnoreCase);
-        public bool IsGlobalZ => !string.IsNullOrEmpty(GlobalAxis) && GlobalAxis.Equals("Z", StringComparison.OrdinalIgnoreCase);
-
-        /// <summary>
-        /// Tạo Vector3D từ các component global
-        /// </summary>
         public Vector3D GetForceVector()
         {
             return new Vector3D(DirectionX, DirectionY, DirectionZ);
         }
 
-        /// <summary>
-        /// Gán các component global từ Vector3D
-        /// </summary>
         public void SetForceVector(Vector3D forceVector)
         {
             DirectionX = forceVector.X;
             DirectionY = forceVector.Y;
             DirectionZ = forceVector.Z;
 
-            // Auto-update GlobalAxis và Sign
             string primaryAxis = forceVector.GetPrimaryAxis();
             GlobalAxis = primaryAxis;
 
@@ -120,59 +102,50 @@ namespace DTS_Engine.Core.Data
                 case "Z": DirectionSign = Math.Sign(forceVector.Z); break;
             }
 
-            // NEW v4.5: Auto-calculate VectorKey after vector is set
             UpdateVectorKey();
         }
 
-        /// <summary>
-        /// NEW v4.5: Update VectorKey for grouping
-        /// Format normalized to avoid floating-point comparison issues
-        /// </summary>
         public void UpdateVectorKey()
         {
             var vec = GetForceVector().Normalized;
             VectorKey = $"Dir_{vec.X:0.000}_{vec.Y:0.000}_{vec.Z:0.000}";
         }
 
-        public override string ToString() => $"{LoadPattern}|{ElementName}|{LoadType}|{Value1:0.00}|{GlobalAxis ?? Direction}|Loc:{PreCalculatedGridLoc}";
+        #endregion
+
+        public override string ToString() => $"{LoadPattern}|{ElementName}|{LoadType}|{Value1:0.00}|{GlobalAxis}|{PreCalculatedGridLoc}";
     }
 
     /// <summary>
-    /// Full Audit Report
+    /// Full Audit Report - output of the audit pipeline.
     /// </summary>
     public class AuditReport
     {
         public string LoadPattern { get; set; }
+        public string ModelName { get; set; }
         public DateTime AuditDate { get; set; }
         public List<AuditStoryGroup> Stories { get; set; } = new List<AuditStoryGroup>();
-        // [MỚI] Lưu trữ Vector lực chính xác tính từ Inventory
+
+        // Vector totals (sum of all entries)
         public double CalculatedFx { get; set; }
         public double CalculatedFy { get; set; }
         public double CalculatedFz { get; set; }
 
-        // Tổng hợp lực (Magnitude)
+        // Magnitude = sqrt(Fx² + Fy² + Fz²)
         public double TotalCalculatedForce => Math.Sqrt(CalculatedFx * CalculatedFx + CalculatedFy * CalculatedFy + CalculatedFz * CalculatedFz);
 
+        // Comparison with SAP
         public double SapBaseReaction { get; set; }
+        public bool IsAnalyzed { get; set; } = true;
 
         public double Difference => TotalCalculatedForce - Math.Abs(SapBaseReaction);
-        // Percentage difference relative to calculated total (in %)
-        public double DifferencePercent
-        {
-            get
-            {
-                if (TotalCalculatedForce == 0) return 0;
-                return (Difference / TotalCalculatedForce) * 100.0;
-            }
-        }
+        public double DifferencePercent => TotalCalculatedForce > 0 ? (Difference / TotalCalculatedForce) * 100.0 : 0;
 
-        public string ModelName { get; set; }
         public string UnitInfo { get; set; }
-        public bool IsAnalyzed { get; set; } = true; // Track if model has results
     }
 
     /// <summary>
-    /// Group by Story
+    /// Group by Story/Elevation.
     /// </summary>
     public class AuditStoryGroup
     {
@@ -180,102 +153,125 @@ namespace DTS_Engine.Core.Data
         public double Elevation { get; set; }
         public List<AuditLoadTypeGroup> LoadTypes { get; set; } = new List<AuditLoadTypeGroup>();
 
-        // Backward-compatible alias expected by AuditEngine
-        public List<AuditLoadTypeGroup> LoadTypeGroups
-        {
-            get => LoadTypes;
-            set => LoadTypes = value;
-        }
-
         public double TotalForce => LoadTypes.Sum(g => g.TotalForce);
-
-        // Alias used in reporting code
-        public double SubTotalForce => TotalForce;
     }
 
     /// <summary>
-    /// Group by Load Type (Frame/Area/Point) - FLAT STRUCTURE
+    /// Group by Load Type (Area/Frame/Point).
     /// </summary>
     public class AuditLoadTypeGroup
     {
         public string LoadTypeName { get; set; }
-        // List of entries directly (legacy) and ValueGroups (new)
         public List<AuditEntry> Entries { get; set; } = new List<AuditEntry>();
 
-        // Group by value buckets (used by AuditEngine)
-        public List<AuditValueGroup> ValueGroups { get; set; } = new List<AuditValueGroup>();
-
-        // NEW v4.2: Vector components for load type subtotal
+        // Vector subtotals
         public double SubTotalFx { get; set; }
         public double SubTotalFy { get; set; }
         public double SubTotalFz { get; set; }
 
-        public double TotalForce
-        {
-            get
-            {
-                // Calculate magnitude from vector components
-                return Math.Sqrt(SubTotalFx * SubTotalFx + SubTotalFy * SubTotalFy + SubTotalFz * SubTotalFz);
-            }
-        }
+        public double TotalForce => Math.Sqrt(SubTotalFx * SubTotalFx + SubTotalFy * SubTotalFy + SubTotalFz * SubTotalFz);
 
-        public int ElementCount
-        {
-            get
-            {
-                if (ValueGroups != null && ValueGroups.Count > 0)
-                    return ValueGroups.Sum(v => v.ElementCount);
-                return Entries?.Sum(e => e.ElementCount) ?? 0;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Group by load value (bucket) used inside AuditLoadTypeGroup
-    /// </summary>
-    public class AuditValueGroup
-    {
-        public double LoadValue { get; set; }
-        public string Direction { get; set; }
-        public List<AuditEntry> Entries { get; set; } = new List<AuditEntry>();
-
-        public double TotalForce => Entries?.Sum(e => e.TotalForce) ?? 0;
         public int ElementCount => Entries?.Sum(e => e.ElementCount) ?? 0;
     }
 
     /// <summary>
-    /// Single row in the report table
-    /// UPDATED v4.2: Added vector components for accurate directional summation
+    /// Single row in the report table.
+    /// 
+    /// FORMULA: Force = Quantity × UnitLoad × Direction
     /// </summary>
     public class AuditEntry
     {
+        #region Display Columns
+
+        /// <summary>
+        /// Grid location string (e.g., "1-2/A-B")
+        /// </summary>
         public string GridLocation { get; set; }
-        public string Explanation { get; set; } // Dimensions or Description
 
-        public double Quantity { get; set; } // Length (m) or Area (m2) or Count
-        public string QuantityUnit { get; set; } // m, m2, pcs
+        /// <summary>
+        /// Explanation text for display (e.g., "4×5 + 2×3")
+        /// NOTE: This is for display only, not used in calculations
+        /// </summary>
+        public string Explanation { get; set; }
 
-        public double UnitLoad { get; set; } // The load value (kN/m, kN/m2, kN)
-        public string UnitLoadString { get; set; } // "12.5 kN/m"
+        /// <summary>
+        /// Quantity value - area (m²), length (m), or count
+        /// </summary>
+        public double Quantity { get; set; }
 
-        public double TotalForce { get; set; } // Calculated Force (kN) - SCALAR magnitude
+        /// <summary>
+        /// Unit of quantity: "m²", "m", or "pcs"
+        /// </summary>
+        public string QuantityUnit { get; set; }
 
-        public string Direction { get; set; } // Gravity, X, Y
-        public double DirectionSign { get; set; } = -1.0; // +1 or -1 for force direction
+        /// <summary>
+        /// Unit load value (kN/m², kN/m, or kN)
+        /// </summary>
+        public double UnitLoad { get; set; }
 
-        // NEW v4.2: Vector components for accurate summation
+        /// <summary>
+        /// Formatted unit load string for display
+        /// </summary>
+        public string UnitLoadString { get; set; }
+
+        /// <summary>
+        /// Direction description (e.g., "-Z (Gravity)", "+X")
+        /// </summary>
+        public string Direction { get; set; }
+
+        /// <summary>
+        /// Direction sign (+1 or -1)
+        /// </summary>
+        public double DirectionSign { get; set; } = -1.0;
+
+        #endregion
+
+        #region Force Components
+
+        /// <summary>
+        /// Force X component (kN). Formula: Quantity × UnitLoad × DirX
+        /// </summary>
         public double ForceX { get; set; }
+
+        /// <summary>
+        /// Force Y component (kN). Formula: Quantity × UnitLoad × DirY
+        /// </summary>
         public double ForceY { get; set; }
+
+        /// <summary>
+        /// Force Z component (kN). Formula: Quantity × UnitLoad × DirZ
+        /// </summary>
         public double ForceZ { get; set; }
 
+        /// <summary>
+        /// Total force magnitude = sqrt(Fx² + Fy² + Fz²)
+        /// </summary>
+        public double TotalForce { get; set; }
+
+        #endregion
+
+        #region Element Information
+
+        /// <summary>
+        /// List of element names contributing to this entry
+        /// </summary>
         public List<string> ElementList { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Count of elements
+        /// </summary>
         public int ElementCount => ElementList?.Count ?? 0;
-        
-        // Backward-compatible property used in engines
+
+        #endregion
+
+        #region Backward Compatibility
+
         public double Force
         {
             get => TotalForce;
             set => TotalForce = value;
         }
+
+        #endregion
     }
 }

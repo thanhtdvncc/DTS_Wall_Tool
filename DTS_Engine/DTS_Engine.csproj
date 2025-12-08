@@ -155,9 +155,13 @@
     <Compile Include="Core\Data\SyncStatus.cs" />
     <Compile Include="Core\Data\WallData.cs" />
     <Compile Include="Core\Engines\AuditEngine.cs" />
+    <Compile Include="Core\Engines\GeometryProcessor.cs" />
     <Compile Include="Core\Engines\LoadCalculator.cs" />
+    <Compile Include="Core\Engines\LoadEnricher.cs" />
+    <Compile Include="Core\Engines\LoadGrouper.cs" />
     <Compile Include="Core\Engines\MappingEngine.cs" />
     <Compile Include="Core\Engines\ModelInventory.cs" />
+    <Compile Include="Core\Engines\ReportBuilder.cs" />
     <Compile Include="Core\Engines\SyncEngine.cs" />
     <Compile Include="Core\Engines\WallSegmentProcessor.cs" />
     <Compile Include="Core\GeoAlgo.cs" />
