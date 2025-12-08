@@ -156,24 +156,8 @@ namespace DTS_Engine.Core.Engines
                 return report;
             }
 
-            // [FIX]: Tính toán tổng lực Global dựa trên Vector Sum
-            double sumFx = 0, sumFy = 0, sumFz = 0;
-
-            foreach (var load in allLoads)
-            {
-                // Multiplier dựa trên hình geometry (Area m2 hoặc Length m)
-                double multiplier = CalculateGeometryMultiplier(load);
-
-                sumFx += load.DirectionX * multiplier;
-                sumFy += load.DirectionY * multiplier;
-                sumFz += load.DirectionZ * multiplier;
-            }
-
-            report.CalculatedFx = sumFx;
-            report.CalculatedFy = sumFy;
-            report.CalculatedFz = sumFz;
-
-            // Nhóm theo tầng và xử lý chi tiết
+            // --- BƯỚC 1: XỬ LÝ CHI TIẾT (PROCESSED DATA) TRƯỚC ---
+            // Nhóm theo tầng và xử lý chi tiết (bao gồm cả NTS Union cho Area)
             var storyBuckets = GroupLoadsByStory(allLoads);
             foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
@@ -182,7 +166,33 @@ namespace DTS_Engine.Core.Engines
                     report.Stories.Add(storyGroup);
             }
 
+            // --- BƯỚC 2: TÍNH SUMMARY DỰA TRÊN PROCESSED DATA (VISUAL SUM) ---
+            // Khắc phục lỗi logic: Không cộng Raw Data nữa, mà cộng dồn từ các AuditEntry đã xử lý
+
+            double aggFx = 0;
+            double aggFy = 0;
+            double aggFz = 0;
+
+            foreach (var story in report.Stories)
+            {
+                foreach (var loadType in story.LoadTypes)
+                {
+                    // Cộng dồn vector components từ các nhóm tải đã xử lý
+                    aggFx += loadType.SubTotalFx;
+                    aggFy += loadType.SubTotalFy;
+                    aggFz += loadType.SubTotalFz;
+                }
+            }
+
+            // Gán ngược lại vào Report Header
+            report.CalculatedFx = aggFx;
+            report.CalculatedFy = aggFy;
+            report.CalculatedFz = aggFz;
+
+            // Base Reaction = 0 (Check thủ công hoặc đọc từ SAP nếu cần)
+            report.SapBaseReaction = 0;
             report.IsAnalyzed = false;
+
             return report;
         }
 
@@ -1490,7 +1500,7 @@ namespace DTS_Engine.Core.Engines
 
             // HEADER CHUNG (Giữ nguyên)
             sb.AppendLine("".PadRight(150, '='));
-            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.2)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.2)");
+            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.3)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.3)");
             sb.AppendLine($"   {(isVN ? "Dự án" : "Project")}: {report.ModelName ?? "Unknown"}");
             sb.AppendLine($"   {(isVN ? "Tổ hợp tải" : "Load Pattern")}: {report.LoadPattern}");
             sb.AppendLine($"   {(isVN ? "Ngày tính" : "Audit Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
@@ -1546,13 +1556,47 @@ namespace DTS_Engine.Core.Engines
                 sb.AppendLine(); // Dòng trống giữa các tầng
             }
 
-            // SUMMARY (Giữ nguyên hoặc làm gọn tùy ý, ở đây giữ nguyên logic cũ)
+            // ====================================================================================
+            // CRITICAL FIX v4.3: CONSISTENCY CHECK
+            // Thay vì dùng report.CalculatedFx (Raw Sum từ API), ta phải tính tổng lại từ
+            // chính các con số đã được xử lý hình học (SubTotalFx) trong report.Stories.
+            // Điều này đảm bảo: Tổng hiển thị = Tổng các dòng cộng lại.
+            // ====================================================================================
+
+            // 1. Calculate Visual Sums from Processed Data
+            double visualFx = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFx));
+            double visualFy = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFy));
+            double visualFz = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFz));
+
+            // 2. Apply unit conversion factor
+            double displayFx = visualFx * forceFactor;
+            double displayFy = visualFy * forceFactor;
+            double displayFz = visualFz * forceFactor;
+
+            // 3. Calculate Resultant Magnitude
+            double displayTotal = Math.Sqrt(displayFx * displayFx + displayFy * displayFy + displayFz * displayFz);
+
+            // 4. Print Summary
             sb.AppendLine("".PadRight(150, '='));
-            sb.AppendLine(isVN ? "TỔNG HỢP LỰC (GLOBAL):" : "AUDIT SUMMARY (GLOBAL RESULTANTS):");
+            sb.AppendLine(isVN ? "TỔNG HỢP LỰC (TÍNH TỪ BÁO CÁO):" : "AUDIT SUMMARY (CALCULATED FROM REPORT ROWS):");
             sb.AppendLine();
-            sb.AppendLine($"   Fx (Global): {report.CalculatedFx * forceFactor:0.00} {targetUnit}");
-            sb.AppendLine($"   Fy (Global): {report.CalculatedFy * forceFactor:0.00} {targetUnit}");
-            sb.AppendLine($"   Fz (Global): {report.CalculatedFz * forceFactor:0.00} {targetUnit}");
+            sb.AppendLine($"   Fx (Global): {displayFx:0.00} {targetUnit}");
+            sb.AppendLine($"   Fy (Global): {displayFy:0.00} {targetUnit}");
+            sb.AppendLine($"   Fz (Global): {displayFz:0.00} {targetUnit}");
+            sb.AppendLine($"   Magnitude  : {displayTotal:0.00} {targetUnit}");
+
+            // 5. Compare with SAP Base Reaction (Reference only)
+            if (report.IsAnalyzed && Math.Abs(report.SapBaseReaction) > 0.001)
+            {
+                double sapReaction = Math.Abs(report.SapBaseReaction) * forceFactor;
+                double diff = displayTotal - sapReaction;
+                double diffPercent = (sapReaction > 0) ? (diff / sapReaction) * 100.0 : 0;
+
+                sb.AppendLine();
+                sb.AppendLine($"   {(isVN ? "Phản lực SAP" : "SAP Reaction")}: {sapReaction:0.00} {targetUnit}");
+                sb.AppendLine($"   {(isVN ? "Sai số" : "Difference")}: {diff:0.00} {targetUnit} ({diffPercent:0.00}%)");
+            }
+
             sb.AppendLine();
             sb.AppendLine("".PadRight(150, '='));
 

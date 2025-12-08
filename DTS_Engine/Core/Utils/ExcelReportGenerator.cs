@@ -278,13 +278,31 @@ namespace DTS_Engine.Core.Utils
             ws.Range(row, 1, row, 3).Merge();
             row += 2;
 
+            // ====================================================================================
+            // CRITICAL FIX v4.3: RECALCULATE FROM VISUAL DATA
+            // Tính lại từ report.Stories thay vì tin report.CalculatedFx (có thể từ Raw Data)
+            // ====================================================================================
+
+            // 1. Calculate Visual Sums from Processed Data
+            double visualFx = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFx));
+            double visualFy = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFy));
+            double visualFz = report.Stories.Sum(s => s.LoadTypes.Sum(lt => lt.SubTotalFz));
+
+            // 2. Apply unit conversion
+            double displayFx = visualFx * forceFactor;
+            double displayFy = visualFy * forceFactor;
+            double displayFz = visualFz * forceFactor;
+
+            // 3. Calculate magnitude
+            double displayTotal = Math.Sqrt(displayFx * displayFx + displayFy * displayFy + displayFz * displayFz);
+
             // Summary data
             var summaryData = new[]
             {
-                (isVN ? "Tổng lực tính toán:" : "Total Calculated Force:", report.TotalCalculatedForce * forceFactor),
-                (isVN ? "Thành phần Fx:" : "Force Component Fx:", report.CalculatedFx * forceFactor),
-                (isVN ? "Thành phần Fy:" : "Force Component Fy:", report.CalculatedFy * forceFactor),
-                (isVN ? "Thành phần Fz:" : "Force Component Fz:", report.CalculatedFz * forceFactor)
+                (isVN ? "Tổng lực tính toán:" : "Total Calculated Force:", displayTotal),
+                (isVN ? "Thành phần Fx:" : "Force Component Fx:", displayFx),
+                (isVN ? "Thành phần Fy:" : "Force Component Fy:", displayFy),
+                (isVN ? "Thành phần Fz:" : "Force Component Fz:", displayFz)
             };
 
             foreach (var (label, value) in summaryData)
@@ -300,7 +318,8 @@ namespace DTS_Engine.Core.Utils
             if (report.IsAnalyzed)
             {
                 double sapReaction = Math.Abs(report.SapBaseReaction) * forceFactor;
-                double diff = Math.Abs(report.Difference * forceFactor);
+                double diff = displayTotal - sapReaction;
+                double diffPercent = (sapReaction > 0) ? (diff / sapReaction) * 100.0 : 0;
 
                 ws.Cell(row, 1).Value = isVN ? "Phản lực SAP:" : "SAP Base Reaction:";
                 ws.Cell(row, 1).Style.Font.Bold = true;
@@ -313,7 +332,7 @@ namespace DTS_Engine.Core.Utils
                 ws.Cell(row, 1).Style.Font.Bold = true;
                 ws.Cell(row, 2).Value = diff;
                 ws.Cell(row, 2).Style.NumberFormat.Format = "0.00";
-                ws.Cell(row, 3).Value = $"{targetUnit} ({report.DifferencePercent:0.00}%)";
+                ws.Cell(row, 3).Value = $"{targetUnit} ({diffPercent:0.00}%)";
                 row++;
             }
             else
