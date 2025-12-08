@@ -8,6 +8,7 @@ namespace DTS_Engine.Core.Data
     /// <summary>
     /// Raw data from SAP2000
     /// NEW: Hỗ trợ Global Axis và Direction Sign để phân biệt chính xác X/Y/Z
+    /// ENRICHED v4.5: Pre-calculated Location & Vector Key for Smart Grouping
     /// </summary>
     public class RawSapLoad
     {
@@ -28,6 +29,27 @@ namespace DTS_Engine.Core.Data
         public double DirectionX { get; set; }
         public double DirectionY { get; set; }
         public double DirectionZ { get; set; }
+
+        // NEW v4.5: STAGE 1 ENRICHMENT FIELDS (Pre-calculated before grouping)
+        /// <summary>
+        /// Pre-calculated global center (Centroid for areas, Midpoint for frames, Exact for points)
+        /// Calculated immediately after reading from SAP
+        /// </summary>
+        public Point2D GlobalCenter { get; set; }
+
+        /// <summary>
+        /// Pre-calculated Grid Location string (e.g., "Grid 1-2 x A-B")
+        /// Calculated using GlobalCenter and grid snapping logic
+        /// Used for Stage 2 Location-based grouping
+        /// </summary>
+        public string PreCalculatedGridLoc { get; set; }
+
+        /// <summary>
+        /// Vector Key for grouping same-direction forces
+        /// Format: "Dir_{Fx:0.00}_{Fy:0.00}_{Fz:0.00}"
+        /// Used for Stage 2 Vector-based sub-grouping within same location
+        /// </summary>
+        public string VectorKey { get; set; }
 
         /// <summary>
         /// Is this load primarily lateral (X or Y) compared to Z?
@@ -97,9 +119,22 @@ namespace DTS_Engine.Core.Data
                 case "Y": DirectionSign = Math.Sign(forceVector.Y); break;
                 case "Z": DirectionSign = Math.Sign(forceVector.Z); break;
             }
+
+            // NEW v4.5: Auto-calculate VectorKey after vector is set
+            UpdateVectorKey();
         }
 
-        public override string ToString() => $"{LoadPattern}|{ElementName}|{LoadType}|{Value1:0.00}|{GlobalAxis ?? Direction}";
+        /// <summary>
+        /// NEW v4.5: Update VectorKey for grouping
+        /// Format normalized to avoid floating-point comparison issues
+        /// </summary>
+        public void UpdateVectorKey()
+        {
+            var vec = GetForceVector().Normalized;
+            VectorKey = $"Dir_{vec.X:0.000}_{vec.Y:0.000}_{vec.Z:0.000}";
+        }
+
+        public override string ToString() => $"{LoadPattern}|{ElementName}|{LoadType}|{Value1:0.00}|{GlobalAxis ?? Direction}|Loc:{PreCalculatedGridLoc}";
     }
 
     /// <summary>

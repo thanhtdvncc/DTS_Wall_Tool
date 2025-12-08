@@ -31,15 +31,24 @@ namespace DTS_Engine.Core.Engines
             public double MinZ { get; set; }
             public double MaxZ { get; set; }
             public bool IsVertical { get; set; }
-            
+
             /// <summary>
-            /// Lấy cao độ phù hợp cho việc phân tầng
-            /// - Với cột/tường đứng: Dùng MinZ (chân cột)
-            /// - Với dầm/sàn ngang: Dùng AverageZ
+            /// Lấy cao độ đại diện để phân tầng (Story Assignment)
             /// </summary>
             public double GetStoryElevation()
             {
-                return IsVertical ? MinZ : AverageZ;
+                // LOGIC MỚI: Phân loại dựa trên chênh lệch độ cao (Delta Z)
+                double deltaZ = Math.Abs(MaxZ - MinZ);
+
+                // 1. Phần tử phẳng/ngang (Dầm, Sàn, Đài móng)
+                // Chênh lệch Z nhỏ (ví dụ < 100mm) -> Lấy cao độ trung bình
+                if (deltaZ < 100.0)
+                {
+                    return AverageZ;
+                }
+
+                // 2. Phần tử đứng hoặc xiên (Cột, Vách, Giằng, Ram dốc)
+                return MinZ;
             }
         }
 

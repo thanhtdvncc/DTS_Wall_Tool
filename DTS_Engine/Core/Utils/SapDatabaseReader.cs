@@ -69,6 +69,8 @@ namespace DTS_Engine.Core.Utils
 					var apiLoads = ReadAllLoads_ViaDirectAPI(patternFilter);
 					if (apiLoads != null && apiLoads.Count > 0)
 					{
+						// NEW v4.5: STAGE 1 ENRICHMENT - Calculate GlobalCenter, GridLocation, VectorKey
+						EnrichLoadsWithGeometryAndLocation(apiLoads);
 						return apiLoads;
 					}
 				}
@@ -81,7 +83,9 @@ namespace DTS_Engine.Core.Utils
 			// Table Mode fallback (rarely used now)
 			if (_useFallbackApi)
 			{
-				return ReadAllLoads_ViaDirectAPI(patternFilter);
+				var fallbackApiLoads = ReadAllLoads_ViaDirectAPI(patternFilter);
+				EnrichLoadsWithGeometryAndLocation(fallbackApiLoads);
+				return fallbackApiLoads;
 			}
 
 			var loads = new List<RawSapLoad>();
@@ -93,7 +97,9 @@ namespace DTS_Engine.Core.Utils
 					if (ReadFrameDistributedLoads(null).Count == 0)
 					{
 						_useFallbackApi = true;
-						return ReadAllLoads_ViaDirectAPI(patternFilter);
+						var fallbackApiLoads2 = ReadAllLoads_ViaDirectAPI(patternFilter);
+						EnrichLoadsWithGeometryAndLocation(fallbackApiLoads2);
+						return fallbackApiLoads2;
 					}
 				}
 
@@ -102,16 +108,181 @@ namespace DTS_Engine.Core.Utils
 				loads.AddRange(ReadAreaUniformToFrameLoads(patternFilter));
 				loads.AddRange(ReadJointLoads(patternFilter));
 				try { loads.AddRange(SapUtils.GetAllFramePointLoads(patternFilter)); } catch { }
+
+				// NEW v4.5: STAGE 1 ENRICHMENT
+				EnrichLoadsWithGeometryAndLocation(loads);
 			}
 			catch (Exception ex)
 			{
 				System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Table Read Error: {ex.Message}. Switching to API.");
 				_useFallbackApi = true;
-				return ReadAllLoads_ViaDirectAPI(patternFilter);
+				var fallbackApiLoads3 = ReadAllLoads_ViaDirectAPI(patternFilter);
+				EnrichLoadsWithGeometryAndLocation(fallbackApiLoads3);
+				return fallbackApiLoads3;
 			}
 
 			return loads;
 		}
+
+		#region STAGE 1: Data Enrichment (NEW v4.5)
+
+		/// <summary>
+		/// STAGE 1 ENRICHMENT: Calculate GlobalCenter, PreCalculatedGridLoc, VectorKey
+		/// This happens IMMEDIATELY after reading raw data from SAP, BEFORE any grouping
+		/// 
+		/// RATIONALE:
+		/// - Every load knows "where it is" and "what direction" before being grouped
+		/// - Enables accurate Location→Vector grouping strategy
+		/// - Eliminates "same location but different vector" confusion
+		/// </summary>
+		private void EnrichLoadsWithGeometryAndLocation(List<RawSapLoad> loads)
+		{
+			if (loads == null || loads.Count == 0) return;
+
+			// Get grid system once for all loads
+			var allGrids = SapUtils.GetGridLines();
+			var xGrids = allGrids.Where(g => g.Orientation == "X").OrderBy(g => g.Coordinate).ToList();
+			var yGrids = allGrids.Where(g => g.Orientation == "Y").OrderBy(g => g.Coordinate).ToList();
+
+			foreach (var load in loads)
+			{
+				// 1. Calculate GlobalCenter based on load type
+				load.GlobalCenter = CalculateGlobalCenter(load);
+
+				// 2. Calculate PreCalculatedGridLoc using GlobalCenter
+				if (load.GlobalCenter.X != 0 || load.GlobalCenter.Y != 0)
+				{
+					load.PreCalculatedGridLoc = GetGridRangeDescription(load.GlobalCenter, xGrids, yGrids);
+				}
+				else
+				{
+					load.PreCalculatedGridLoc = "Unknown";
+				}
+
+				// 3. VectorKey is already calculated by SetForceVector() via UpdateVectorKey()
+				// But ensure it's set (defensive programming)
+				if (string.IsNullOrEmpty(load.VectorKey))
+				{
+					load.UpdateVectorKey();
+				}
+			}
+		}
+
+		/// <summary>
+		/// Calculate global center (centroid) for load element
+		/// </summary>
+		private Point2D CalculateGlobalCenter(RawSapLoad load)
+		{
+			if (load == null) return new Point2D(0, 0);
+
+			switch (load.LoadType)
+			{
+				case "AreaUniform":
+				case "AreaUniformToFrame":
+					return GetAreaCentroid(load.ElementName);
+
+				case "FrameDistributed":
+				case "FramePoint":
+					return GetFrameMidpoint(load.ElementName);
+
+				case "PointForce":
+					return GetPointLocation(load.ElementName);
+
+				default:
+					return new Point2D(0, 0);
+			}
+		}
+
+		/// <summary>
+		/// Get area centroid (average of boundary points)
+		/// </summary>
+		private Point2D GetAreaCentroid(string areaName)
+		{
+			try
+			{
+				var areas = SapUtils.GetAllAreasGeometry();
+				var area = areas.FirstOrDefault(a => a.Name.Equals(areaName, StringComparison.OrdinalIgnoreCase));
+				if (area == null || area.BoundaryPoints.Count == 0) return new Point2D(0, 0);
+
+				double sumX = area.BoundaryPoints.Sum(p => p.X);
+				double sumY = area.BoundaryPoints.Sum(p => p.Y);
+				int count = area.BoundaryPoints.Count;
+
+				return new Point2D(sumX / count, sumY / count);
+			}
+			catch
+			{
+				return new Point2D(0, 0);
+			}
+		}
+
+		/// <summary>
+		/// Get frame midpoint
+		/// </summary>
+		private Point2D GetFrameMidpoint(string frameName)
+		{
+			try
+			{
+				var frame = SapUtils.GetFrameGeometry(frameName);
+				if (frame == null) return new Point2D(0, 0);
+				return frame.Midpoint;
+			}
+			catch
+			{
+				return new Point2D(0, 0);
+			}
+		}
+
+		/// <summary>
+		/// Get point location
+		/// </summary>
+		private Point2D GetPointLocation(string pointName)
+		{
+			try
+			{
+				var allPoints = SapUtils.GetAllPoints();
+				var pt = allPoints.FirstOrDefault(p => p.Name.Equals(pointName, StringComparison.OrdinalIgnoreCase));
+				if (pt == null) return new Point2D(0, 0);
+				return new Point2D(pt.X, pt.Y);
+			}
+			catch
+			{
+				return new Point2D(0, 0);
+			}
+		}
+
+		/// <summary>
+		/// Get grid range description for a single point (simplified version for enrichment)
+		/// </summary>
+		private string GetGridRangeDescription(Point2D center, 
+			List<SapUtils.GridLineRecord> xGrids, 
+			List<SapUtils.GridLineRecord> yGrids)
+		{
+			if (xGrids.Count == 0 || yGrids.Count == 0) return "No Grid";
+
+			const double SNAP_TOLERANCE = 250.0; // mm
+
+			// Find closest X grid
+			var xGrid = xGrids.OrderBy(g => Math.Abs(g.Coordinate - center.X)).FirstOrDefault();
+			string xRange = xGrid != null ? FormatGridWithOffset(xGrid.Name, center.X - xGrid.Coordinate, SNAP_TOLERANCE) : "?";
+
+// Find closest Y grid
+			var yGrid = yGrids.OrderBy(g => Math.Abs(g.Coordinate - center.Y)).FirstOrDefault();
+			string yRange = yGrid != null ? FormatGridWithOffset(yGrid.Name, center.Y - yGrid.Coordinate, SNAP_TOLERANCE) : "?";
+			return $"Grid {xRange} x {yRange}";
+		}
+
+		/// <summary>
+		/// Format grid with offset (helper for enrichment)
+		/// </summary>
+		private string FormatGridWithOffset(string name, double offsetMm, double tolerance)
+		{
+			if (Math.Abs(offsetMm) < tolerance) return name;
+			double offsetM = offsetMm / 1000.0;
+			return $"{name}({offsetM:+0.#;-0.#}m)";
+		}
+
+		#endregion
 
 		#region Schema Detection
 

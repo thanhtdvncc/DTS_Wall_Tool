@@ -13,17 +13,17 @@ namespace DTS_Engine.Core.Engines
 {
 
     /// <summary>
-    /// Engine kiểm toán tải trọng SAP2000 (Phiên bản v2.5 - Dependency Injection Architecture)
-    /// - Sử dụng NetTopologySuite để gộp (Union) hình học, tránh cắt nát phần tử.
-    /// - Định vị trục thông minh dựa trên BoundingBox (Range).
-    /// - Hỗ trợ đa đơn vị hiển thị qua UnitManager.
-    /// - Added: GroupLoadsByStory (sàn đỡ tường trên) và Word Wrap trong GenerateTextReport.
+    /// Engine ki?m to�n t?i tr?ng SAP2000 (Phi�n b?n v2.5 - Dependency Injection Architecture)
+    /// - S? d?ng NetTopologySuite d? g?p (Union) h�nh h?c, tr�nh c?t n�t ph?n t?.
+    /// - �?nh v? tr?c th�ng minh d?a tr�n BoundingBox (Range).
+    /// - H? tr? da don v? hi?n th? qua UnitManager.
+    /// - Added: GroupLoadsByStory (s�n d? tu?ng tr�n) v� Word Wrap trong GenerateTextReport.
     /// 
     /// ARCHITECTURE COMPLIANCE (ISO/IEC 25010 - Maintainability):
-    /// - Dependency Injection: Nhận ISapLoadReader qua Constructor
-    /// - Separation of Concerns: Engine không biết nguồn dữ liệu (SAP/Excel/SQL)
-    /// - Open/Closed Principle: Mở rộng data source mà không sửa Engine
-    /// - Single Responsibility: Chỉ xử lý logic audit, không đọc dữ liệu
+    /// - Dependency Injection: Nh?n ISapLoadReader qua Constructor
+    /// - Separation of Concerns: Engine kh�ng bi?t ngu?n d? li?u (SAP/Excel/SQL)
+    /// - Open/Closed Principle: M? r?ng data source m� kh�ng s?a Engine
+    /// - Single Responsibility: Ch? x? l� logic audit, kh�ng d?c d? li?u
     /// </summary>
     public class AuditEngine
     {
@@ -33,7 +33,7 @@ namespace DTS_Engine.Core.Engines
         private const double GRID_SNAP_TOLERANCE = 250.0; // mm (increased slightly for better snapping)
         private const double MIN_AREA_THRESHOLD_M2 = 0.05;
 
-        // Cache grids tách biệt X và Y để tìm kiếm nhanh
+        // Cache grids t�ch bi?t X v� Y d? t�m ki?m nhanh
         private List<SapUtils.GridLineRecord> _xGrids;
         private List<SapUtils.GridLineRecord> _yGrids;
         private List<SapUtils.GridStoryItem> _stories;
@@ -53,22 +53,22 @@ namespace DTS_Engine.Core.Engines
         #region Constructor
 
         /// <summary>
-        /// Constructor với Dependency Injection.
+        /// Constructor v?i Dependency Injection.
         /// 
         /// PRECONDITIONS:
-        /// - loadReader phải được khởi tạo đầy đủ (SapModel + ModelInventory)
+        /// - loadReader ph?i du?c kh?i t?o d?y d? (SapModel + ModelInventory)
         /// - SapUtils.IsConnected = true
         /// 
         /// POSTCONDITIONS:
-        /// - _loadReader sẵn sàng gọi ReadAllLoads()
-        /// - Grid và Story data được cache
+        /// - _loadReader s?n s�ng g?i ReadAllLoads()
+        /// - Grid v� Story data du?c cache
         /// 
         /// DEPENDENCY INJECTION RATIONALE:
-        /// - AuditEngine không tạo Reader → Dễ test (Mock ISapLoadReader)
-        /// - Thay đổi data source (Excel, SQL) không cần sửa Engine
-        /// - Tuân thủ SOLID: Dependency Inversion Principle
+        /// - AuditEngine kh�ng t?o Reader ? D? test (Mock ISapLoadReader)
+        /// - Thay d?i data source (Excel, SQL) kh�ng c?n s?a Engine
+        /// - Tu�n th? SOLID: Dependency Inversion Principle
         /// </summary>
-        /// <param name="loadReader">Implementation của ISapLoadReader (VD: SapDatabaseReader)</param>
+        /// <param name="loadReader">Implementation c?a ISapLoadReader (VD: SapDatabaseReader)</param>
         public AuditEngine(ISapLoadReader loadReader)
         {
             _loadReader = loadReader ?? throw new ArgumentNullException(nameof(loadReader),
@@ -98,7 +98,7 @@ namespace DTS_Engine.Core.Engines
         #region Main Audit Workflows
 
         /// <summary>
-        /// Chạy kiểm toán cho danh sách Load Patterns
+        /// Ch?y ki?m to�n cho danh s�ch Load Patterns
         /// </summary>
         public List<AuditReport> RunAudit(string loadPatterns)
         {
@@ -110,7 +110,7 @@ namespace DTS_Engine.Core.Engines
                                        .Distinct()
                                        .ToList();
 
-            // Cache geometry một lần dùng chung
+            // Cache geometry m?t l?n d�ng chung
             CacheGeometry();
 
             foreach (var pattern in patterns)
@@ -123,7 +123,7 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Chạy kiểm toán cho một Load Pattern cụ thể
+        /// Ch?y ki?m to�n cho m?t Load Pattern c? th?
         /// REFACTORED: Uses injected ISapLoadReader for data access
         /// 
         /// ARCHITECTURE:
@@ -132,8 +132,8 @@ namespace DTS_Engine.Core.Engines
         /// - Presentation: GenerateTextReport() (Separate method)
         /// 
         /// PERFORMANCE:
-        /// - LoadReader đã cache ModelInventory → Không build lại
-        /// - Geometry cache tái sử dụng cho nhiều patterns
+        /// - LoadReader d� cache ModelInventory ? Kh�ng build l?i
+        /// - Geometry cache t�i s? d?ng cho nhi?u patterns
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
@@ -157,7 +157,7 @@ namespace DTS_Engine.Core.Engines
             }
 
             // --- CRITICAL v4.4: PROCESS DATA FIRST (Create Report Entries) ---
-            // Nhóm theo tầng và xử lý chi tiết (bao gồm cả NTS Union cho Area)
+            // Nh�m theo t?ng v� x? l� chi ti?t (bao g?m c? NTS Union cho Area)
             var storyBuckets = GroupLoadsByStory(allLoads);
             foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
@@ -178,7 +178,7 @@ namespace DTS_Engine.Core.Engines
             {
                 foreach (var loadType in story.LoadTypes)
                 {
-                    // Cộng dồn vector components từ các nhóm tải đã xử lý
+                    // C?ng d?n vector components t? c�c nh�m t?i d� x? l�
                     // SubTotalFx/Fy/Fz already calculated from AuditEntry.ForceX/Y/Z
                     aggFx += loadType.SubTotalFx;
                     aggFy += loadType.SubTotalFy;
@@ -186,12 +186,12 @@ namespace DTS_Engine.Core.Engines
                 }
             }
 
-            // Gán kết quả vào Report Header
+            // G�n k?t qu? v�o Report Header
             report.CalculatedFx = aggFx;
             report.CalculatedFy = aggFy;
             report.CalculatedFz = aggFz;
 
-            // Base Reaction = 0 (Check thủ công hoặc đọc từ SAP nếu cần)
+            // Base Reaction = 0 (Check th? c�ng ho?c d?c t? SAP n?u c?n)
             report.SapBaseReaction = 0;
             report.IsAnalyzed = false;
 
@@ -199,7 +199,7 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Helper: Lấy geometry của Area (với cache) - FIX case-insensitive
+        /// Helper: L?y geometry c?a Area (v?i cache) - FIX case-insensitive
         /// </summary>
         private SapArea GetAreaGeometry(string areaName)
         {
@@ -217,7 +217,7 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Helper: Lấy geometry của Frame (với cache) - FIX case-insensitive
+        /// Helper: L?y geometry c?a Frame (v?i cache) - FIX case-insensitive
         /// </summary>
         private SapFrame GetFrameGeometry(string frameName)
         {
@@ -247,9 +247,9 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Nhóm tải theo tầng (Story) dựa trên cao độ Z của phần tử.
+        /// Nh�m t?i theo t?ng (Story) d?a tr�n cao d? Z c?a ph?n t?.
         /// FIX BUG #3 v4.1: Handle negative elevations (basement levels) correctly
-        /// FIXED: Unified rule - element Z >= story elevation → belongs to that story
+        /// FIXED: Unified rule - element Z >= story elevation ? belongs to that story
         /// </summary>
         private List<TempStoryBucket> GroupLoadsByStory(List<RawSapLoad> loads)
         {
@@ -323,7 +323,7 @@ namespace DTS_Engine.Core.Engines
                 Elevation = elevation
             };
 
-            // Gom nhóm theo loại tải (Area, Frame, Point)
+            // Gom nh�m theo lo?i t?i (Area, Frame, Point)
             var loadTypeGroups = loads.GroupBy(l => l.LoadType);
 
             foreach (var typeGroup in loadTypeGroups)
@@ -345,25 +345,45 @@ namespace DTS_Engine.Core.Engines
                 ValueGroups = new List<AuditValueGroup>()
             };
 
-            var valueGroups = loads.GroupBy(l => new { Val = Math.Round(l.Value1, 3), Dir = l.Direction });
+            // NEW v4.5: STAGE 2 SMART GROUPING
+            // Step 1: Group by Location (PreCalculatedGridLoc)
+            // Step 2: Within each location, group by VectorKey + Value
+            
+            var locationGroups = loads.GroupBy(l => l.PreCalculatedGridLoc ?? "Unknown");
 
-            foreach (var group in valueGroups.OrderByDescending(g => g.Key.Val))
+            foreach (var locGroup in locationGroups.OrderBy(g => g.Key))
             {
-                double val = group.Key.Val;
-                string dir = group.Key.Dir;
-                var subLoads = group.ToList();
+                string location = locGroup.Key;
 
-                if (loadType.Contains("Area"))
+                // Step 2: Within same location, group by Vector + Value
+                var vectorValueGroups = locGroup.GroupBy(l => new 
+                { 
+                    Val = Math.Round(l.Value1, 3), 
+                    VectorKey = l.VectorKey ?? "Unknown"
+                });
+
+                foreach (var vvGroup in vectorValueGroups.OrderByDescending(g => Math.Abs(g.Key.Val)))
                 {
-                    ProcessAreaLoads(subLoads, val, dir, typeGroup.Entries);
-                }
-                else if (loadType.Contains("Frame"))
-                {
-                    ProcessFrameLoads(subLoads, val, dir, typeGroup.Entries);
-                }
-                else
-                {
-                    ProcessPointLoads(subLoads, val, dir, typeGroup.Entries);
+                    double val = vvGroup.Key.Val;
+                    string vectorKey = vvGroup.Key.VectorKey;
+                    var subLoads = vvGroup.ToList();
+
+                    // Get direction from first load (all in same vector group)
+                    string dir = subLoads.First().Direction ?? "Unknown";
+
+                    // STAGE 3: Geometry Analysis (NTS Processing)
+                    if (loadType.Contains("Area"))
+                    {
+                        ProcessAreaLoadsGroup(subLoads, val, dir, location, typeGroup.Entries);
+                    }
+                    else if (loadType.Contains("Frame"))
+                    {
+                        ProcessFrameLoadsGroup(subLoads, val, dir, location, typeGroup.Entries);
+                    }
+                    else
+                    {
+                        ProcessPointLoadsGroup(subLoads, val, dir, location, typeGroup.Entries);
+                    }
                 }
             }
 
@@ -378,7 +398,7 @@ namespace DTS_Engine.Core.Engines
             return typeGroup;
         }
 
-        // --- XỬ LÝ TẢI DIỆN TÍCH (AREA - SMART GEOMETRY RECOGNITION & DECOMPOSITION) ---
+        // --- X? L� T?I DI?N T�CH (AREA - SMART GEOMETRY RECOGNITION & DECOMPOSITION) ---
         /// <summary>
         /// Process area loads with vector-aware force calculation
         /// CRITICAL v4.4: ForceX/Y/Z calculated with CORRECT SIGN from loadVal (already signed from SAP)
@@ -393,12 +413,23 @@ namespace DTS_Engine.Core.Engines
         /// - AuditEntry.ForceX/Y/Z have correct signs for summation
         /// - Report displays these values directly (no conversion)
         /// </summary>
-        private void ProcessAreaLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
+
+        // --- NEW v4.5: Process area loads group (same location + same vector)
+        /// STAGE 3: Geometry Analysis - NTS processing for shape decomposition
+        /// 
+        /// KEY CHANGES:
+        /// - location parameter is PRE-CALCULATED (from Stage 1)
+        /// - No more re-calculating grid location here
+        /// - Focus purely on Quantity (area) and Explanation (formula)
+        /// - Force calculation uses pre-calculated vector components
+        /// </summary>
+        private void ProcessAreaLoadsGroup(List<RawSapLoad> loads, double loadVal, string dir, 
+            string location, List<AuditEntry> targetList)
         {
             var validLoads = new List<RawSapLoad>();
             var geometries = new List<Geometry>();
 
-            // 1. Thu thập hình học
+            // 1. Thu th?p h�nh h?c
             foreach (var load in loads)
             {
                 if (_areaGeometryCache.TryGetValue(load.ElementName, out var area))
@@ -415,7 +446,7 @@ namespace DTS_Engine.Core.Engines
 
             if (geometries.Count == 0) return;
 
-            // 2. Thử Union (Gộp hình)
+            // 2. Th? Union (G?p h�nh)
             Geometry processedGeometry = null;
             try
             {
@@ -426,7 +457,7 @@ namespace DTS_Engine.Core.Engines
                 processedGeometry = _geometryFactory.CreateGeometryCollection(geometries.ToArray());
             }
 
-            // 3. Tạo Audit Entry từ kết quả
+            // 3. STAGE 3: Geometry Analysis - Create ONE entry per merged geometry
             for (int i = 0; i < processedGeometry.NumGeometries; i++)
             {
                 var geom = processedGeometry.GetGeometryN(i);
@@ -434,23 +465,20 @@ namespace DTS_Engine.Core.Engines
 
                 double areaM2 = geom.Area / 1.0e6;
 
-                // Smart Shape Analysis
+                // Smart Shape Analysis (Explanation ONLY)
                 var shapeResult = AnalyzeShapeStrategy(geom);
                 string formula = shapeResult.IsExact ? shapeResult.Formula : $"~{areaM2:0.00}";
 
-                // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
-                // loadVal is in kN/m² with correct sign (negative for gravity down)
+                // CRITICAL v4.5: Force calculation from PRE-CALCULATED vector components
                 double signedForce = areaM2 * loadVal;
-
-                // CRITICAL v4.4: Calculate vector components with PRESERVED SIGN
                 double fx = 0, fy = 0, fz = 0;
+
                 if (validLoads.Count > 0)
                 {
                     var sampleLoad = validLoads[0];
                     var forceVec = sampleLoad.GetForceVector();
                     if (forceVec.Length > 1e-6)
                     {
-                        // Scale vector to match signed magnitude (preserves direction AND sign)
                         forceVec = forceVec.Normalized * signedForce;
                         fx = forceVec.X;
                         fy = forceVec.Y;
@@ -458,26 +486,25 @@ namespace DTS_Engine.Core.Engines
                     }
                     else
                     {
-                        // Fallback: assume gravity (sign already in signedForce)
                         fz = signedForce;
                     }
                 }
 
-                // CRITICAL v4.4: Store signed values - these will be displayed and summed
+                // NEW v4.5: Use PRE-CALCULATED location (no re-calculation)
                 targetList.Add(new AuditEntry
                 {
-                    GridLocation = GetGridRangeDescription(geom.EnvelopeInternal),
-                    Explanation = formula,
-                    Quantity = areaM2,
-                    QuantityUnit = "m²",
-                    UnitLoad = loadVal, // Signed value from SAP
+                    GridLocation = location, // PRE-CALCULATED in Stage 1
+                    Explanation = formula,   // Geometry interpretation (Calculator)
+                    Quantity = areaM2,      // Numerical value ONLY
+                    QuantityUnit = "m�",
+                    UnitLoad = loadVal,
                     UnitLoadString = $"{loadVal:0.00}",
-                    TotalForce = signedForce, // Signed magnitude
+                    TotalForce = signedForce,
                     Direction = dir,
-                    DirectionSign = Math.Sign(signedForce), // Sign for display reference
-                    ForceX = fx, // Signed component
-                    ForceY = fy, // Signed component
-                    ForceZ = fz, // Signed component
+                    DirectionSign = Math.Sign(signedForce),
+                    ForceX = fx, // Vector components
+                    ForceY = fy,
+                    ForceZ = fz,
                     ElementList = validLoads.Select(l => l.ElementName).Distinct().ToList()
                 });
             }
@@ -497,34 +524,34 @@ namespace DTS_Engine.Core.Engines
         public static class PolygonDecomposer
         {
             /// <summary>
-            /// PHƯƠNG THỨC CHÍNH: Chạy đua giữa các thuật toán và chọn người chiến thắng.
-            /// Tiêu chí thắng: Số lượng hình chữ nhật ít nhất (Công thức ngắn nhất).
-            /// Nếu bằng nhau: Ơu tiên thuật toán tạo ra khối chính (Main Chunk) lớn nhất.
+            /// PHUONG TH?C CH�NH: Ch?y dua gi?a c�c thu?t to�n v� ch?n ngu?i chi?n th?ng.
+            /// Ti�u ch� th?ng: S? lu?ng h�nh ch? nh?t �t nh?t (C�ng th?c ng?n nh?t).
+            /// N?u b?ng nhau: Ou ti�n thu?t to�n t?o ra kh?i ch�nh (Main Chunk) l?n nh?t.
             /// </summary>
             public static List<Envelope> DecomposeOptimal(Geometry poly)
             {
                 if (poly == null || poly.IsEmpty) return new List<Envelope>();
 
-                // --- ĐỘI 1: Matrix Strategy (Tìm khối lớn nhất lặp lại) ---
+                // --- �?I 1: Matrix Strategy (T�m kh?i l?n nh?t l?p l?i) ---
                 var resMatrix = RunMatrixStrategy(poly);
 
-                // --- ĐỘI 2: Slicing Strategy (Quét trục X và Y - Dual Axis) ---
-                var resSliceX = RunSlicingStrategy(poly, isVertical: false); // Cắt ngang
-                var resSliceY = RunSlicingStrategy(poly, isVertical: true);  // Cắt dọc
+                // --- �?I 2: Slicing Strategy (Qu�t tr?c X v� Y - Dual Axis) ---
+                var resSliceX = RunSlicingStrategy(poly, isVertical: false); // C?t ngang
+                var resSliceY = RunSlicingStrategy(poly, isVertical: true);  // C?t d?c
 
-                // --- SO SÁNH & CHỌN ---
-                // Tạo danh sách các ứng viên
+                // --- SO S�NH & CH?N ---
+                // T?o danh s�ch c�c ?ng vi�n
                 var candidates = new List<List<Envelope>> { resMatrix, resSliceX, resSliceY };
 
-                // 1. Lọc lấy những phương án có ít hình nhất (Complexity thấp nhất)
+                // 1. L?c l?y nh?ng phuong �n c� �t h�nh nh?t (Complexity th?p nh?t)
                 int minCount = candidates.Min(c => c.Count);
                 var bestCandidates = candidates.Where(c => c.Count == minCount).ToList();
 
-                // 2. Nếu chỉ có 1 ứng viên tốt nhất -> Chọn luôn
+                // 2. N?u ch? c� 1 ?ng vi�n t?t nh?t -> Ch?n lu�n
                 if (bestCandidates.Count == 1) return bestCandidates[0];
 
-                // 3. Nếu hòa nhau về số lượng -> Chọn phương án có hình chữ nhật "chủ đạo" lớn nhất
-                // (Tư duy kỹ sư: Thích nhìn thấy một con số to đùng cộng với mấy số lẻ)
+                // 3. N?u h�a nhau v? s? lu?ng -> Ch?n phuong �n c� h�nh ch? nh?t "ch? d?o" l?n nh?t
+                // (Tu duy k? su: Th�ch nh�n th?y m?t con s? to d�ng c?ng v?i m?y s? l?)
                 return bestCandidates.OrderByDescending(c => c.Max(r => r.Area)).First();
             }
 
@@ -543,7 +570,7 @@ namespace DTS_Engine.Core.Engines
                 bool[,] matrix = new bool[rows, cols];
                 var factory = poly.Factory;
 
-                // Xây dựng ma trận
+                // X�y d?ng ma tr?n
                 for (int r = 0; r < rows; r++)
                 {
                     double cy = (yUnique[r] + yUnique[r + 1]) / 2.0;
@@ -556,7 +583,7 @@ namespace DTS_Engine.Core.Engines
                 }
 
                 var result = new List<Envelope>();
-                // Clone ma trận để không làm hỏng dữ liệu nếu cần dùng lại (dù ở đây local var)
+                // Clone ma tr?n d? kh�ng l�m h?ng d? li?u n?u c?n d�ng l?i (d� ? d�y local var)
                 var workMatrix = (bool[,])matrix.Clone();
 
                 while (true)
@@ -621,13 +648,13 @@ namespace DTS_Engine.Core.Engines
                 var factory = poly.Factory;
                 var env = poly.EnvelopeInternal;
 
-                // 1. Cắt lát (Slicing)
+                // 1. C?t l�t (Slicing)
                 for (int i = 0; i < splitCoords.Count - 1; i++)
                 {
                     double c1 = splitCoords[i];
                     double c2 = splitCoords[i + 1];
 
-                    // Tạo dải cắt vô tận
+                    // T?o d?i c?t v� t?n
                     Envelope stripEnv = isVertical
                         ? new Envelope(c1, c2, env.MinY, env.MaxY)
                         : new Envelope(env.MinX, env.MaxX, c1, c2);
@@ -640,8 +667,8 @@ namespace DTS_Engine.Core.Engines
                     }
                 }
 
-                // 2. Gộp lại (Merging) theo chiều ngược lại
-                // Nếu cắt dọc (Vertical Slice) -> Gộp các cột liền kề có cùng chiều cao (Y)
+                // 2. G?p l?i (Merging) theo chi?u ngu?c l?i
+                // N?u c?t d?c (Vertical Slice) -> G?p c�c c?t li?n k? c� c�ng chi?u cao (Y)
                 return MergeStrips(strips, mergeAlongX: isVertical);
             }
 
@@ -649,10 +676,10 @@ namespace DTS_Engine.Core.Engines
             {
                 if (inputs.Count == 0) return new List<Envelope>();
 
-                // Group theo chiều cao/rộng cố định
+                // Group theo chi?u cao/r?ng c? d?nh
                 var groups = inputs.GroupBy(e => mergeAlongX
-                    ? $"{e.MinY:F3}-{e.MaxY:F3}"  // Cùng chiều cao Y -> Gộp ngang X
-                    : $"{e.MinX:F3}-{e.MaxX:F3}"); // Cùng chiều rộng X -> Gộp dọc Y
+                    ? $"{e.MinY:F3}-{e.MaxY:F3}"  // C�ng chi?u cao Y -> G?p ngang X
+                    : $"{e.MinX:F3}-{e.MaxX:F3}"); // C�ng chi?u r?ng X -> G?p d?c Y
 
                 var result = new List<Envelope>();
 
@@ -689,39 +716,39 @@ namespace DTS_Engine.Core.Engines
 
         #endregion
 
-        // --- CẬP NHẬT AnalyzeShapeStrategy: THÊM TRỌNG TÀI CHO CHIẾN LƯỢC TRỪ ---
+        // --- C?P NH?T AnalyzeShapeStrategy: TH�M TR?NG T�I CHO CHI?N LU?C TR? ---
 
         private DecompositionResult AnalyzeShapeStrategy(Geometry geom)
         {
-            // 1. Check hình cơ bản (Tuyệt đối nhanh)
+            // 1. Check h�nh co b?n (Tuy?t d?i nhanh)
             if (IsRectangle(geom))
                 return new DecompositionResult { Formula = FormatRect(geom.EnvelopeInternal), ComplexityScore = 1, IsExact = true };
 
             if (IsTriangle(geom))
-                return new DecompositionResult { Formula = $"Tam giác({FormatRect(geom.EnvelopeInternal)})", ComplexityScore = 1, IsExact = true };
+                return new DecompositionResult { Formula = $"Tam gi�c({FormatRect(geom.EnvelopeInternal)})", ComplexityScore = 1, IsExact = true };
 
-            // 2. Chạy thuật toán "Đấu thầu" cho chiến lược CỘNG (Additive)
-            // Đây là nơi Matrix vs Slicing đấu nhau
+            // 2. Ch?y thu?t to�n "�?u th?u" cho chi?n lu?c C?NG (Additive)
+            // ��y l� noi Matrix vs Slicing d?u nhau
             var optimalRects = PolygonDecomposer.DecomposeOptimal(geom);
 
-            // Sắp xếp kết quả: Hình to nhất lên đầu (Tư duy kỹ sư)
+            // S?p x?p k?t qu?: H�nh to nh?t l�n d?u (Tu duy k? su)
             optimalRects = optimalRects.OrderByDescending(r => r.Area).ToList();
 
             string addFormula = string.Join(" + ", optimalRects.Select(r => FormatRect(r)));
             int addScore = optimalRects.Count;
 
-            // 3. Chạy chiến lược TRỪ (Subtractive) nếu tiềm năng
-            // Tiêu chuẩn: Hình đặc chiếm > 60% hình bao
+            // 3. Ch?y chi?n lu?c TR? (Subtractive) n?u ti?m nang
+            // Ti�u chu?n: H�nh d?c chi?m > 60% h�nh bao
             var env = geom.EnvelopeInternal;
             if (geom.Area / env.Area > 0.6)
             {
                 var subRes = EvaluateSubtractive(geom);
 
-                // QUYẾT ĐỊNH CUỐI CÙNG:
-                // Chỉ chọn TRỪ nếu nó thực sự gọn hơn CỘNG (Score nhỏ hơn hẳn)
-                // Ví dụ: Cộng ra 5 hình, Trừ ra 2 hình -> Chọn Trừ.
-                // Nếu Cộng ra 3 hình, Trừ ra 2 hình -> Vẫn có thể chọn Cộng vì nó tường minh hơn,
-                // trừ khi Trừ là (1 BoundingBox - 1 Lỗ) rất đẹp.
+                // QUY?T �?NH CU?I C�NG:
+                // Ch? ch?n TR? n?u n� th?c s? g?n hon C?NG (Score nh? hon h?n)
+                // V� d?: C?ng ra 5 h�nh, Tr? ra 2 h�nh -> Ch?n Tr?.
+                // N?u C?ng ra 3 h�nh, Tr? ra 2 h�nh -> V?n c� th? ch?n C?ng v� n� tu?ng minh hon,
+                // tr? khi Tr? l� (1 BoundingBox - 1 L?) r?t d?p.
 
                 if (subRes.IsExact && subRes.ComplexityScore < addScore)
                 {
@@ -729,7 +756,7 @@ namespace DTS_Engine.Core.Engines
                 }
             }
 
-            // Mặc định chọn phương án CỘNG tối ưu nhất
+            // M?c d?nh ch?n phuong �n C?NG t?i uu nh?t
             return new DecompositionResult
             {
                 Formula = addFormula,
@@ -762,7 +789,7 @@ namespace DTS_Engine.Core.Engines
                 var v = voids.GetGeometryN(i);
                 if (v.Area < thresholdMm2) continue;
                 if (IsRectangle(v)) voidTerms.Add(FormatRect(v.EnvelopeInternal));
-                else if (IsTriangle(v)) voidTerms.Add($"Tam giác({FormatRect(v.EnvelopeInternal)})");
+                else if (IsTriangle(v)) voidTerms.Add($"Tam gi�c({FormatRect(v.EnvelopeInternal)})");
                 else { cleanVoids = false; break; }
             }
 
@@ -786,7 +813,7 @@ namespace DTS_Engine.Core.Engines
             };
         }
 
-        // Rectangle detection: area ≈ envelope area (within 1%)
+        // Rectangle detection: area � envelope area (within 1%)
         private bool IsRectangle(Geometry g)
         {
             var env = g.EnvelopeInternal;
@@ -805,7 +832,7 @@ namespace DTS_Engine.Core.Engines
             return $"{env.Width / 1000.0:0.##}x{env.Height / 1000.0:0.##}";
         }
 
-        // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
+        // --- X? L� T?I THANH (FRAME) - SMART GROUPING THEOREM ---
         /// <summary>
         /// Process frame loads with vector-aware force calculation
         /// CRITICAL v4.4: ForceX/Y/Z calculated with CORRECT SIGN from loadVal (already signed from SAP)
@@ -819,15 +846,25 @@ namespace DTS_Engine.Core.Engines
         /// - AuditEntry.ForceX/Y/Z have correct signs for summation
         /// - Report displays these values directly (no conversion)
         /// </summary>
-        private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
+
+        // --- X? L� T?I THANH (FRAME) - SMART GROUPING THEOREM ---
+        /// <summary>
+        /// NEW v4.5: Process frame loads group (same location + same vector)
+        /// STAGE 3: Geometry Analysis - Length calculation and segment details
+        /// 
+        /// KEY CHANGES:
+        /// - location parameter is PRE-CALCULATED (from Stage 1)
+        /// - Focus on Quantity (total length) and Explanation (segment details)
+        /// - Force calculation uses pre-calculated vector components
+        /// </summary>
+        private void ProcessFrameLoadsGroup(List<RawSapLoad> loads, double loadVal, string dir, 
+            string location, List<AuditEntry> targetList)
         {
             var frameItems = new List<FrameAuditItem>();
 
             foreach (var load in loads)
             {
                 if (!_frameGeometryCache.TryGetValue(load.ElementName, out var frame)) continue;
-
-                string primaryGrid = DeterminePrimaryGrid(frame);
 
                 double startM, endM;
                 double coveredLength = CalculateCoveredLengthMeters(load, frame, out startM, out endM);
@@ -842,7 +879,7 @@ namespace DTS_Engine.Core.Engines
                 {
                     Load = load,
                     Frame = frame,
-                    PrimaryGrid = primaryGrid,
+                    PrimaryGrid = "", // Not used anymore (location is pre-calculated)
                     Length = coveredLength,
                     StartM = startM,
                     EndM = endM
@@ -851,65 +888,56 @@ namespace DTS_Engine.Core.Engines
 
             if (frameItems.Count == 0) return;
 
-            var groups = frameItems.GroupBy(f => f.PrimaryGrid);
+            // Calculate total length (Quantity)
+            double totalLength = frameItems.Sum(f => f.Length);
 
-            foreach (var grp in groups)
+            // CRITICAL v4.5: Force calculation from PRE-CALCULATED vector
+            double signedForce = totalLength * loadVal;
+            double fx = 0, fy = 0, fz = 0;
+
+            var sampleLoad = frameItems.First().Load;
+            var forceVec = sampleLoad.GetForceVector();
+            if (forceVec.Length > 1e-6)
             {
-                string gridName = grp.Key;
-                double totalLength = grp.Sum(f => f.Length);
-
-                // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
-                double signedForce = totalLength * loadVal;
-
-                // CRITICAL v4.4: Calculate vector components with PRESERVED SIGN
-                double fx = 0, fy = 0, fz = 0;
-                var sampleLoad = grp.First().Load;
-                var forceVec = sampleLoad.GetForceVector();
-                if (forceVec.Length > 1e-6)
-                {
-                    // Scale vector to match signed magnitude
-                    forceVec = forceVec.Normalized * signedForce;
-                    fx = forceVec.X;
-                    fy = forceVec.Y;
-                    fz = forceVec.Z;
-                }
-                else
-                {
-                    // Fallback: assume gravity
-                    fz = signedForce;
-                }
-
-                string rangeDesc = DetermineCrossAxisRange(grp.ToList());
-                
-                // Build segment details for partial loads
-                var partialSegments = grp.Where(f => f.StartM > 0.01 || Math.Abs(f.EndM - f.Frame.Length2D * UnitManager.Info.LengthScaleToMeter) > 0.01)
-                    .Select(f => $"{f.Load.ElementName}_{f.StartM:0.##}to{f.EndM:0.##}")
-                    .ToList();
-
-                string explanation = partialSegments.Count > 0
-                    ? string.Join(",", partialSegments)
-                    : "";
-
-                var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
-
-                // CRITICAL v4.4: Store signed values - these will be displayed and summed
-                targetList.Add(new AuditEntry
-                {
-                    GridLocation = $"{gridName} x {rangeDesc}",
-                    Explanation = explanation,
-                    Quantity = totalLength,
-                    QuantityUnit = "m",
-                    UnitLoad = loadVal, // Signed value from SAP
-                    UnitLoadString = $"{loadVal:0.00}",
-                    TotalForce = signedForce, // Signed magnitude
-                    Direction = dir,
-                    DirectionSign = Math.Sign(signedForce), // Sign for display
-                    ForceX = fx, // Signed component
-                    ForceY = fy, // Signed component
-                    ForceZ = fz, // Signed component
-                    ElementList = elementNames
-                });
+                forceVec = forceVec.Normalized * signedForce;
+                fx = forceVec.X;
+                fy = forceVec.Y;
+                fz = forceVec.Z;
             }
+            else
+            {
+                fz = signedForce;
+            }
+
+            // Build segment details (Explanation ONLY - for partial loads)
+            var partialSegments = frameItems
+                .Where(f => f.StartM > 0.01 || Math.Abs(f.EndM - f.Frame.Length2D * UnitManager.Info.LengthScaleToMeter) > 0.01)
+                .Select(f => $"{f.Load.ElementName}_{f.StartM:0.##}to{f.EndM:0.##}")
+                .ToList();
+
+            string explanation = partialSegments.Count > 0
+                ? string.Join(",", partialSegments)
+                : ""; // Empty for uniform loads
+
+            var elementNames = frameItems.Select(f => f.Load.ElementName).Distinct().ToList();
+
+            // NEW v4.5: Use PRE-CALCULATED location
+            targetList.Add(new AuditEntry
+            {
+                GridLocation = location, // PRE-CALCULATED in Stage 1
+                Explanation = explanation, // Segment details (Calculator)
+                Quantity = totalLength,   // Numerical value ONLY
+                QuantityUnit = "m",
+                UnitLoad = loadVal,
+                UnitLoadString = $"{loadVal:0.00}",
+                TotalForce = signedForce,
+                Direction = dir,
+                DirectionSign = Math.Sign(signedForce),
+                ForceX = fx, // Vector components
+                ForceY = fy,
+                ForceZ = fz,
+                ElementList = elementNames
+            });
         }
 
         // Normalize covered length to meters regardless of SAP working unit
@@ -957,7 +985,7 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Xác định thanh nằm trên trục nào (Grid A, Grid 1, hoặc Diagonal)
+        /// X�c d?nh thanh n?m tr�n tr?c n�o (Grid A, Grid 1, ho?c Diagonal)
         /// FIX: Added English translation support
         /// </summary>
         private string DeterminePrimaryGrid(SapFrame frame)
@@ -989,7 +1017,7 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
-        /// Xác định phạm vi quét của nhóm dầm (VD: From Grid 1 to Grid 5)
+        /// X�c d?nh ph?m vi qu�t c?a nh�m d?m (VD: From Grid 1 to Grid 5)
         /// FIX: Added English translation support
         /// </summary>
         private string DetermineCrossAxisRange(List<FrameAuditItem> items)
@@ -1029,7 +1057,7 @@ namespace DTS_Engine.Core.Engines
             return $"{cleanStart}-{cleanEnd}";
         }
 
-        // --- XỬ LÝ TẢI ĐIỂM (POINT) - IMPROVED GROUPING ---
+        // --- X? L� T?I �I?M (POINT) - IMPROVED GROUPING ---
         /// <summary>
         /// Process point loads with vector-aware force calculation
         /// CRITICAL v4.4: ForceX/Y/Z calculated with CORRECT SIGN from loadVal (already signed from SAP)
@@ -1043,116 +1071,111 @@ namespace DTS_Engine.Core.Engines
         /// - AuditEntry.ForceX/Y/Z have correct signs for summation
         /// - Report displays these values directly (no conversion)
         /// </summary>
-        private void ProcessPointLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
-        {
-            var allPoints = SapUtils.GetAllPoints();
 
-            var pointGroups = new Dictionary<string, List<(RawSapLoad load, SapUtils.SapPoint coord)>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var load in loads)
-            {
-                var ptCoord = allPoints.FirstOrDefault(p => p.Name == load.ElementName);
-                if (ptCoord == null) continue;
-
-                string loc = GetGridLocationForPoint(ptCoord);
-
-                if (!pointGroups.ContainsKey(loc))
-                    pointGroups[loc] = new List<(RawSapLoad, SapUtils.SapPoint)>();
-
-                pointGroups[loc].Add((load, ptCoord));
-            }
-
-            var sortedGroups = pointGroups.OrderByDescending(g => g.Value.Count);
-
-            foreach (var group in sortedGroups)
-            {
-                string location = group.Key;
-                var groupLoads = group.Value;
-                int count = groupLoads.Count;
-
-                // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
-                double signedForce = count * loadVal;
-
-                // CRITICAL v4.4: Calculate vector components with PRESERVED SIGN
-                double fx = 0, fy = 0, fz = 0;
-                if (groupLoads.Count > 0)
-                {
-                    var forceVec = groupLoads[0].load.GetForceVector();
-                    if (forceVec.Length > 1e-6)
-                    {
-                        // Scale vector to match signed magnitude
-                        forceVec = forceVec.Normalized * signedForce;
-                        fx = forceVec.X;
-                        fy = forceVec.Y;
-                        fz = forceVec.Z;
-                    }
-                    else
-                    {
-                        // Fallback: assume gravity
-                        fz = signedForce;
-                    }
-                }
-
-                var sorted = SortPointsLeftToRight(groupLoads);
-                var elementNames = sorted.Select(p => p.load.ElementName).ToList();
-
-                // CRITICAL v4.4: Store signed values - these will be displayed and summed
-                targetList.Add(new AuditEntry
-                {
-                    GridLocation = location,
-                    Explanation = "",
-                    Quantity = count,
-                    QuantityUnit = "ea",
-                    UnitLoad = loadVal, // Signed value from SAP
-                    UnitLoadString = $"{loadVal:0.00}",
-                    TotalForce = signedForce, // Signed magnitude
-                    Direction = dir,
-                    DirectionSign = Math.Sign(signedForce), // Sign for display
-                    ForceX = fx, // Signed component
-                    ForceY = fy, // Signed component
-                    ForceZ = fz, // Signed component
-                    ElementList = elementNames
-                });
-            }
-        }
-
+        // --- X? L� T?I �I?M (POINT) - IMPROVED GROUPING ---
         /// <summary>
-        /// Sort points left to right along primary axis
+        /// NEW v4.5: Process point loads group (same location + same vector)
+        /// STAGE 3: Count and force calculation
+        /// 
+        /// KEY CHANGES:
+        /// - location parameter is PRE-CALCULATED (from Stage 1)
+        /// - Focus on Quantity (count) only
+        /// - No explanation needed for points (trivial)
+        /// - Force calculation uses pre-calculated vector components
         /// </summary>
-        private List<(RawSapLoad load, SapUtils.SapPoint coord)> SortPointsLeftToRight(
-            List<(RawSapLoad load, SapUtils.SapPoint coord)> points)
+        private void ProcessPointLoadsGroup(List<RawSapLoad> loads, double loadVal, string dir, 
+            string location, List<AuditEntry> targetList)
         {
-            if (points.Count <= 1) return points;
+            if (loads == null || loads.Count == 0) return;
 
-            // Determine primary axis (X or Y) based on spread
-            double xRange = points.Max(p => p.coord.X) - points.Min(p => p.coord.X);
-            double yRange = points.Max(p => p.coord.Y) - points.Min(p => p.coord.Y);
+            int count = loads.Count;
 
-            if (xRange > yRange)
+            // CRITICAL v4.5: Force calculation from PRE-CALCULATED vector
+            double signedForce = count * loadVal;
+            double fx = 0, fy = 0, fz = 0;
+
+            var sampleLoad = loads[0];
+            var forceVec = sampleLoad.GetForceVector();
+            if (forceVec.Length > 1e-6)
             {
-                // Sort by X (left to right)
-                return points.OrderBy(p => p.coord.X).ToList();
+                forceVec = forceVec.Normalized * signedForce;
+                fx = forceVec.X;
+                fy = forceVec.Y;
+                fz = forceVec.Z;
             }
             else
             {
-                // Sort by Y (bottom to top)
-                return points.OrderBy(p => p.coord.Y).ToList();
+                fz = signedForce;
             }
+
+            // Sort points left to right (visual order)
+            var allPoints = SapUtils.GetAllPoints();
+            var pointCoords = loads
+                .Select(l => new { Load = l, Coord = allPoints.FirstOrDefault(p => p.Name == l.ElementName) })
+                .Where(x => x.Coord != null)
+                .ToList();
+
+            var sorted = SortPointsLeftToRight(pointCoords);
+            var elementNames = sorted.Select(p => p.Load.ElementName).ToList();
+
+            // NEW v4.5: Use PRE-CALCULATED location
+            targetList.Add(new AuditEntry
+            {
+                GridLocation = location, // PRE-CALCULATED in Stage 1
+                Explanation = "",        // No explanation needed for points
+                Quantity = count,        // Count ONLY
+                QuantityUnit = "ea",
+                UnitLoad = loadVal,
+                UnitLoadString = $"{loadVal:0.00}",
+                TotalForce = signedForce,
+                Direction = dir,
+                DirectionSign = Math.Sign(signedForce),
+                ForceX = fx, // Vector components
+                ForceY = fy,
+                ForceZ = fz,
+                ElementList = elementNames
+            });
         }
 
+        /// <summary>
+        /// Sort points left to right along primary axis (helper for visual order)
+        /// </summary>
+        private List<T> SortPointsLeftToRight<T>(List<T> points) where T : class
+        {
+            if (points.Count <= 1) return points;
+
+            // Use reflection to get Coord property (generic helper)
+            var coordProp = typeof(T).GetProperty("Coord");
+            if (coordProp == null) return points;
+
+            var coords = points.Select(p => coordProp.GetValue(p) as SapUtils.SapPoint).ToList();
+            if (coords.Any(c => c == null)) return points;
+
+            double xRange = coords.Max(c => c.X) - coords.Min(c => c.X);
+            double yRange = coords.Max(c => c.Y) - coords.Min(c => c.Y);
+
+            if (xRange > yRange)
+            {
+                return points.OrderBy(p => (coordProp.GetValue(p) as SapUtils.SapPoint).X).ToList();
+            }
+            else
+            {
+                return points.OrderBy(p => (coordProp.GetValue(p) as SapUtils.SapPoint).Y).ToList();
+            }
+        }
         #endregion
 
         #region Smart Grid Detection Logic
 
         /// <summary>
-        /// Tạo mô tả trục dạng Range (VD: Grid 1-5 / A-B) dựa trên Bounding Box
+        /// T?o m� t? tr?c d?ng Range (VD: Grid 1-5 / A-B) d?a tr�n Bounding Box
         /// FIX: Added English translation support
         /// </summary>
         private string GetGridRangeDescription(Envelope env)
         {
-            // Tìm khoảng trục X
+            // T�m kho?ng tr?c X
             string xRange = FindAxisRange(env.MinX, env.MaxX, _xGrids);
-            // Tìm khoảng trục Y
+            // T�m kho?ng tr?c Y
             string yRange = FindAxisRange(env.MinY, env.MaxY, _yGrids);
 
             if (string.IsNullOrEmpty(xRange) && string.IsNullOrEmpty(yRange)) return "No Grid";
@@ -1162,7 +1185,7 @@ namespace DTS_Engine.Core.Engines
             return $"Grid {xRange} x {yRange}";
         }
 
-        // Cập nhật hàm tìm trục để hỗ trợ snap single point tốt hơn
+        // C?p nh?t h�m t�m tr?c d? h? tr? snap single point t?t hon
         private string FindAxisRange(double minVal, double maxVal, List<SapUtils.GridLineRecord> grids, bool isPoint = false)
         {
             if (grids == null || grids.Count == 0) return "?";
@@ -1203,8 +1226,8 @@ namespace DTS_Engine.Core.Engines
         #region Geometry Helpers
 
         /// <summary>
-        /// Cache geometry từ SAP2000 để tránh gọi API nhiều lần.
-        /// FIX: Sử dụng case-insensitive dictionary
+        /// Cache geometry t? SAP2000 d? tr�nh g?i API nhi?u l?n.
+        /// FIX: S? d?ng case-insensitive dictionary
         /// </summary>
         private void CacheGeometry()
         {
@@ -1269,7 +1292,7 @@ namespace DTS_Engine.Core.Engines
             double spanY = maxY - minY;
             double spanZ = maxZ - minZ;
 
-            // Drop the axis with smallest span → project to plane with greatest information
+            // Drop the axis with smallest span ? project to plane with greatest information
             if (spanX <= spanY && spanX <= spanZ)
             {
                 // Project to YZ
@@ -1327,9 +1350,9 @@ namespace DTS_Engine.Core.Engines
 
         private string GetLoadTypeDisplayName(string loadType)
         {
-            if (loadType.Contains("Area")) return "SÀN - AREA LOAD";
-            if (loadType.Contains("Frame")) return "DẦM/CỘT - FRAME LOAD";
-            if (loadType.Contains("Point")) return "NÚT - POINT LOAD";
+            if (loadType.Contains("Area")) return "S�N - AREA LOAD";
+            if (loadType.Contains("Frame")) return "D?M/C?T - FRAME LOAD";
+            if (loadType.Contains("Point")) return "N�T - POINT LOAD";
             return loadType.ToUpper();
         }
 
@@ -1363,11 +1386,11 @@ namespace DTS_Engine.Core.Engines
 
             // HEADER CHUNG
             sb.AppendLine("".PadRight(150, '='));
-            sb.AppendLine(isVN ? "   KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.4)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.4)");
-            sb.AppendLine($"   {(isVN ? "Dự án" : "Project")}: {report.ModelName ?? "Unknown"}");
-            sb.AppendLine($"   {(isVN ? "Tổ hợp tải" : "Load Pattern")}: {report.LoadPattern}");
-            sb.AppendLine($"   {(isVN ? "Ngày tính" : "Audit Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine($"   {(isVN ? "Đơn vị" : "Report Unit")}: {targetUnit}");
+            sb.AppendLine(isVN ? "   KI?M TO�N T?I TR?NG SAP2000 (DTS ENGINE v4.4)" : "   SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.4)");
+            sb.AppendLine($"   {(isVN ? "D? �n" : "Project")}: {report.ModelName ?? "Unknown"}");
+            sb.AppendLine($"   {(isVN ? "T? h?p t?i" : "Load Pattern")}: {report.LoadPattern}");
+            sb.AppendLine($"   {(isVN ? "Ng�y t�nh" : "Audit Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"   {(isVN ? "�on v?" : "Report Unit")}: {targetUnit}");
             sb.AppendLine("".PadRight(150, '='));
             sb.AppendLine();
 
@@ -1378,7 +1401,7 @@ namespace DTS_Engine.Core.Engines
                 double storyFy = story.LoadTypes.Sum(lt => lt.SubTotalFy) * forceFactor;
                 double storyFz = story.LoadTypes.Sum(lt => lt.SubTotalFz) * forceFactor;
 
-                sb.AppendLine($"[>] {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm [Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]");
+                sb.AppendLine($"[>] {(isVN ? "T?NG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm [Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]");
 
                 foreach (var loadType in story.LoadTypes)
                 {
@@ -1391,17 +1414,17 @@ namespace DTS_Engine.Core.Engines
 
                     sb.AppendLine($"  [{typeName}] [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]");
 
-                    // Setup cột
-                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
+                    // Setup c?t
+                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m�";
 
                     // Column Header formatting
-                    string hGrid = (isVN ? "Vị trí trục" : "Grid Location").PadRight(30);
-                    string hCalc = (isVN ? "Chi tiết" : "Calculator").PadRight(35);
+                    string hGrid = (isVN ? "V? tr� tr?c" : "Grid Location").PadRight(30);
+                    string hCalc = (isVN ? "Chi ti?t" : "Calculator").PadRight(35);
                     string hValue = $"Value({valueUnit})".PadRight(15);
                     string hUnit = $"Unit Load({targetUnit}/{valueUnit})".PadRight(20);
-                    string hDir = (isVN ? "Hướng" : "Dir").PadRight(8);
+                    string hDir = (isVN ? "Hu?ng" : "Dir").PadRight(8);
                     string hForce = $"Force({targetUnit})".PadRight(15);
-                    string hElem = (isVN ? "Phần tử" : "Elements");
+                    string hElem = (isVN ? "Ph?n t?" : "Elements");
 
                     sb.AppendLine($"    {hGrid}{hCalc}{hValue}{hUnit}{hDir}{hForce}{hElem}");
                     sb.AppendLine($"    {new string('-', 160)}");
@@ -1414,12 +1437,12 @@ namespace DTS_Engine.Core.Engines
                     }
                     sb.AppendLine();
                 }
-                sb.AppendLine(); // Dòng trống giữa các tầng
+                sb.AppendLine(); // D�ng tr?ng gi?a c�c t?ng
             }
 
             // ====================================================================================
             // CRITICAL v4.4: SUMMARY CALCULATION FROM PROCESSED DATA ONLY
-            // Calculate Visual Sums from Processed Data (report.Stories → LoadTypes → SubTotalFx/Fy/Fz)
+            // Calculate Visual Sums from Processed Data (report.Stories ? LoadTypes ? SubTotalFx/Fy/Fz)
             // This ensures: Summary = Sum of all displayed force values (100% consistency)
             // ====================================================================================
 
@@ -1438,7 +1461,7 @@ namespace DTS_Engine.Core.Engines
 
             // 4. Print Summary
             sb.AppendLine("".PadRight(150, '='));
-            sb.AppendLine(isVN ? "TỔNG HỢP LỰC (TÍNH TỪ BÁO CÁO):" : "AUDIT SUMMARY (CALCULATED FROM REPORT ROWS):");
+            sb.AppendLine(isVN ? "T?NG H?P L?C (T�NH T? B�O C�O):" : "AUDIT SUMMARY (CALCULATED FROM REPORT ROWS):");
             sb.AppendLine();
             sb.AppendLine($"   Fx (Global): {displayFx:0.00} {targetUnit}");
             sb.AppendLine($"   Fy (Global): {displayFy:0.00} {targetUnit}");
@@ -1453,8 +1476,8 @@ namespace DTS_Engine.Core.Engines
                 double diffPercent = (sapReaction > 0) ? (diff / sapReaction) * 100.0 : 0;
 
                 sb.AppendLine();
-                sb.AppendLine($"   {(isVN ? "Phản lực SAP" : "SAP Reaction")}: {sapReaction:0.00} {targetUnit}");
-                sb.AppendLine($"   {(isVN ? "Sai số" : "Difference")}: {diff:0.00} {targetUnit} ({diffPercent:0.00}%)");
+                sb.AppendLine($"   {(isVN ? "Ph?n l?c SAP" : "SAP Reaction")}: {sapReaction:0.00} {targetUnit}");
+                sb.AppendLine($"   {(isVN ? "Sai s?" : "Difference")}: {diff:0.00} {targetUnit} ({diffPercent:0.00}%)");
             }
 
             sb.AppendLine();
@@ -1474,7 +1497,7 @@ namespace DTS_Engine.Core.Engines
         /// </summary>
         private void FormatDataRow(StringBuilder sb, AuditEntry entry, double forceFactor, string targetUnit)
         {
-            // Column widths (khớp với header ở trên)
+            // Column widths (kh?p v?i header ? tr�n)
             const int gridWidth = 30;
             const int calcWidth = 35;
             const int valueWidth = 15;
@@ -1488,10 +1511,10 @@ namespace DTS_Engine.Core.Engines
             // 2. Calculator
             string calc = TruncateString(entry.Explanation ?? "", calcWidth - 2).PadRight(calcWidth);
 
-            // 3. Value (Quantity) - Giữ 2 số thập phân chuẩn
+            // 3. Value (Quantity) - Gi? 2 s? th?p ph�n chu?n
             string value = $"{entry.Quantity:0.00}".PadRight(valueWidth);
 
-            // 4. Unit Load (Giá trị hiển thị) - Apply unit conversion
+            // 4. Unit Load (Gi� tr? hi?n th?) - Apply unit conversion
             double displayUnitLoad = entry.UnitLoad * forceFactor;
             string unitLoad = $"{displayUnitLoad:0.00}".PadRight(unitWidth);
 
@@ -1522,7 +1545,7 @@ namespace DTS_Engine.Core.Engines
             sb.AppendLine($"    {grid}{calc}{value}{unitLoad}{dir}{force}{elements}");
         }
 
-        // Helper cắt chuỗi an toàn
+        // Helper c?t chu?i an to�n
         private string TruncateString(string val, int maxLen)
         {
             if (string.IsNullOrEmpty(val)) return "";
