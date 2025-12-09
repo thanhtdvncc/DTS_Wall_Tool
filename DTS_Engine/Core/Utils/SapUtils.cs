@@ -1694,7 +1694,17 @@ namespace DTS_Engine.Core.Utils
                     if (fullGeometry)
                     {
                         // BUG FIX: Calculate Area explicitly
-                        area.Area = SapArea.CalculatePolygonArea(area.BoundaryPoints);
+                        area = new SapArea
+                        {
+                            Name = areaName,
+                            BoundaryPoints = new List<Point2D>(area.BoundaryPoints),
+                            ZValues = new List<double>(area.ZValues),
+                            JointNames = new List<string>(area.JointNames),
+                            AreaType = area.AreaType,
+                            Section = area.Section,
+                            Story = area.Story
+                            // Area property will be calculated by the getter
+                        };
                         results.Add(area);
                     }
 				}
