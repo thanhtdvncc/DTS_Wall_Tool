@@ -144,11 +144,25 @@ namespace DTS_Engine.Core.Engines
 
             // --- PROCESS DATA ---
             var storyBuckets = GroupLoadsByStory(allLoads);
+            Log($"[AUDIT-START] Identified {storyBuckets.Count} potential stories.");
+            
             foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
             {
+                if (bucket.Loads.Count == 0) continue;
+                
+                Log($"[AUDIT-PROC] Processing Story {bucket.StoryName} with {bucket.Loads.Count} loads...");
+                
                 var storyGroup = ProcessStory(bucket.StoryName, bucket.Elevation, bucket.Loads);
-                if (storyGroup.LoadTypes.Count > 0)
+                
+                if (storyGroup != null && storyGroup.LoadTypes.Count > 0)
+                {
                     report.Stories.Add(storyGroup);
+                    Log($"[AUDIT-ADD] Story {bucket.StoryName} added to report.");
+                }
+                else
+                {
+                     Log($"[AUDIT-WARN] Story {bucket.StoryName} processed but result empty/null.");
+                }
             }
 
             // --- CALCULATE SUMMARY ---
@@ -304,8 +318,11 @@ namespace DTS_Engine.Core.Engines
                 var typeResult = ProcessLoadType(typeGroup.Key, typeGroup.ToList());
                 if (typeResult.Entries != null && typeResult.Entries.Count > 0)
                     storyGroup.LoadTypes.Add(typeResult);
+                else
+                    Log($"   [STORY-SKIP] Type {typeGroup.Key} in {storyName} produced 0 entries.");
             }
 
+            Log($"   [STORY-DONE] {storyName}: {storyGroup.LoadTypes.Count} load types, {storyGroup.LoadTypes.Sum(t => t.Entries.Count)} total entries.");
             return storyGroup;
         }
 
@@ -565,6 +582,40 @@ namespace DTS_Engine.Core.Engines
                 }
                 
                 Log($"     -> Group Formula: {calculatorFormula} (Area={totalArea:F2})");
+
+                // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
+                // Old logic: Derived from Element Axis (wrong for Lateral loads on Floors)
+                // New logic: Derived from Load Direction (Global X/Y/Z)
+                
+                double fx = 0, fy = 0, fz = 0;
+                string loadDir = key.LoadDir.ToUpper();
+                
+                // Case 1: Gravity (Always -Z)
+                if (loadDir.Contains("GRAVITY"))
+                {
+                    fz = -Math.Abs(totalForceSigned);
+                }
+                // Case 2: Global X/Y/Z
+                else if (loadDir.Contains("GLOBAL X"))
+                {
+                    fx = totalForceSigned;
+                }
+                else if (loadDir.Contains("GLOBAL Y"))
+                {
+                    fy = totalForceSigned;
+                }
+                else if (loadDir.Contains("GLOBAL Z"))
+                {
+                    fz = totalForceSigned;
+                }
+                // Case 3: Local 3 (Projected) -> Use Element Normal (Legacy behavior)
+                // If user specifies Local 3, it acts along the element normal.
+                else 
+                {
+                     if (key.GlobalAxis.Contains("X")) fx = totalForceSigned;
+                     else if (key.GlobalAxis.Contains("Y")) fy = totalForceSigned;
+                     else if (key.GlobalAxis.Contains("Z")) fz = totalForceSigned;
+                }
 
                 targetList.Add(new AuditEntry
                 {
@@ -1037,22 +1088,20 @@ namespace DTS_Engine.Core.Engines
                 // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
                 double signedForce = totalLength * loadVal;
 
-                // CRITICAL v4.4: Calculate vector components with PRESERVED SIGN
+                // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
                 double fx = 0, fy = 0, fz = 0;
-                var sampleLoad = grp.First().Load;
-                var forceVec = sampleLoad.GetForceVector();
-                if (forceVec.Length > 1e-6)
-                {
-                    // Scale vector to match signed magnitude
-                    forceVec = forceVec.Normalized * signedForce;
-                    fx = forceVec.X;
-                    fy = forceVec.Y;
-                    fz = forceVec.Z;
-                }
+                string loadDir = dir.ToUpper();
+                
+                if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(signedForce);
+                else if (loadDir.Contains("GLOBAL X")) fx = signedForce;
+                else if (loadDir.Contains("GLOBAL Y")) fy = signedForce;
+                else if (loadDir.Contains("GLOBAL Z")) fz = signedForce;
                 else
                 {
-                    // Fallback: assume gravity
-                    fz = signedForce;
+                    // Fallback to legacy parsing if "Global" is not explicit
+                    if (dir.Contains("X")) fx = signedForce;
+                    else if (dir.Contains("Y")) fy = signedForce;
+                    else if (dir.Contains("Z")) fz = signedForce;
                 }
 
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
@@ -1256,19 +1305,21 @@ namespace DTS_Engine.Core.Engines
                 // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
                 double signedForce = count * loadVal;
 
-                // CRITICAL v4.4: Calculate vector components with PRESERVED SIGN
+                // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
                 double fx = 0, fy = 0, fz = 0;
-                if (groupLoads.Count > 0)
+                string loadDir = dir.ToUpper();
+                
+                if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(signedForce);
+                else if (loadDir.Contains("GLOBAL X")) fx = signedForce;
+                else if (loadDir.Contains("GLOBAL Y")) fy = signedForce;
+                else if (loadDir.Contains("GLOBAL Z")) fz = signedForce;
+                else
                 {
-                    var forceVec = groupLoads[0].load.GetForceVector();
-                    if (forceVec.Length > 1e-6)
-                    {
-                        // Scale vector to match signed magnitude
-                        forceVec = forceVec.Normalized * signedForce;
-                        fx = forceVec.X;
-                        fy = forceVec.Y;
-                        fz = forceVec.Z;
-                    }
+                    // Fallback using raw string check
+                    if (dir.Contains("X")) fx = signedForce;
+                    else if (dir.Contains("Y")) fy = signedForce;
+                    else if (dir.Contains("Z")) fz = signedForce;
+                }
                     else
                     {
                         // Fallback: assume gravity
