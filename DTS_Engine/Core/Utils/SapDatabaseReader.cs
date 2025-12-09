@@ -370,9 +370,9 @@ namespace DTS_Engine.Core.Utils
 				var info = _inventory.GetElement(elementName);
 				if (info != null)
 				{
-					// FIX BUG #3: Use GetStoryElevation() which returns MinZ for columns
-					return info.GetStoryElevation();
-				}
+                    // FIX BUG #3: Use GetStoryElevation() which returns MinZ for columns
+                    return info.IsVertical ? info.MinZ : info.AverageZ;
+                }
 			}
 
 			// Fallback: Get from SapUtils with correct logic
@@ -382,10 +382,7 @@ namespace DTS_Engine.Core.Utils
 				if (frame != null)
 				{
 					// For vertical elements (columns), use BOTTOM Z for story assignment
-					if (frame.IsVertical)
-						return Math.Min(frame.Z1, frame.Z2);
-					else
-						return frame.AverageZ;
+                        return frame.IsVertical ? Math.Min(frame.Z1, frame.Z2) : frame.AverageZ;
 				}
 			}
 			else if (elementType.Contains("Point"))

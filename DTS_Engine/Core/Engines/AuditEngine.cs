@@ -169,7 +169,7 @@ namespace DTS_Engine.Core.Engines
             // --- CRITICAL v4.4: CALCULATE SUMMARY FROM PROCESSED ENTRIES ONLY ---
             // Aggregate ONLY from AuditEntry.ForceX/Y/Z (processed, signed values)
             // This ensures: Report Total = Sum of displayed row Forces
-            
+
             double aggFx = 0;
             double aggFy = 0;
             double aggFz = 0;
@@ -247,26 +247,55 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
+        /// Determine Z-coordinate for story assignment.
+        /// Fixes "Story Jumping" by using MaxZ (Top) for vertical elements.
+        /// </summary>
+        private double DetermineElementStoryZ(RawSapLoad load)
+        {
+            if (load == null) return 0.0;
+
+            // 1. Try to get geometry from cache
+            if (!string.IsNullOrEmpty(load.LoadType) && load.LoadType.Contains("Area") && _areaGeometryCache.TryGetValue(load.ElementName, out var area) && area != null)
+            {
+                // Vertical Wall -> Use MaxZ (Top)
+                // Horizontal Slab -> Use AverageZ
+                if (area.ZValues != null && area.ZValues.Count > 0)
+                {
+                    double minZ = area.ZValues.Min();
+                    double maxZ = area.ZValues.Max();
+                    bool isVertical = (maxZ - minZ) > 1000.0; // Height > 1m means vertical
+
+                    return isVertical ? maxZ : area.AverageZ;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(load.LoadType) && load.LoadType.Contains("Frame") && _frameGeometryCache.TryGetValue(load.ElementName, out var frame) && frame != null)
+            {
+                // Column -> Use MaxZ (Top)
+                // Beam -> Use AverageZ
+                return frame.IsVertical ? Math.Max(frame.Z1, frame.Z2) : frame.AverageZ;
+            }
+
+            // 2. Fallback to raw ElementZ from reader
+            return load.ElementZ;
+        }
+
+        /// <summary>
         /// Nhóm tải theo tầng (Story) dựa trên cao độ Z của phần tử.
-        /// FIX BUG #3 v4.1: Handle negative elevations (basement levels) correctly
-        /// FIXED: Unified rule - element Z >= story elevation → belongs to that story
+        /// Uses DetermineElementStoryZ to pick top for vertical elements.
         /// </summary>
         private List<TempStoryBucket> GroupLoadsByStory(List<RawSapLoad> loads)
         {
             var stories = SapUtils.GetStories()
                 .Where(s => s.IsElevation)
-                .OrderBy(s => s.Coordinate) // FIX: Sort ascending to handle negative Z correctly
+                .OrderBy(s => s.Coordinate) // Sort ascending Z
                 .ToList();
 
             if (stories.Count == 0)
             {
-                var singleBucket = new TempStoryBucket
-                {
-                    StoryName = "All",
-                    Elevation = 0,
-                    Loads = loads.ToList()
+                return new List<TempStoryBucket> {
+                    new TempStoryBucket { StoryName = "All", Elevation = 0, Loads = loads.ToList() }
                 };
-                return new List<TempStoryBucket> { singleBucket };
             }
 
             var buckets = stories.Select(s => new TempStoryBucket
@@ -276,34 +305,48 @@ namespace DTS_Engine.Core.Engines
                 Loads = new List<RawSapLoad>()
             }).ToList();
 
-            // FIX BUG #3: Tolerance must work for negative elevations too
-            const double tolerance = 500.0; // 500mm
+            // Tolerance 500mm
+            const double tolerance = 50.0;
 
             foreach (var load in loads)
             {
                 double z = load.ElementZ;
-                bool assigned = false;
+                TempStoryBucket bestBucket = null;
+                double minDistance = double.MaxValue;
 
-                // FIXED LOGIC: Find the highest story floor that is below or at element elevation
-                // Start from top and work down to find the correct story
-                for (int i = buckets.Count - 1; i >= 0; i--)
+                // [FIX] Ưu tiên 1: Khớp chính xác (hoặc rất gần) với cao độ tầng
+                // Cột (MinZ) thường nằm chính xác trên cao độ tầng
+                foreach (var bucket in buckets)
                 {
-                    double storyElev = buckets[i].Elevation;
-
-                    // Element belongs to story if:
-                    // z >= storyElev - tolerance (element is on or above this floor)
-                    // This works for both positive and negative elevations
-                    if (z >= (storyElev - tolerance))
+                    double dist = Math.Abs(z - bucket.Elevation);
+                    if (dist < 50.0) // Dung sai 50mm cho sai số vẽ/làm tròn
                     {
-                        buckets[i].Loads.Add(load);
-                        assigned = true;
-                        break;
+                        bestBucket = bucket;
+                        break; // Tìm thấy tầng chính xác, dừng tìm kiếm
                     }
                 }
 
-                // Fallback: assign to lowest story if element is below all defined stories
-                if (!assigned && buckets.Count > 0)
+                // Ưu tiên 2: Nếu không khớp chính xác, tìm tầng gần nhất (cho các phần tử lửng)
+                if (bestBucket == null)
                 {
+                    foreach (var bucket in buckets)
+                    {
+                        double dist = Math.Abs(z - bucket.Elevation);
+                        if (dist < minDistance)
+                        {
+                            minDistance = dist;
+                            bestBucket = bucket;
+                        }
+                    }
+                }
+
+                if (bestBucket != null)
+                {
+                    bestBucket.Loads.Add(load);
+                }
+                else
+                {
+                    // Fallback an toàn (không nên xảy ra)
                     buckets[0].Loads.Add(load);
                 }
             }
@@ -617,8 +660,8 @@ namespace DTS_Engine.Core.Engines
                         QuantityUnit = "m²",
 
                         // Hiển thị tuyệt đối cho Unit Load (để người dùng dễ đọc)
-                        UnitLoad = Math.Abs(key.LoadValue),
-                        UnitLoadString = $"{Math.Abs(key.LoadValue):0.00}",
+                        UnitLoad = key.LoadValue,
+                        UnitLoadString = $"{(key.LoadValue):0.00}",
 
                         // Giá trị lực có dấu
                         TotalForce = totalMagSigned,
@@ -1144,7 +1187,7 @@ namespace DTS_Engine.Core.Engines
                 }
 
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
-                
+
                 // Build segment details for partial loads
                 var partialSegments = grp.Where(f => f.StartM > 0.01 || Math.Abs(f.EndM - f.Frame.Length2D * UnitManager.Info.LengthScaleToMeter) > 0.01)
                     .Select(f => $"{f.Load.ElementName}_{f.StartM:0.##}to{f.EndM:0.##}")
@@ -1767,7 +1810,7 @@ namespace DTS_Engine.Core.Engines
             double forceX = entry.ForceX * forceFactor;
             double forceY = entry.ForceY * forceFactor;
             double forceZ = entry.ForceZ * forceFactor;
-            
+
             // Display the primary component (largest magnitude) to match user expectation
             // For most cases, this will be ForceZ (gravity), ForceX (lateral X), or ForceY (lateral Y)
             double displayForce = 0;
