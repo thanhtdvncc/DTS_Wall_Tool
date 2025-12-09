@@ -225,6 +225,7 @@ namespace DTS_Engine.Core.Engines
             }
         }
 
+        public int Count => _elements.Count;
         public string GetStatistics() => $"Inventory: {_elements.Count} elements loaded (Direct API Vectors).";
         public void Reset() { _elements.Clear(); _isBuilt = false; }
     }

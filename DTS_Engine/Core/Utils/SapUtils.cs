@@ -1626,6 +1626,16 @@ namespace DTS_Engine.Core.Utils
 			return results;
 		}
 
+        public static int CountAreas()
+        {
+            var model = GetModel();
+            if (model == null) return -1;
+            int count = 0;
+            string[] names = null;
+            int ret = model.AreaObj.GetNameList(ref count, ref names);
+            return (ret == 0) ? count : 0;
+        }
+
 		/// <summary>
 		/// Lấy tất cả Area Geometry (boundary points)
 		/// </summary>

@@ -410,32 +410,29 @@ namespace DTS_Engine.Core.Engines
                 // Nếu Global +Y/-Y (Vách đứng Y) -> Lấy Y trung bình
                 double position = 0;
                 if (axisName.Contains("Z")) position = info.AverageZ;
-                else if (axisName.Contains("X")) position = info.AverageZ; // Tạm thời dùng Z cho vách để gom nhóm tầng, nhưng grid search cần X/Y
-                
-                // FIX: Position cho grouping phải theo đúng trục vuông góc mặt phẳng
-                // Sàn (Z normal) -> Z constant
-                // Vách (X normal) -> X constant
-                // Vách (Y normal) -> Y constant
-                
-                // Lấy từ Local 3 (Normal) của element
-                if (Math.Abs(info.LocalAxis3.Z) > 0.9) position = info.AverageZ;
-                else if (Math.Abs(info.LocalAxis3.X) > 0.9) position = (SapUtils.GetFrameGeometry(info.Name)?.StartPt.X ?? 0); 
-                // Note: Area không lưu coord center, tạm thời lấy AverageZ để gom nhóm TẦNG. 
-                // Vệc tìm Grid sẽ dùng BoundingBox của từng nhóm.
-                
-                // Để đơn giản và đúng logic tầng: Group Position luôn là Elevation (Z), trừ khi muốn gom tường cùng trục.
-                // Ở đây ta muốn gom: Cùng Tầng -> Cùng Loại Tải -> Cùng Mặt Phẳng.
-                
-                // Logic cũ dùng "Position" là coordinate của Plane.
-                // Logic mới: Dùng Global +Z thì Position là Z. Dùng Global X thì Position là X.
-                // Cần lấy tọa độ X, Y chuẩn của Area.
-                // Trong Inventory có MinZ/MaxZ/AverageZ. Chưa có CenterX/CenterY.
-                // Tuy nhiên, việc tính toán Grouping quá chi tiết có thể làm nát báo cáo.
-                // Ta sẽ gom theo AxisName và LoadValue, còn vị trí hình học sẽ Union.
-
-                // Để tương thích logic cũ, ta sẽ cố gắng lấy Position đại diện
                 if (axisName.Contains("Z")) position = info.AverageZ;
-                else position = 0; // Vách đứng sẽ gom hết vào 1 nhóm nếu cùng trục, sau đó Union sẽ tách rời nếu quá xa.
+                else if (axisName.Contains("X") || axisName.Contains("Y"))
+                {
+                     // Với vách đứng, lấy tọa độ không đổi (Coordinate of the plane)
+                     // Ví dụ: Vách trục X (Normal // X) -> X = const.
+                     // Ví dụ: Vách trục Y (Normal // Y) -> Y = const.
+                     
+                     if (info.AreaGeometry != null && info.AreaGeometry.BoundaryPoints.Count > 0)
+                     {
+                         if (axisName.Contains("X")) position = info.AreaGeometry.BoundaryPoints.Average(p => p.X);
+                         else position = info.AreaGeometry.BoundaryPoints.Average(p => p.Y);
+                     }
+                     else
+                     {
+                         // Fallback internal
+                         if (axisName.Contains("X")) position = info.AverageZ; // Should not happen for vertical wall? But if geometry missing...
+                         else position = info.AverageZ;
+                     }
+                }
+                else position = info.AverageZ; // Default
+
+                // Rounding for better grouping
+                position = Math.Round(position, 3);
 
                 var key = new AreaGroupingKey
                 {

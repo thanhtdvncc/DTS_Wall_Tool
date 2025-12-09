@@ -170,6 +170,16 @@ namespace DTS_Engine.Commands
                 var inventory = new ModelInventory();
                 inventory.Build();
                 WriteMessage($"   {inventory.GetStatistics()}");
+                
+                // VALIDATION: Check if inventory is empty
+                if (inventory.Count == 0 && SapUtils.CountFrames() + SapUtils.CountAreas() > 0)
+                {
+                     WriteError("Model Inventory is empty! Cannot proceed with Audit.");
+                     WriteMessage("   [TROUBLESHOOTING]:");
+                     WriteMessage("   - Check if SAP2000 model is unlocked or has geometry tables available.");
+                     WriteMessage("   - Verify 'Joint Coordinates', 'Connectivity - Frame', 'Connectivity - Area' tables.");
+                     return;
+                }
 
                 // STEP 3: Initialize Load Reader (Data Access Layer)
                 WriteMessage("   [2/3] Initializing Load Reader...");
