@@ -645,7 +645,7 @@ namespace DTS_Engine.Core.Engines
             }
         }
 
-        // [ADDED v4.5] Helper for grouping geometry terms
+        // [ADDED v4.5] Helper for grouping geometry terms (Converted to Meters for Report)
         private string FormatGeomGrouping(Geometry geom)
         {
             var terms = new List<string>();
@@ -653,8 +653,8 @@ namespace DTS_Engine.Core.Engines
             {
                 var g = geom.GetGeometryN(i);
                 var env = g.EnvelopeInternal;
-                // Format: 4*5
-                string term = $"{env.Width:0.##}*{env.Height:0.##}";
+                // Format: 4*5 (Converted from mm to m)
+                string term = $"{(env.Width / 1000.0):0.##}*{(env.Height / 1000.0):0.##}";
                 terms.Add(term);
             }
 
@@ -1416,7 +1416,8 @@ namespace DTS_Engine.Core.Engines
 
         private string FindAxisRange(double minVal, double maxVal, List<SapUtils.GridLineRecord> grids, bool isPoint = false)
         {
-            if (grids == null || grids.Count == 0) return $"(~{minVal:0}..{maxVal:0})";
+            // [DEBUG] Add count to diagnose why it thinks grids are missing
+            if (grids == null || grids.Count == 0) return $"(~{minVal:0}..{maxVal:0})[cnt={grids?.Count ?? -1}]";
 
             // Find nearest start grid
             var startGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - minVal)).First();
