@@ -31,7 +31,7 @@ namespace DTS_Engine.Core.Engines
 
         private const double STORY_TOLERANCE = 200.0; // mm
         private const double GRID_SNAP_TOLERANCE = 250.0; // mm (increased slightly for better snapping)
-        private const double MIN_AREA_THRESHOLD_M2 = 0.05;
+        private const double MIN_AREA_THRESHOLD_M2 = 0.0001;
 
         // Cache grids tách biệt X và Y để tìm kiếm nhanh
         private List<SapUtils.GridLineRecord> _xGrids;
@@ -416,8 +416,12 @@ namespace DTS_Engine.Core.Engines
             }
         }
 
+        private const double MIN_AREA_THRESHOLD_M2 = 0.0001; // Lowered to 1cm2
+
         private void ProcessAreaLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
+            Log($"[ProcessAreaLoads v4.6] Processing {loads.Count} loads. Threshold={MIN_AREA_THRESHOLD_M2}, Val={loadVal}");
+
             // BƯỚC 1: GOM NHÓM CHI TIẾT (Dựa trên Global Axis đã tính sẵn)
             var groups = new Dictionary<AreaGroupingKey, List<string>>(); // Key -> List<ElementName>
             var groupAreas = new Dictionary<AreaGroupingKey, double>();   // Key -> Total Area
@@ -440,6 +444,10 @@ namespace DTS_Engine.Core.Engines
                 string axisName = info.GlobalAxisName;
                 int sign = info.DirectionSign;
                 
+                // Logging Area
+                double areaM2 = info.Area / 1_000_000.0;
+                // Log($"   > El={load.ElementName} Axis={axisName} Area={info.Area}mm2 ({areaM2:F6}m2)");
+
                 Log($"   > Processing {load.ElementName}: Axis={axisName}, Sign={sign}, LoadVal={load.Value1}");
 
                 // 2. Xác định Position (Coordinate của mặt phẳng)
@@ -484,8 +492,10 @@ namespace DTS_Engine.Core.Engines
                 }
 
                 groups[key].Add(load.ElementName);
-                groupAreas[key] += info.Area / 1_000_000.0; // mm2 -> m2
+                groupAreas[key] += areaM2;
             }
+
+            Log($"[ProcessAreaLoads] Created {groups.Count} groups from {loads.Count} loads.");
 
             // BƯỚC 2: TẠO ENTRY BÁO CÁO
             foreach (var kv in groups)
@@ -493,8 +503,14 @@ namespace DTS_Engine.Core.Engines
                 var key = kv.Key;
                 var elementNames = kv.Value;
                 double totalArea = groupAreas[key];
+                
+                Log($"     -> Filter Check [Key={key.GlobalAxis}/{key.Position}]: TotalArea={totalArea:F6} m2");
 
-                if (totalArea < MIN_AREA_THRESHOLD_M2) continue;
+                if (totalArea < MIN_AREA_THRESHOLD_M2) 
+                {
+                     Log("        [FILTERED] Too small.");
+                     continue;
+                }
 
                 // --- FORCE CALCULATION ---
                 // Force = LoadValue * Area * DirectionSign (hướng của vector pháp tuyến)
