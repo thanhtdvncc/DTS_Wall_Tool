@@ -1691,10 +1691,12 @@ namespace DTS_Engine.Core.Utils
 						}
 					}
 
-					if (fullGeometry)
-					{
-						results.Add(area);
-					}
+                    if (fullGeometry)
+                    {
+                        // BUG FIX: Calculate Area explicitly
+                        area.Area = SapArea.CalculatePolygonArea(area.BoundaryPoints);
+                        results.Add(area);
+                    }
 				}
 			}
 			catch (Exception ex)
