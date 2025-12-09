@@ -384,11 +384,6 @@ namespace DTS_Engine.Core.Engines
         /// - AuditEntry.ForceX/Y/Z have correct signs for summation
         /// - Report displays these values directly (no conversion)
         /// </summary>
-
-        // --- [NEW STRUCT] ĐỂ NHẬN DIỆN MẶT PHẲNG ---
-        // --- [NEW LOGIC] XỬ LÝ AREA LOAD TỪ MODEL INVENTORY ---
-        
-        // --- [NEW STRUCT] KHÓA GOM NHÓM DỰA TRÊN GLOBAL AXIS ---
         private struct AreaGroupingKey : IEquatable<AreaGroupingKey>
         {
             public string GlobalAxis; // "Global +Z", "Global -X", etc.
@@ -453,13 +448,8 @@ namespace DTS_Engine.Core.Engines
                 // Nếu Global +Y/-Y (Vách đứng Y) -> Lấy Y trung bình
                 double position = 0;
                 if (axisName.Contains("Z")) position = info.AverageZ;
-                if (axisName.Contains("Z")) position = info.AverageZ;
                 else if (axisName.Contains("X") || axisName.Contains("Y"))
                 {
-                     // Với vách đứng, lấy tọa độ không đổi (Coordinate of the plane)
-                     // Ví dụ: Vách trục X (Normal // X) -> X = const.
-                     // Ví dụ: Vách trục Y (Normal // Y) -> Y = const.
-                     
                      if (info.AreaGeometry != null && info.AreaGeometry.BoundaryPoints.Count > 0)
                      {
                          if (axisName.Contains("X")) position = info.AreaGeometry.BoundaryPoints.Average(p => p.X);
@@ -468,8 +458,7 @@ namespace DTS_Engine.Core.Engines
                      else
                      {
                          // Fallback internal
-                         if (axisName.Contains("X")) position = info.AverageZ; // Should not happen for vertical wall? But if geometry missing...
-                         else position = info.AverageZ;
+                         position = info.AverageZ;
                      }
                 }
                 else position = info.AverageZ; // Default
@@ -587,9 +576,9 @@ namespace DTS_Engine.Core.Engines
                 // Old logic: Derived from Element Axis (wrong for Lateral loads on Floors)
                 // New logic: Derived from Load Direction (Global X/Y/Z)
                 
-                double fx = 0, fy = 0, fz = 0;
+                // remove redundant earlier fx/fy/fz declarations
                 string loadDir = key.LoadDir.ToUpper();
-                
+
                 // Case 1: Gravity (Always -Z)
                 if (loadDir.Contains("GRAVITY"))
                 {
@@ -615,6 +604,11 @@ namespace DTS_Engine.Core.Engines
                      if (key.GlobalAxis.Contains("X")) fx = totalForceSigned;
                      else if (key.GlobalAxis.Contains("Y")) fy = totalForceSigned;
                      else if (key.GlobalAxis.Contains("Z")) fz = totalForceSigned;
+                     else
+                     {
+                         // final fallback: assume gravity
+                         fz = totalForceSigned;
+                     }
                 }
 
                 targetList.Add(new AuditEntry
@@ -1031,19 +1025,6 @@ namespace DTS_Engine.Core.Engines
         }
 
         // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
-        /// <summary>
-        /// Process frame loads with vector-aware force calculation
-        /// CRITICAL v4.4: ForceX/Y/Z calculated with CORRECT SIGN from loadVal (already signed from SAP)
-        /// 
-        /// SIGN CONVENTION:
-        /// - loadVal already contains sign from SAP
-        /// - Force magnitude = totalLength * loadVal (preserves sign)
-        /// - Vector components = forceVector.Normalized * signedForce (preserves direction)
-        /// 
-        /// RESULT:
-        /// - AuditEntry.ForceX/Y/Z have correct signs for summation
-        /// - Report displays these values directly (no conversion)
-        /// </summary>
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             var frameItems = new List<FrameAuditItem>();
@@ -1263,19 +1244,6 @@ namespace DTS_Engine.Core.Engines
         }
 
         // --- XỬ LÝ TẢI ĐIỂM (POINT) - IMPROVED GROUPING ---
-        /// <summary>
-        /// Process point loads with vector-aware force calculation
-        /// CRITICAL v4.4: ForceX/Y/Z calculated with CORRECT SIGN from loadVal (already signed from SAP)
-        /// 
-        /// SIGN CONVENTION:
-        /// - loadVal already contains sign from SAP
-        /// - Force magnitude = count * loadVal (preserves sign)
-        /// - Vector components = forceVector.Normalized * signedForce (preserves direction)
-        /// 
-        /// RESULT:
-        /// - AuditEntry.ForceX/Y/Z have correct signs for summation
-        /// - Report displays these values directly (no conversion)
-        /// </summary>
         private void ProcessPointLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             var pointGroups = new Dictionary<string, List<(RawSapLoad load, SapUtils.SapPoint coord)>>(StringComparer.OrdinalIgnoreCase);
@@ -1309,17 +1277,28 @@ namespace DTS_Engine.Core.Engines
                 double fx = 0, fy = 0, fz = 0;
                 string loadDir = dir.ToUpper();
                 
-                if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(signedForce);
-                else if (loadDir.Contains("GLOBAL X")) fx = signedForce;
-                else if (loadDir.Contains("GLOBAL Y")) fy = signedForce;
-                else if (loadDir.Contains("GLOBAL Z")) fz = signedForce;
+                if (loadDir.Contains("GRAVITY"))
+                {
+                    fz = -Math.Abs(signedForce);
+                }
+                else if (loadDir.Contains("GLOBAL X"))
+                {
+                    fx = signedForce;
+                }
+                else if (loadDir.Contains("GLOBAL Y"))
+                {
+                    fy = signedForce;
+                }
+                else if (loadDir.Contains("GLOBAL Z"))
+                {
+                    fz = signedForce;
+                }
                 else
                 {
                     // Fallback using raw string check
                     if (dir.Contains("X")) fx = signedForce;
                     else if (dir.Contains("Y")) fy = signedForce;
                     else if (dir.Contains("Z")) fz = signedForce;
-                }
                     else
                     {
                         // Fallback: assume gravity
@@ -1386,10 +1365,6 @@ namespace DTS_Engine.Core.Engines
 
         #region Smart Grid Detection Logic
 
-        /// <summary>
-        /// Tạo mô tả trục dạng Range (VD: Grid 1-5 / A-B) dựa trên Bounding Box
-        /// FIX: Added English translation support
-        /// </summary>
         private string GetGridRangeDescription(Envelope env)
         {
             // Tìm khoảng trục X
@@ -1404,7 +1379,6 @@ namespace DTS_Engine.Core.Engines
             return $"Grid {xRange} x {yRange}";
         }
 
-        // Cập nhật hàm tìm trục để hỗ trợ snap single point tốt hơn
         private string FindAxisRange(double minVal, double maxVal, List<SapUtils.GridLineRecord> grids, bool isPoint = false)
         {
             if (grids == null || grids.Count == 0) return "?";

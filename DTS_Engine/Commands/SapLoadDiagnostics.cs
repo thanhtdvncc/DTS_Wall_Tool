@@ -411,8 +411,8 @@ namespace DTS_Engine.Commands
                 var engine = new DTS_Engine.Core.Engines.AuditEngine(loadReader, inventory);
                 
                 // ENABLE DEBUG TRACING
-                engine.DebugLogger = (msg) => WriteMessage(msg);
-                
+                engine.DebugLogger = (debugMsg) => WriteMessage(debugMsg);
+
                 WriteMessage("    Audit Engine initialized successfully.\n");
 
                 // ===============================================================
