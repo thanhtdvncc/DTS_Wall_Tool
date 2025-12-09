@@ -554,7 +554,7 @@ namespace DTS_Engine.Core.Engines
                     int localHash = 0;
                     // (Lưu ý: Logic này giả định RawSapLoad đã xử lý Vector đúng ở Reader)
                     // Ta dùng vector X, Y, Z của load làm "chữ ký" hướng
-                    localHash = (int)(load.DirectionX * 100) ^ (int)(load.DirectionY * 100) ^ (int)(load.DirectionZ * 100);
+                    localHash = (int)(load.DirectionX * 10000) ^ (int)(load.DirectionY * 10000) ^ (int)(load.DirectionZ * 10000);
 
                     // 3. Tạo Key gom nhóm
                     var key = new AreaGroupingKey
@@ -642,8 +642,11 @@ namespace DTS_Engine.Core.Engines
                     double totalFy = unitFy * areaM2;
                     double totalFz = unitFz * areaM2;
 
-                    // Tổng độ lớn đại số (để hiển thị TotalForce)
-                    double totalMagSigned = key.LoadValue * areaM2;
+                    // FIX: Tính Magnitude từ Vector Components để đảm bảo nhất quán
+                    // Thay vì dùng key.LoadValue * areaM2
+                    double magnitude = Math.Sqrt(totalFx * totalFx + totalFy * totalFy + totalFz * totalFz);
+                    // Giữ lại dấu của key.LoadValue để biết là nén hay kéo (nếu cần)
+                    double totalMagSigned = Math.Sign(key.LoadValue) * magnitude;
 
                     // --- LOCATION RESTORATION (UNPROJECT) ---
                     // Khôi phục tọa độ 3D từ Envelope 2D để tìm Grid chính xác

@@ -325,7 +325,7 @@ namespace DTS_Engine.Core.Utils
 
                 var vectors = SapUtils.GetElementVectors(elementName);
 
-                // Nếu gọi API thất bại (hiếm), mới fallback về inventory
+                // Fallback 1: Nếu gọi API thất bại (hiếm), mới fallback về inventory
                 if (!vectors.HasValue && _inventory != null)
                 {
                     var localAxisVec = _inventory.GetLocalAxis(elementName, directionCode);
@@ -352,9 +352,10 @@ namespace DTS_Engine.Core.Utils
 
             // Fallback for failed Local resolution (Should rarely happen with fixed SapUtils)
             // Log warning internally
-            System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Vector calc failed for {elementName} Dir={directionCode}.");
-			return new Vector3D(0, 0, 0);
-		}
+            // Warning: Đây là ước đoán. Tốt nhất nên log lại warning.
+            System.Diagnostics.Debug.WriteLine($"[WARN] Vector calc failed for {elementName}. Assuming Vertical/Gravity.");
+            return new Vector3D(0, 0, 1) * signedVal;
+        }
 
 		/// <summary>
 		/// FIX BUG #3: Get correct Z elevation for element
