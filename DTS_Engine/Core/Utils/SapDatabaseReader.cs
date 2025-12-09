@@ -516,6 +516,10 @@ namespace DTS_Engine.Core.Utils
 				double val = schema.GetDouble(r, colVal);
 				// CRITICAL FIX: Store magnitude WITH sign preserved
 				double magnitude = SapUtils.ConvertLoadToKnPerM2(val);
+
+                // [FILTER] Ignore zero loads
+                if (Math.Abs(magnitude) < 1e-9) continue;
+
 				string dir = schema.GetString(r, colDir) ?? "Gravity";
 				string sys = schema.GetString(r, colCoordSys) ?? "Local";
 
@@ -805,6 +809,10 @@ namespace DTS_Engine.Core.Utils
 
 						// CRITICAL FIX: Store magnitude WITH sign preserved
 						double magnitude = SapUtils.ConvertLoadToKnPerM2(valArr[i]);
+
+                        // [FILTER] Ignore zero loads
+                        if (Math.Abs(magnitude) < 1e-9) continue;
+
 							int dirCode = (dirArr != null && i < dirArr.Length) ? dirArr[i] : 10;
 							string dirStr = GetDirectionDisplayName(dirCode, name); // FIX: Pass element name
 						string csys = (csysArr != null && i < csysArr.Length) ? csysArr[i] : "Local";

@@ -575,8 +575,8 @@ namespace DTS_Engine.Core.Engines
 
                     if (combinedGeom != null)
                     {
-                        var decomp = AnalyzeShapeStrategy(combinedGeom);
-                        calculatorFormula = decomp.Formula;
+                        // [FIX v4.5]: Use grouped formula (e.g., 6*(4*5))
+                        calculatorFormula = FormatGeomGrouping(combinedGeom);
                     }
                 }
                 catch (Exception ex)
@@ -643,6 +643,26 @@ namespace DTS_Engine.Core.Engines
                     ElementList = elementNames.Distinct().ToList()
                 });
             }
+        }
+
+        // [ADDED v4.5] Helper for grouping geometry terms
+        private string FormatGeomGrouping(Geometry geom)
+        {
+            var terms = new List<string>();
+            for (int i = 0; i < geom.NumGeometries; i++)
+            {
+                var g = geom.GetGeometryN(i);
+                var env = g.EnvelopeInternal;
+                // Format: 4*5
+                string term = $"{env.Width:0.##}*{env.Height:0.##}";
+                terms.Add(term);
+            }
+
+            // Group by term
+            var groups = terms.GroupBy(t => t)
+                              .Select(g => g.Count() > 1 ? $"{g.Count()}*({g.Key})" : g.Key);
+            
+            return string.Join(" + ", groups);
         }
 
         private string GetGroupGridLocation(List<string> elements)
@@ -1396,8 +1416,9 @@ namespace DTS_Engine.Core.Engines
 
         private string FindAxisRange(double minVal, double maxVal, List<SapUtils.GridLineRecord> grids, bool isPoint = false)
         {
-            if (grids == null || grids.Count == 0) return "?";
+            if (grids == null || grids.Count == 0) return $"(~{minVal:0}..{maxVal:0})";
 
+            // Find nearest start grid
             var startGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - minVal)).First();
             double startDiff = minVal - startGrid.Coordinate;
 
@@ -1407,11 +1428,13 @@ namespace DTS_Engine.Core.Engines
                 return FormatGridWithOffset(startGrid.Name, startDiff);
             }
 
+            // Find nearest end grid
             var endGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - maxVal)).First();
             double endDiff = maxVal - endGrid.Coordinate;
 
             if (startGrid.Name == endGrid.Name) return FormatGridWithOffset(startGrid.Name, startDiff);
 
+            // [FIX v4.5] Clean range format
             return $"{FormatGridWithOffset(startGrid.Name, startDiff)}-{FormatGridWithOffset(endGrid.Name, endDiff)}";
         }
 
