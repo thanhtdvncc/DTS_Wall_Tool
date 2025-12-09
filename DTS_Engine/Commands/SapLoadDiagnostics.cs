@@ -408,118 +408,18 @@ namespace DTS_Engine.Commands
                 WriteMessage("    Load Reader initialized successfully.");
 
                 // Initialize Engine (Business Logic)
-                // Initialize Engine (Business Logic Logic)
                 var engine = new DTS_Engine.Core.Engines.AuditEngine(loadReader, inventory);
+                
+                // ENABLE DEBUG TRACING
+                engine.DebugLogger = (msg) => WriteMessage(msg);
+                
                 WriteMessage("    Audit Engine initialized successfully.\n");
 
                 // ===============================================================
-                // TEST 1: Vector-based Load Reading
+                // TEST 1: Vector-based Load Reading (Logged by Engine now)
                 // ===============================================================
-                WriteMessage("\n[STEP 2] Testing Vector-based SapDatabaseReader...");
-
-                var loads = loadReader.ReadAllLoads(pattern);
-                WriteMessage($"    Total Loads Read: {loads.Count}");
-
-                // Phân tích Vector Components
-                double sumFx = 0, sumFy = 0, sumFz = 0;
-                foreach (var load in loads)
-                {
-                    // FIX v4.1: Ensure multiplier is applied (geometry factor)
-                    double multiplier = 1.0;
-                    if (load.LoadType.Contains("Area"))
-                    {
-                        var areaInfo = inventory.GetElement(load.ElementName);
-                        if (areaInfo != null) multiplier = areaInfo.Area / 1_000_000.0; // mm² to m²
-                    }
-                    else if (load.LoadType.Contains("Frame") && !load.LoadType.Contains("Point"))
-                    {
-                        var frameInfo = inventory.GetElement(load.ElementName);
-                        if (frameInfo != null) multiplier = frameInfo.Length / 1000.0; // mm to m
-                    }
-
-                    sumFx += load.DirectionX * multiplier;
-                    sumFy += load.DirectionY * multiplier;
-                    sumFz += load.DirectionZ * multiplier;
-                }
-
-                WriteMessage($"    Force Vector Components (with multipliers):");
-                WriteMessage($"      - Fx: {sumFx:0.00} kN");
-                WriteMessage($"      - Fy: {sumFy:0.00} kN");
-                WriteMessage($"      - Fz: {sumFz:0.00} kN");
-
-                double totalMagnitude = Math.Sqrt(sumFx * sumFx + sumFy * sumFy + sumFz * sumFz);
-                WriteMessage($"      - Total Magnitude: {totalMagnitude:0.00} kN");
-
-                // ===============================================================
-                // TEST 2: Frame Distributed Loads (Trapezoidal Fix)
-                // ===============================================================
-                WriteMessage("\n[STEP 3] Checking Frame Distributed Loads...");
-                var frameDistLoads = loads.Where(l => l.LoadType == "FrameDistributed").ToList();
-                if (frameDistLoads.Count > 0)
-                {
-                    WriteMessage($"    Found {frameDistLoads.Count} Frame Distributed Loads");
-
-                    int sampleCount = Math.Min(3, frameDistLoads.Count);
-                    for (int i = 0; i < sampleCount; i++)
-                    {
-                        var load = frameDistLoads[i];
-                        WriteMessage($"    Sample {i + 1}: {load.ElementName} = {load.Value1:0.00} kN/m");
-                        WriteMessage($"              Vector: ({load.DirectionX:0.00}, {load.DirectionY:0.00}, {load.DirectionZ:0.00})");
-                    }
-                }
-                else
-                {
-                    WriteMessage("    (No Frame Distributed Loads)");
-                }
-
-                // ===============================================================
-                // TEST 3: Lateral Loads (Direction Vector Fix)
-                // ===============================================================
-                WriteMessage("\n[STEP 4] Checking Lateral Loads...");
-                var lateralLoads = loads.Where(l => l.IsLateralLoad).ToList();
-
-                if (lateralLoads.Count > 0)
-                {
-                    WriteMessage($"    Found {lateralLoads.Count} Lateral Loads:");
-
-                    double totalLateralFx = 0;
-                    double totalLateralFy = 0;
-
-                    foreach (var load in lateralLoads)
-                    {
-                        double multiplier = 1.0;
-                        var elemInfo = inventory.GetElement(load.ElementName);
-                        if (elemInfo != null && load.LoadType.Contains("Area"))
-                        {
-                            multiplier = elemInfo.Area / 1_000_000.0;
-                        }
-                        else if (elemInfo != null && load.LoadType.Contains("Frame"))
-                        {
-                            multiplier = elemInfo.Length / 1000.0;
-                        }
-
-                        totalLateralFx += Math.Abs(load.DirectionX) * multiplier;
-                        totalLateralFy += Math.Abs(load.DirectionY) * multiplier;
-                    }
-
-                    WriteMessage($"      - Total Lateral Fx: {totalLateralFx:0.00} kN");
-                    WriteMessage($"      - Total Lateral Fy: {totalLateralFy:0.00} kN");
-
-                    foreach (var load in lateralLoads.Take(3))
-                    {
-                        WriteMessage($"      Sample: {load.ElementName} ({load.LoadType})");
-                        WriteMessage($"              Vector: ({load.DirectionX:0.00}, {load.DirectionY:0.00}, {load.DirectionZ:0.00})");
-                    }
-                }
-                else
-                {
-                    WriteWarning("    (No Lateral Loads found)");
-                }
-
-                // ===============================================================
-                // TEST 4: AuditEngine with Dependency Injection
-                // ===============================================================
-                WriteMessage("\n[STEP 5] Testing AuditEngine with Injected LoadReader...");
+                WriteMessage("\n[STEP 2] Running Audit with Full Tracing...");
+                
                 var report = engine.RunSingleAudit(pattern);
 
                 WriteMessage($"    Stories Processed: {report.Stories.Count}");

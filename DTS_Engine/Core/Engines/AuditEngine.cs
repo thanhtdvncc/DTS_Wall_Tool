@@ -51,6 +51,17 @@ namespace DTS_Engine.Core.Engines
         private Dictionary<string, SapFrame> _frameGeometryCache;
         private Dictionary<string, SapArea> _areaGeometryCache;
 
+        /// <summary>
+        /// Call back để in log debug ra ngoài (Command Line).
+        /// Nếu null thì không in gì cả (Normal mode).
+        /// </summary>
+        public Action<string> DebugLogger { get; set; }
+
+        private void Log(string message)
+        {
+            DebugLogger?.Invoke(message);
+        }
+
         #endregion
 
         #region Constructor
@@ -253,6 +264,7 @@ namespace DTS_Engine.Core.Engines
                             bestBucket = bucket;
                         }
                     }
+                    Log($"   [STORY-MATCH] {load.ElementName} (Z={z}) -> Nearest Story: {bestBucket?.StoryName} (Diff={minDistance:F1})");
                 }
 
                 if (bestBucket != null)
@@ -263,8 +275,11 @@ namespace DTS_Engine.Core.Engines
                 {
                     // Fallback an toàn (không nên xảy ra)
                     buckets[0].Loads.Add(load);
+                    Log($"   [STORY-FALLBACK] {load.ElementName} (Z={z}) -> Force assigned to first bucket: {buckets[0].StoryName}");
                 }
             }
+            
+            Log($"[STORY-SUMMARY] Assigned {loads.Count} loads to {buckets.Count(b => b.Loads.Count > 0)} stories.");
 
             return buckets;
         }
@@ -398,11 +413,22 @@ namespace DTS_Engine.Core.Engines
             foreach (var load in loads)
             {
                 var info = _inventory.GetElement(load.ElementName);
-                if (info == null || info.AreaGeometry == null) continue;
+                if (info == null) 
+                {
+                    Log($"   [SKIP] {load.ElementName}: Not found in Inventory.");
+                    continue;
+                }
+                if (info.AreaGeometry == null)
+                {
+                     Log($"   [SKIP] {load.ElementName}: No AreaGeometry.");
+                     continue;
+                }
 
                 // 1. Lấy thông tin trục chuẩn từ Inventory
                 string axisName = info.GlobalAxisName;
                 int sign = info.DirectionSign;
+                
+                Log($"   > Processing {load.ElementName}: Axis={axisName}, Sign={sign}, LoadVal={load.Value1}");
 
                 // 2. Xác định Position (Coordinate của mặt phẳng)
                 // Nếu Global +Z/-Z (Sàn) -> Lấy Z trung bình
@@ -442,6 +468,8 @@ namespace DTS_Engine.Core.Engines
                     LoadDir = load.Direction,
                     DirectionSign = sign
                 };
+                
+                Log($"     -> Group Key: Axis={key.GlobalAxis}, Pos={key.Position}, Val={key.LoadValue}");
 
                 if (!groups.ContainsKey(key))
                 {
@@ -535,6 +563,8 @@ namespace DTS_Engine.Core.Engines
                     // Fallback if NTS fails
                     System.Diagnostics.Debug.WriteLine($"Decomposition Error: {ex.Message}");
                 }
+                
+                Log($"     -> Group Formula: {calculatorFormula} (Area={totalArea:F2})");
 
                 targetList.Add(new AuditEntry
                 {
@@ -1037,6 +1067,8 @@ namespace DTS_Engine.Core.Engines
                     : "";
 
                 var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
+                
+                Log($"   -> Frame Group [{gridName}]: {elementNames.Count} elements, Length={totalLength:F2}m, Force={signedForce:F2}");
 
                 // Clean Direction String
                 string dirDisplay = dir.Replace("Global ", "");
@@ -1246,6 +1278,8 @@ namespace DTS_Engine.Core.Engines
 
                 var sorted = SortPointsLeftToRight(groupLoads);
                 var elementNames = sorted.Select(p => p.load.ElementName).ToList();
+
+                Log($"   -> Point Group [{location}]: {count} items, Force={signedForce:F2}");
 
                 // Clean Direction String
                 string dirDisplay = dir.Replace("Global ", "");
