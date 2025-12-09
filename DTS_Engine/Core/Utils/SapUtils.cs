@@ -998,9 +998,9 @@ namespace DTS_Engine.Core.Utils
                 // [ c3 c4 c5 ] x [L2] = [GY]
                 // [ c6 c7 c8 ]   [L3]   [GZ]
                 //
-                // Trục Local 1 (L1=1, L2=0, L3=0) => Vector Global là cột 1: (c0, c3, c6)
-                // Trục Local 2 (L1=0, L2=1, L3=0) => Vector Global là cột 2: (c1, c4, c7)
-                // Trục Local 3 (L1=0, L2=0, L3=1) => Vector Global là cột 3: (c2, c5, c8)
+                // Local 1 = (1,0,0) -> Global = (c0, c3, c6)
+                // Local 2 = (0,1,0) -> Global = (c1, c4, c7)
+                // Local 3 = (0,0,1) -> Global = (c2, c5, c8)
 
                 return new ElementVectors
                 {

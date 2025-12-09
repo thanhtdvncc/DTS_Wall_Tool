@@ -9,34 +9,26 @@ namespace DTS_Engine.Core.Engines
 {
     /// <summary>
     /// In-Memory Database lưu thông tin hình học và trục địa phương.
-    /// FIX v2.6: Tính toán Vector trực tiếp từ Geometry (Pure Geometry Approach).
+    /// [UPDATED]: Sử dụng API SAP2000 để lấy Vector trục thực tế, bỏ logic tính từ thứ tự điểm.
     /// </summary>
     public class ModelInventory
     {
         #region Data Structures
 
-        /// <summary>
-        /// Element info với thông tin cao độ chi tiết hơn
-        /// </summary>
         public class ElementInfo
         {
             public string Name { get; set; }
             public string ElementType { get; set; }
-            public Vector3D LocalAxis1 { get; set; }
-            public Vector3D LocalAxis2 { get; set; }
-            public Vector3D LocalAxis3 { get; set; } // Normal Vector
-            public double Length { get; set; } // mm
-            public double Area { get; set; }   // mm2
+            public Vector3D LocalAxis1 { get; set; } // Trục 1 (Đỏ)
+            public Vector3D LocalAxis2 { get; set; } // Trục 2 (Trắng/Xanh lá)
+            public Vector3D LocalAxis3 { get; set; } // Trục 3 (Xanh dương - Pháp tuyến)
+            public double Length { get; set; }
+            public double Area { get; set; }
             public double AverageZ { get; set; }
             public double MinZ { get; set; }
             public double MaxZ { get; set; }
             public bool IsVertical { get; set; }
-            
-            /// <summary>
-            /// Lấy cao độ phù hợp cho việc phân tầng
-            /// - Với cột/tường đứng: Dùng MinZ (chân cột)
-            /// - Với dầm/sàn ngang: Dùng AverageZ
-            /// </summary>
+
             public double GetStoryElevation()
             {
                 return IsVertical ? MinZ : AverageZ;
@@ -61,7 +53,7 @@ namespace DTS_Engine.Core.Engines
 
             BuildFrames();
             BuildPoints();
-            BuildAreasOptimized(); // Logic mới
+            BuildAreasOptimized(); // Đã cập nhật logic mới
 
             sw.Stop();
             _isBuilt = true;
@@ -73,38 +65,27 @@ namespace DTS_Engine.Core.Engines
             var frames = SapUtils.GetAllFramesGeometry();
             foreach (var f in frames)
             {
-                // Tính Vector trục dọc thanh (Local 1)
-                var vec1 = new Vector3D(f.EndPt.X - f.StartPt.X, f.EndPt.Y - f.StartPt.Y, f.Z2 - f.Z1).Normalized;
-                
-                // Giả định trục 2 & 3 cho Frame (Thường Local 2 hướng lên cho dầm)
-                Vector3D vec2, vec3;
-                bool isVertical = Math.Abs(vec1.Z) > 0.99; // Cột thẳng đứng
-                
-                if (isVertical)
-                {
-                    vec2 = new Vector3D(1, 0, 0); 
-                    vec3 = new Vector3D(0, 1, 0); 
-                }
-                else // Dầm
-                {
-                    vec2 = new Vector3D(0, 0, 1); 
-                    vec3 = vec1.Cross(vec2).Normalized; 
-                    vec2 = vec3.Cross(vec1).Normalized; 
-                }
+                // [FIX]: Luôn lấy vector từ API, không tự tính
+                var vectors = SapUtils.GetElementVectors(f.Name);
+
+                // Fallback an toàn: Nếu API lỗi, dùng trục Global mặc định (tránh crash)
+                // Tuyệt đối không tự tính Cross Product từ điểm vẽ
+                Vector3D v1 = vectors?.L1 ?? Vector3D.UnitX;
+                Vector3D v2 = vectors?.L2 ?? Vector3D.UnitY;
+                Vector3D v3 = vectors?.L3 ?? Vector3D.UnitZ;
 
                 _elements[f.Name] = new ElementInfo
                 {
                     Name = f.Name,
                     ElementType = "Frame",
-                    LocalAxis1 = vec1,
-                    LocalAxis2 = vec2,
-                    LocalAxis3 = vec3,
+                    LocalAxis1 = v1,
+                    LocalAxis2 = v2,
+                    LocalAxis3 = v3,
                     Length = f.Length2D,
                     AverageZ = f.AverageZ,
-                    // FIX BUG #3: Thêm thông tin cao độ chi tiết
                     MinZ = Math.Min(f.Z1, f.Z2),
                     MaxZ = Math.Max(f.Z1, f.Z2),
-                    IsVertical = isVertical
+                    IsVertical = f.IsVertical
                 };
             }
         }
@@ -114,13 +95,16 @@ namespace DTS_Engine.Core.Engines
             var points = SapUtils.GetAllPoints();
             foreach (var p in points)
             {
+                // Point cũng có thể bị xoay trục (Restraint/Load), cần lấy chính xác
+                var vectors = SapUtils.GetElementVectors(p.Name);
+
                 _elements[p.Name] = new ElementInfo
                 {
                     Name = p.Name,
                     ElementType = "Point",
-                    LocalAxis1 = Vector3D.UnitX,
-                    LocalAxis2 = Vector3D.UnitY,
-                    LocalAxis3 = Vector3D.UnitZ,
+                    LocalAxis1 = vectors?.L1 ?? Vector3D.UnitX,
+                    LocalAxis2 = vectors?.L2 ?? Vector3D.UnitY,
+                    LocalAxis3 = vectors?.L3 ?? Vector3D.UnitZ,
                     AverageZ = p.Z,
                     MinZ = p.Z,
                     MaxZ = p.Z,
@@ -129,47 +113,24 @@ namespace DTS_Engine.Core.Engines
             }
         }
 
-        /// <summary>
-        /// LOGIC CHUẨN SAP2000: Tính trục địa phương từ tọa độ 3 điểm đầu tiên.
-        /// </summary>
         private void BuildAreasOptimized()
         {
             var areas = SapUtils.GetAllAreasGeometry();
-            
+
             foreach (var area in areas)
             {
-                if (area.BoundaryPoints.Count < 3 || area.ZValues.Count < 3) continue;
+                // [FIX]: Xóa bỏ logic tính từ BoundaryPoints.
+                // Chỉ tin tưởng vào Matrix của SAP.
+                var vectors = SapUtils.GetElementVectors(area.Name);
 
-                // 1. Lấy tọa độ 3 điểm đầu tiên (j1, j2, j3)
-                var p1 = new Vector3D(area.BoundaryPoints[0].X, area.BoundaryPoints[0].Y, area.ZValues[0]);
-                var p2 = new Vector3D(area.BoundaryPoints[1].X, area.BoundaryPoints[1].Y, area.ZValues[1]);
-                var p3 = new Vector3D(area.BoundaryPoints[2].X, area.BoundaryPoints[2].Y, area.ZValues[2]);
+                Vector3D l1 = vectors?.L1 ?? Vector3D.UnitX;
+                Vector3D l2 = vectors?.L2 ?? Vector3D.UnitY;
+                Vector3D l3 = vectors?.L3 ?? Vector3D.UnitZ; // Pháp tuyến chuẩn xác
 
-                // 2. Tính Local 3 (Normal) = V12 x V13
-                var v12 = p2 - p1;
-                var v13 = p3 - p1;
-                var local3 = v12.Cross(v13).Normalized;
+                // Xác định hướng đứng/ngang dựa trên pháp tuyến thật (L3)
+                // L3 ~ (0,0,1) -> Sàn ngang. L3 ~ (1,0,0) hoặc (0,1,0) -> Vách đứng.
+                bool isVertical = Math.Abs(l3.Z) < 0.707;
 
-                // 3. Tính Local 1 & 2 theo quy tắc "Default Orientation"
-                Vector3D local1, local2;
-                Vector3D globalZ = new Vector3D(0, 0, 1);
-
-                // Nếu tấm nằm ngang (Local 3 song song Z)
-                if (Math.Abs(local3.X) < 1e-3 && Math.Abs(local3.Y) < 1e-3) 
-                {
-                    local2 = new Vector3D(0, 1, 0); // Local 2 = Global Y
-                    local1 = local2.Cross(local3).Normalized; // V1 = V2 x V3
-                }
-                else // Tấm nghiêng hoặc đứng
-                {
-                    // Local 1 nằm ngang => Vuông góc với Z và Local 3
-                    local1 = globalZ.Cross(local3).Normalized;
-                    // Local 2 = Local 3 x Local 1 (để tạo tam diện thuận)
-                    local2 = local3.Cross(local1).Normalized;
-                }
-
-                // Determine orientation: vertical if normal is mostly horizontal
-                bool isVertical = Math.Abs(local3.Z) < 0.5;
                 double minZ = area.ZValues.Count > 0 ? area.ZValues.Min() : area.AverageZ;
                 double maxZ = area.ZValues.Count > 0 ? area.ZValues.Max() : area.AverageZ;
 
@@ -177,9 +138,9 @@ namespace DTS_Engine.Core.Engines
                 {
                     Name = area.Name,
                     ElementType = "Area",
-                    LocalAxis1 = local1,
-                    LocalAxis2 = local2,
-                    LocalAxis3 = local3,
+                    LocalAxis1 = l1,
+                    LocalAxis2 = l2,
+                    LocalAxis3 = l3,
                     Area = area.Area,
                     AverageZ = area.AverageZ,
                     MinZ = minZ,
@@ -209,7 +170,7 @@ namespace DTS_Engine.Core.Engines
             }
         }
 
-        public string GetStatistics() => $"Inventory: {_elements.Count} elements loaded.";
+        public string GetStatistics() => $"Inventory: {_elements.Count} elements loaded (Direct API Vectors).";
         public void Reset() { _elements.Clear(); _isBuilt = false; }
     }
 }

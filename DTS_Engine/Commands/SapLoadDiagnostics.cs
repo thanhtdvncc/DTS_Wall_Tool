@@ -3,6 +3,7 @@ using Autodesk.AutoCAD.Runtime;
 using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Interfaces;
 using DTS_Engine.Core.Utils;
+using DTS_Engine.Core.Primitives;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -221,8 +222,8 @@ namespace DTS_Engine.Commands
 
                 // 1. Area Loads - Uniform
                 // Cột quan trọng: UnifLoad (KN/mm2)
-                AnalyzeSpecificTable("Area Loads - Uniform", 
-                    new[] { "Area", "LoadPat", "UnifLoad" }, 
+                AnalyzeSpecificTable("Area Loads - Uniform",
+                    new[] { "Area", "LoadPat", "UnifLoad" },
                     row => ParseAndConvert(row, "UnifLoad", isAreaLoad: true));
 
                 // 2. Area Loads - Uniform To Frame
@@ -236,7 +237,8 @@ namespace DTS_Engine.Commands
                 // Lưu ý: Code cũ có thể thiếu FOverLB, ở đây ta test đọc cả 2
                 AnalyzeSpecificTable("Frame Loads - Distributed",
                     new[] { "Frame", "LoadPat", "FOverLA", "FOverLB" },
-                    row => {
+                    row =>
+                    {
                         double v1 = ParseAndConvert(row, "FOverLA", isAreaLoad: false);
                         double v2 = ParseAndConvert(row, "FOverLB", isAreaLoad: false);
                         return (Math.Abs(v1) + Math.Abs(v2)) / 2.0; // Lấy trung bình để ước lượng độ lớn
@@ -246,11 +248,12 @@ namespace DTS_Engine.Commands
                 // Cột quan trọng: F1, F2, F3 (KN)
                 AnalyzeSpecificTable("Joint Loads - Force",
                     new[] { "Joint", "LoadPat", "F1", "F2", "F3" },
-                    row => {
+                    row =>
+                    {
                         double f1 = ParseAndConvert(row, "F1", isAreaLoad: false, isForce: true);
                         double f2 = ParseAndConvert(row, "F2", isAreaLoad: false, isForce: true);
                         double f3 = ParseAndConvert(row, "F3", isAreaLoad: false, isForce: true);
-                        return Math.Sqrt(f1*f1 + f2*f2 + f3*f3); // Tổng hợp lực
+                        return Math.Sqrt(f1 * f1 + f2 * f2 + f3 * f3); // Tổng hợp lực
                     });
             });
         }
@@ -261,7 +264,7 @@ namespace DTS_Engine.Commands
         {
             WriteMessage($"\n--- PHÂN TÍCH BẢNG: {tableName} ---");
             var model = SapUtils.GetModel();
-            
+
             // 1. Đọc Raw Table
             int tableVer = 0;
             string[] fields = null;
@@ -412,7 +415,7 @@ namespace DTS_Engine.Commands
                 // TEST 1: Vector-based Load Reading
                 // ===============================================================
                 WriteMessage("\n[STEP 2] Testing Vector-based SapDatabaseReader...");
-                
+
                 var loads = loadReader.ReadAllLoads(pattern);
                 WriteMessage($"    Total Loads Read: {loads.Count}");
 
@@ -432,7 +435,7 @@ namespace DTS_Engine.Commands
                         var frameInfo = inventory.GetElement(load.ElementName);
                         if (frameInfo != null) multiplier = frameInfo.Length / 1000.0; // mm to m
                     }
-                    
+
                     sumFx += load.DirectionX * multiplier;
                     sumFy += load.DirectionY * multiplier;
                     sumFz += load.DirectionZ * multiplier;
@@ -443,7 +446,7 @@ namespace DTS_Engine.Commands
                 WriteMessage($"      - Fy: {sumFy:0.00} kN");
                 WriteMessage($"      - Fz: {sumFz:0.00} kN");
 
-                double totalMagnitude = Math.Sqrt(sumFx*sumFx + sumFy*sumFy + sumFz*sumFz);
+                double totalMagnitude = Math.Sqrt(sumFx * sumFx + sumFy * sumFy + sumFz * sumFz);
                 WriteMessage($"      - Total Magnitude: {totalMagnitude:0.00} kN");
 
                 // ===============================================================
@@ -454,12 +457,12 @@ namespace DTS_Engine.Commands
                 if (frameDistLoads.Count > 0)
                 {
                     WriteMessage($"    Found {frameDistLoads.Count} Frame Distributed Loads");
-                    
+
                     int sampleCount = Math.Min(3, frameDistLoads.Count);
                     for (int i = 0; i < sampleCount; i++)
                     {
                         var load = frameDistLoads[i];
-                        WriteMessage($"    Sample {i+1}: {load.ElementName} = {load.Value1:0.00} kN/m");
+                        WriteMessage($"    Sample {i + 1}: {load.ElementName} = {load.Value1:0.00} kN/m");
                         WriteMessage($"              Vector: ({load.DirectionX:0.00}, {load.DirectionY:0.00}, {load.DirectionZ:0.00})");
                     }
                 }
@@ -477,10 +480,10 @@ namespace DTS_Engine.Commands
                 if (lateralLoads.Count > 0)
                 {
                     WriteMessage($"    Found {lateralLoads.Count} Lateral Loads:");
-                    
+
                     double totalLateralFx = 0;
                     double totalLateralFy = 0;
-                    
+
                     foreach (var load in lateralLoads)
                     {
                         double multiplier = 1.0;
@@ -493,11 +496,11 @@ namespace DTS_Engine.Commands
                         {
                             multiplier = elemInfo.Length / 1000.0;
                         }
-                        
+
                         totalLateralFx += Math.Abs(load.DirectionX) * multiplier;
                         totalLateralFy += Math.Abs(load.DirectionY) * multiplier;
                     }
-                    
+
                     WriteMessage($"      - Total Lateral Fx: {totalLateralFx:0.00} kN");
                     WriteMessage($"      - Total Lateral Fy: {totalLateralFy:0.00} kN");
 
@@ -524,7 +527,7 @@ namespace DTS_Engine.Commands
                 WriteMessage($"      - Fx: {report.CalculatedFx:0.00} kN");
                 WriteMessage($"      - Fy: {report.CalculatedFy:0.00} kN");
                 WriteMessage($"      - Fz: {report.CalculatedFz:0.00} kN");
-                
+
                 if (report.IsAnalyzed)
                 {
                     WriteMessage($"    SAP Base Reaction: {report.SapBaseReaction:0.00} kN");
@@ -540,7 +543,7 @@ namespace DTS_Engine.Commands
                 // ===============================================================
                 WriteMessage("\n[STEP 6] Validating Text Report Formatting...");
                 string textReport = engine.GenerateTextReport(report, "kN", "English");
-                
+
                 // Check for line width violations
                 var lines = textReport.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                 int violationCount = 0;
@@ -551,7 +554,7 @@ namespace DTS_Engine.Commands
                         violationCount++;
                     }
                 }
-                
+
                 if (violationCount > 0)
                 {
                     WriteError($"    Found {violationCount} lines exceeding 140-char width limit!");
@@ -575,7 +578,7 @@ namespace DTS_Engine.Commands
                         break;
                     }
                 }
-                
+
                 if (!foundToSeparator)
                 {
                     WriteWarning("    No element ranges found in report (may be normal if few elements)");
@@ -585,22 +588,22 @@ namespace DTS_Engine.Commands
                 // TEST 7: NEW v4.2 - Validate Force Sign Calculation
                 // ===============================================================
                 WriteMessage("\n[STEP 8] Validating v4.2 Force Sign Calculation...");
-                
+
                 var testEntries = report.Stories.SelectMany(s => s.LoadTypes).SelectMany(lt => lt.Entries).Take(5).ToList();
-                
+
                 WriteMessage($"    Testing {testEntries.Count} sample entries:");
                 foreach (var entry in testEntries)
                 {
                     double calculatedForce = entry.Quantity * entry.UnitLoad * entry.DirectionSign;
                     double storedForce = entry.TotalForce * entry.DirectionSign;
-                    
+
                     bool isConsistent = Math.Abs(calculatedForce - storedForce) < 0.01;
-                    
+
                     string status = isConsistent ? "✓" : "✗";
                     WriteMessage($"    {status} {entry.GridLocation}:");
                     WriteMessage($"       Qty={entry.Quantity:0.00} × UnitLoad={entry.UnitLoad:0.00} × Sign={entry.DirectionSign:+0;-0}");
                     WriteMessage($"       Calculated={calculatedForce:0.00}, Stored={storedForce:0.00}");
-                    
+
                     if (!isConsistent)
                     {
                         WriteError($"       MISMATCH DETECTED!");
@@ -611,27 +614,27 @@ namespace DTS_Engine.Commands
                 // TEST 8: NEW v4.2 - Validate Vector Subtotals
                 // ===============================================================
                 WriteMessage("\n[STEP 9] Validating v4.2 Vector Subtotals...");
-                
+
                 foreach (var story in report.Stories.Take(2))
                 {
                     WriteMessage($"    Story: {story.StoryName}");
-                    
+
                     foreach (var loadType in story.LoadTypes)
                     {
                         // Manual recalculation
                         double manualFx = loadType.Entries.Sum(e => e.ForceX);
                         double manualFy = loadType.Entries.Sum(e => e.ForceY);
                         double manualFz = loadType.Entries.Sum(e => e.ForceZ);
-                        
+
                         bool fxOk = Math.Abs(manualFx - loadType.SubTotalFx) < 0.01;
                         bool fyOk = Math.Abs(manualFy - loadType.SubTotalFy) < 0.01;
                         bool fzOk = Math.Abs(manualFz - loadType.SubTotalFz) < 0.01;
-                        
+
                         string status = (fxOk && fyOk && fzOk) ? "✓" : "✗";
                         WriteMessage($"    {status} {loadType.LoadTypeName}:");
                         WriteMessage($"       Stored: Fx={loadType.SubTotalFx:0.00}, Fy={loadType.SubTotalFy:0.00}, Fz={loadType.SubTotalFz:0.00}");
                         WriteMessage($"       Manual: Fx={manualFx:0.00}, Fy={manualFy:0.00}, Fz={manualFz:0.00}");
-                        
+
                         if (!fxOk || !fyOk || !fzOk)
                         {
                             WriteError($"       VECTOR SUBTOTAL MISMATCH!");
@@ -643,7 +646,7 @@ namespace DTS_Engine.Commands
                 // CONCLUSION v4.2
                 // ===============================================================
                 WriteMessage("\n=== KẾT LUẬN v4.2 ===");
-                
+
                 WriteSuccess("✓ VECTOR SYSTEM OK: Phát hiện lateral loads với vector components");
                 WriteSuccess("✓ FORCE SIGN OK: DirectionSign được áp dụng chính xác");
                 WriteSuccess("✓ VECTOR SUBTOTAL OK: LoadType subtotals tính từ vector components");
@@ -655,5 +658,62 @@ namespace DTS_Engine.Commands
                 WriteMessage("   3. Confirm full element lists in both Text and Excel outputs");
             });
         }
+        /// <summary>
+        /// DEBUG CHI TIẾT MA TRẬN & PHÉP NHÂN VECTOR
+        /// </summary>
+        [CommandMethod("DTS_DEBUG_SELECTED")]
+        public void DTS_DEBUG_SELECTED()
+        {
+            ExecuteSafe(() =>
+            {
+                if (!SapUtils.Connect(out string msg)) { WriteError(msg); return; }
+                var model = SapUtils.GetModel();
+
+                int numItems = 0;
+                int[] objTypes = null;
+                string[] objNames = null;
+                model.SelectObj.GetSelected(ref numItems, ref objTypes, ref objNames);
+
+                if (numItems == 0) { WriteWarning("Chưa chọn đối tượng nào trong SAP."); return; }
+
+                for (int i = 0; i < numItems; i++)
+                {
+                    string name = objNames[i];
+                    int type = objTypes[i];
+
+                    // Chỉ Frame(2) hoặc Area(5)
+                    if (type != 2 && type != 5) continue;
+
+                    // Lấy ma trận
+                    double[] mat = new double[9];
+                    int ret = -1;
+                    if (type == 2) ret = model.FrameObj.GetTransformationMatrix(name, ref mat, true);
+                    else ret = model.AreaObj.GetTransformationMatrix(name, ref mat, true);
+
+                    if (ret != 0) continue;
+
+                    // Tính kết quả: Cột 3 của ma trận (tương ứng Local 3 = {0,0,1})
+                    double gx = mat[2];
+                    double gy = mat[5];
+                    double gz = mat[8];
+
+                    // Xác định hướng
+                    string dirStr = "Mix";
+                    if (Math.Abs(gx) > 0.9) dirStr = gx > 0 ? "Global +X" : "Global -X";
+                    else if (Math.Abs(gy) > 0.9) dirStr = gy > 0 ? "Global +Y" : "Global -Y";
+                    else if (Math.Abs(gz) > 0.9) dirStr = gz > 0 ? "Global +Z" : "Global -Z";
+
+                    string typeName = type == 2 ? "Frame" : "Area";
+
+                    // In ra đúng format yêu cầu
+                    WriteMessage($"\n>> Element: {name} ({typeName})");
+                    WriteMessage($"   | {mat[0],5:F2} {mat[1],5:F2} {mat[2],5:F2} |   |0|   | {gx,5:F2} |");
+                    WriteMessage($"   | {mat[3],5:F2} {mat[4],5:F2} {mat[5],5:F2} | x |0| = | {gy,5:F2} |  {dirStr}");
+                    WriteMessage($"   | {mat[6],5:F2} {mat[7],5:F2} {mat[8],5:F2} |   |1|   | {gz,5:F2} |");
+                }
+                WriteMessage("\n");
+            });
+        }
+
     }
 }

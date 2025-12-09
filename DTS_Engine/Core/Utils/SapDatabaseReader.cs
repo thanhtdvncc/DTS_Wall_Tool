@@ -287,84 +287,61 @@ namespace DTS_Engine.Core.Utils
 			return GetDirectionDisplayName(directionCode, null);
 		}
 
-		/// <summary>
-		/// Calculate force vector using SAP direction codes with proper transformation matrix.
-		/// FIX BUG #2: Use GetTransformationMatrix from SAP API for accurate Local→Global conversion
-		/// ⚠️ CRITICAL: This fixes the most severe bug - incorrect force summation due to wrong vector direction
-		/// </summary>
-		private Vector3D CalculateForceVector(string elementName, double rawValue, int directionCode, string coordSys)
-		{
-			// CRITICAL: Use rawValue directly, preserve sign
-			double signedVal = rawValue;
+        /// <summary>
+        /// Calculate force vector using SAP direction codes with proper transformation matrix.
+        /// FIX BUG #2: Use GetTransformationMatrix from SAP API for accurate Local→Global conversion
+        /// ⚠️ CRITICAL: This fixes the most severe bug - incorrect force summation due to wrong vector direction
+        /// </summary>
+        private Vector3D CalculateForceVector(string elementName, double rawValue, int directionCode, string coordSys)
+        {
+            double signedVal = rawValue;
 
-			// CASE 1: GLOBAL / GRAVITY Direction (Direct mapping)
-			// 4=X, 5=Y, 6=Z, 10=Gravity(-Z), 11=GravityProj(-Z)
-			if (directionCode >= 4)
-			{
-				switch (directionCode)
-				{
-					case 4: return new Vector3D(signedVal, 0, 0); // Global X
-					case 5: return new Vector3D(0, signedVal, 0); // Global Y
-					case 6: return new Vector3D(0, 0, signedVal); // Global Z
-					case 7: return new Vector3D(signedVal, 0, 0); // X Projected
-					case 8: return new Vector3D(0, signedVal, 0); // Y Projected
-					case 9: return new Vector3D(0, 0, signedVal); // Z Projected
-					case 10:
-					case 11:
-						return new Vector3D(0, 0, -signedVal); // Gravity acts DOWN (-Z) for positive value
-					default: return new Vector3D(0, 0, -signedVal); // Default to Gravity
-				}
-			}
-
-            // CASE 2: LOCAL AXES (1, 2, 3) -> Require Transformation Matrix
-            if (directionCode >= 1 && directionCode <= 3)
+            // GLOBAL AXES (4=X, 5=Y, 6=Z, 10=Gravity...)
+            if (directionCode >= 4)
             {
-                // [THAY ĐỔI ĐỂ ĐẠT CHÍNH XÁC TUYỆT ĐỐI]
-                // Không dùng _inventory.GetLocalAxis nữa vì nó bỏ qua góc xoay Gamma.
-                // Gọi trực tiếp API GetTransformationMatrix thông qua SapUtils.
-
-                var vectors = SapUtils.GetElementVectors(elementName);
-
-                // Fallback 1: Nếu gọi API thất bại (hiếm), mới fallback về inventory
-                if (!vectors.HasValue && _inventory != null)
+                switch (directionCode)
                 {
-                    var localAxisVec = _inventory.GetLocalAxis(elementName, directionCode);
-                    if (localAxisVec.HasValue) return localAxisVec.Value * signedVal;
-                }
-
-                if (vectors.HasValue)
-                {
-                    Vector3D localAxis;
-                    switch (directionCode)
-                    {
-                        case 1: localAxis = vectors.Value.L1; break; // Đã sửa trong SapUtils
-                        case 2: localAxis = vectors.Value.L2; break; // Đã sửa trong SapUtils
-                        case 3: localAxis = vectors.Value.L3; break; // Đã sửa trong SapUtils
-                        default: localAxis = new Vector3D(0, 0, 1); break;
-                    }
-
-                    if (!localAxis.IsZero)
-                    {
-                        return localAxis * signedVal;
-                    }
+                    case 4: return new Vector3D(signedVal, 0, 0);
+                    case 5: return new Vector3D(0, signedVal, 0);
+                    case 6: return new Vector3D(0, 0, signedVal);
+                    case 10:
+                    case 11: return new Vector3D(0, 0, -signedVal); // Gravity = -Z
+                    default: return new Vector3D(0, 0, -signedVal);
                 }
             }
 
-            // Fallback for failed Local resolution (Should rarely happen with fixed SapUtils)
-            // Log warning internally
-            // Warning: Đây là ước đoán. Tốt nhất nên log lại warning.
-            System.Diagnostics.Debug.WriteLine($"[WARN] Vector calc failed for {elementName}. Assuming Vertical/Gravity.");
+            // LOCAL AXES (1, 2, 3)
+            if (directionCode >= 1 && directionCode <= 3)
+            {
+                // [FIX]: Gọi trực tiếp Utility đã sửa chuẩn Matrix
+                var vectors = SapUtils.GetElementVectors(elementName);
+
+                if (vectors.HasValue)
+                {
+                    Vector3D axisVector;
+                    switch (directionCode)
+                    {
+                        case 1: axisVector = vectors.Value.L1; break;
+                        case 2: axisVector = vectors.Value.L2; break;
+                        case 3: axisVector = vectors.Value.L3; break;
+                        default: axisVector = new Vector3D(0, 0, 1); break;
+                    }
+                    return axisVector * signedVal;
+                }
+            }
+
+            // Fallback an toàn
             return new Vector3D(0, 0, 1) * signedVal;
         }
 
-		/// <summary>
-		/// FIX BUG #3: Get correct Z elevation for element
-		/// - For BEAMS (horizontal): Use AverageZ (midpoint Z is correct)
-		/// - For COLUMNS (vertical): Use BOTTOM Z (MinZ - where column starts, this is the story it belongs to)
-		/// - For AREAS: Use AverageZ
-		/// - For POINTS: Use exact Z
-		/// </summary>
-		private double GetElementElevation(string elementName, string elementType)
+        /// <summary>
+        /// FIX BUG #3: Get correct Z elevation for element
+        /// - For BEAMS (horizontal): Use AverageZ (midpoint Z is correct)
+        /// - For COLUMNS (vertical): Use BOTTOM Z (MinZ - where column starts, this is the story it belongs to)
+        /// - For AREAS: Use AverageZ
+        /// - For POINTS: Use exact Z
+        /// </summary>
+        private double GetElementElevation(string elementName, string elementType)
 		{
 			if (_inventory != null)
 			{
