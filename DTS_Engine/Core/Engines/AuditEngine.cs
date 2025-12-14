@@ -1177,12 +1177,13 @@ namespace DTS_Engine.Core.Engines
         }
 
         // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
+        // [FIX v5.2] STRICT ROUTING: Frame là Frame, Area là Area. 
+        // Không còn auto-reroute sang Area khi thiếu geometry.
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
             Log($"[ProcessFrameLoads] Processing {loads.Count} loads. Val={loadVal}, Dir={dir}");
             
             var frameItems = new List<FrameAuditItem>();
-            var areaLoads = new List<RawSapLoad>(); // Phần tử Area bị đánh nhầm type
             int skipCount = 0;
 
             foreach (var load in loads)
@@ -1190,17 +1191,17 @@ namespace DTS_Engine.Core.Engines
                 var info = _inventory.GetElement(load.ElementName);
                 if (info == null)
                 {
-                    Log($"   [SKIP] {load.ElementName}: info=null");
+                    Log($"   [SKIP] {load.ElementName}: info=null (not in inventory)");
                     skipCount++;
                     continue;
                 }
                 
-                // FIX: Nếu element là Area mà load type là FrameDistributed 
-                // -> Đây là load tường/sàn, route sang ProcessAreaLoads
-                if (info.ElementType == "Area" || info.FrameGeometry == null)
+                // [FIX v5.2] STRICT: Nếu là Frame load nhưng không có FrameGeometry -> SKIP, KHÔNG reroute
+                // Nguyên tắc: Tải gán vào Dầm/Cột phải nằm trong bảng Dầm/Cột bất kể trạng thái hình học
+                if (info.FrameGeometry == null)
                 {
-                    Log($"   [REROUTE] {load.ElementName}: Type={info.ElementType}, routing to Area processing");
-                    areaLoads.Add(load);
+                    Log($"   [SKIP] {load.ElementName}: FrameGeometry=null (missing geometry, NOT rerouting)");
+                    skipCount++;
                     continue;
                 }
                 
@@ -1228,14 +1229,7 @@ namespace DTS_Engine.Core.Engines
                 });
             }
 
-            Log($"[ProcessFrameLoads] Valid frames: {frameItems.Count}, Rerouted to Area: {areaLoads.Count}, Skipped: {skipCount}");
-            
-            // Process rerouted Area loads
-            if (areaLoads.Count > 0)
-            {
-                Log($"[ProcessFrameLoads] Processing {areaLoads.Count} rerouted loads as Area...");
-                ProcessAreaLoads(areaLoads, loadVal, dir, targetList);
-            }
+            Log($"[ProcessFrameLoads] Valid frames: {frameItems.Count}, Skipped: {skipCount}");
             
             if (frameItems.Count == 0) return;
 
