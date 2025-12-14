@@ -116,6 +116,14 @@ namespace DTS_Engine.Core.Engines
                 Vector3D v3 = vectors?.L3 ?? Vector3D.UnitZ;
                 AnalyzeGlobalAxis(v3, out string axisName, out int sign);
 
+                if (_elements.TryGetValue(p.Name, out var existing))
+                {
+                     // [FIX v5.8 MERGE]: Element already exists (e.g. as Frame). Merge Point data.
+                     existing.PointGeometry = p;
+                     // We don't overwrite ElementType or primary vectors if it's already a Frame/Area
+                     continue;
+                }
+
                 _elements[p.Name] = new ElementInfo
                 {
                     Name = p.Name,
@@ -157,6 +165,26 @@ namespace DTS_Engine.Core.Engines
 
                 // Determine Global Axis from L3 (Normal) - Updated Logic
                 AnalyzeGlobalAxis(l3, out string axisName, out int sign);
+
+                // [FIX v5.8 MERGE]: Check if element exists (e.g. Frame or Point with same name)
+                if (_elements.TryGetValue(area.Name, out var existing))
+                {
+                    existing.AreaGeometry = area;
+                    // Only update Type/Geom if it was just a Point?
+                    // Priority: Frame > Area > Point.
+                    // If it was Frame, keep as Frame but add AreaGeom.
+                    // If it was Point, upgrade to Area?
+                    if (existing.ElementType == "Point")
+                    {
+                        existing.ElementType = "Area";
+                        existing.LocalAxis1 = l1; 
+                        existing.LocalAxis2 = l2;
+                        existing.LocalAxis3 = l3;
+                        existing.Area = area.Area; // info update...
+                        // But simplification: just set geometry is enough for AuditEngine
+                    }
+                    continue;
+                }
 
                 _elements[area.Name] = new ElementInfo
                 {

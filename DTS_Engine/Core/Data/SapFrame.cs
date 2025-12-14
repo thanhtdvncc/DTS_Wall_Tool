@@ -47,7 +47,15 @@ namespace DTS_Engine.Core.Data
         /// <summary>
         /// Chiều dài trên mặt bằng 2D
         /// </summary>
+        /// <summary>
+        /// Chiều dài trên mặt bằng 2D
+        /// </summary>
         public double Length2D => StartPt.DistanceTo(EndPt);
+
+        /// <summary>
+        /// Chiều dài thực tế 3D
+        /// </summary>
+        public double Length3D => System.Math.Sqrt(System.Math.Pow(Length2D, 2) + System.Math.Pow(Z2 - Z1, 2));
 
         /// <summary>
         /// Cao độ trung bình

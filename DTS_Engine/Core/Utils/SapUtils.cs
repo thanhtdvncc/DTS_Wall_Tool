@@ -148,6 +148,51 @@ namespace DTS_Engine.Core.Utils
 			}
 		}
 
+		/// <summary>
+		/// AUDIT CONTEXT: Force SAP to kN, mm, C units for consistent Audit calculations.
+		/// Call this at the START of Audit operations. Save the return value to restore later.
+		/// </summary>
+		/// <returns>The original unit setting (to be restored after Audit)</returns>
+		public static eUnits SetAuditUnits()
+		{
+			var originalUnit = GetSapCurrentUnit();
+			var model = GetModel();
+			if (model != null)
+			{
+				try
+				{
+					model.SetPresentUnits(eUnits.kN_mm_C);
+					System.Diagnostics.Debug.WriteLine($"[AUDIT] Units set to kN_mm_C (was {originalUnit})");
+				}
+				catch (Exception ex)
+				{
+					System.Diagnostics.Debug.WriteLine($"SetAuditUnits failed: {ex}");
+				}
+			}
+			return originalUnit;
+		}
+
+		/// <summary>
+		/// AUDIT CONTEXT: Restore SAP units to the user's original setting.
+		/// Call this in a FINALLY block after Audit operations complete.
+		/// </summary>
+		public static void RestoreUnits(eUnits originalUnit)
+		{
+			var model = GetModel();
+			if (model != null)
+			{
+				try
+				{
+					model.SetPresentUnits(originalUnit);
+					System.Diagnostics.Debug.WriteLine($"[AUDIT] Units restored to {originalUnit}");
+				}
+				catch (Exception ex)
+				{
+					System.Diagnostics.Debug.WriteLine($"RestoreUnits failed: {ex}");
+				}
+			}
+		}
+
 		public static void Disconnect()
 		{
 			_sapModel = null;
@@ -305,84 +350,12 @@ namespace DTS_Engine.Core.Utils
 			var inventory = new ModelInventory();
 			inventory.Build();
 			var reader = new SapDatabaseReader(model, inventory);
-			return reader.ReadFrameDistributedLoads(patternFilter);
+			// REFACTORED: Use ReadAllLoads (Direct API) and filter by type
+			var allLoads = reader.ReadAllLoads(patternFilter);
+			return allLoads.Where(l => l.LoadType == "FrameDistributed").ToList();
 		}
 
-		/// <summary>
-		/// LEGACY METHOD: Kept for backward compatibility.
-		/// Use GetAllFrameDistributedLoads() for better performance.
-		/// </summary>
-		[Obsolete("Use GetAllFrameDistributedLoads() instead", false)]
-		private static List<RawSapLoad> GetAllFrameDistributedLoads_Legacy(string patternFilter = null)
-		{
-			var loads = new List<RawSapLoad>();
-			var model = GetModel();
-			if (model == null) return loads;
-						
-			var table = new SapTableReader(model, "Frame Loads - Distributed", patternFilter);
-			if (table.RecordCount == 0) return loads;
-
-			// Cache Z-coordinates để tránh gọi GetFrameGeometry nhiều lần
-			var frameZCache = new Dictionary<string, double>();
-			var allFrames = GetAllFramesGeometry();
-			foreach (var f in allFrames) frameZCache[f.Name] = f.AverageZ;
-
-			for (int i = 0; i < table.RecordCount; i++)
-			{
-				string frameName = table.GetString(i, "Frame");
-				if (string.IsNullOrEmpty(frameName)) continue;
-
-				string pattern = table.GetString(i, "LoadPat") ?? table.GetString(i, "OutputCase");
-				if (string.IsNullOrEmpty(pattern)) continue;
-
-				// ⚠️ FIX BUG #2: ĐỌC CẢ 2 ĐẦU TẢI HÌNH THANG
-				double rawValueA = table.GetDouble(i, "FOverLA");
-				double rawValueB = table.GetDouble(i, "FOverLB");
-				
-				// Nếu không có cột riêng A/B, thử đọc FOverL chung
-				if (rawValueA == 0 && rawValueB == 0)
-				{
-					double fallback = table.GetDouble(i, "FOverL");
-					rawValueA = fallback;
-					rawValueB = fallback;
-				}
-
-				// Tính trung bình (cho tải hình thang) hoặc lấy giá trị duy nhất (tải đều)
-				double rawValue = (rawValueA + rawValueB) / 2.0;
-
-				// ⚠️ CRITICAL: Convert NGAY bằng UnitManager
-				double normalizedValue = ConvertLoadToKnPerM(rawValue);
-
-				// Đọc khoảng cách
-				double distA = table.GetDouble(i, "AbsDistA");
-				if (distA == 0) distA = table.GetDouble(i, "RelDistA");
-				
-				double distB = table.GetDouble(i, "AbsDistB");
-				if (distB == 0) distB = table.GetDouble(i, "RelDistB");
-
-				string direction = table.GetString(i, "Dir") ?? table.GetString(i, "Direction") ?? "Gravity";
-				string coordSys = table.GetString(i, "CoordSys") ?? "GLOBAL";
-
-				// Lấy Z từ cache
-				double z = frameZCache.ContainsKey(frameName) ? frameZCache[frameName] : 0;
-
-				loads.Add(new RawSapLoad
-				{
-					ElementName = frameName,
-					LoadPattern = pattern,
-					Value1 = normalizedValue, // Preserve sign from SAP
-					LoadType = "FrameDistributed",
-					Direction = direction,
-					DistStart = distA,
-					DistEnd = distB,
-					CoordSys = coordSys,
-					ElementZ = z,
-					DirectionSign = Math.Sign(rawValue) // Giữ dấu nếu cần xử lý sau
-				});
-			}
-
-			return loads;
-		}
+		// [DELETED] GetAllFrameDistributedLoads_Legacy - Removed with SapTableReader
 
 		/// <summary>
 		/// BACKWARD COMPATIBILITY: Đọc tải phân bố trên một frame cụ thể.
@@ -778,94 +751,10 @@ namespace DTS_Engine.Core.Utils
 
 		#endregion
 
-		#region ROBUST DATABASE TABLE READER (NEW CORE)
+		// [DELETED] #region ROBUST DATABASE TABLE READER
+		// SapTableReader class removed as part of Audit Refactoring.
+		// All load reading now uses Direct API via SapDatabaseReader.
 
-		/// <summary>
-		/// Helper class để đọc bảng SAP an toàn, không sợ sai index cột.
-		/// </summary>
-		private class SapTableReader
-		{
-			private string[] _fields;
-			private string[] _data;
-			private int _numRecs;
-			private int _colCount;
-			private Dictionary<string, int> _colMap;
-
-			public int RecordCount => _numRecs;
-
-			public SapTableReader(cSapModel model, string tableName, string loadPatternFilter = null)
-			{
-				_colMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-				int tableVer = 0;
-				string[] input = new string[] { };
-				
-				// Reset arrays
-				_fields = null;
-				_data = null;
-				_numRecs = 0;
-
-				// Cố gắng đọc bảng
-				try
-				{
-					// Group "All" lấy toàn bộ, hoặc lọc theo Selection nếu cần
-					// Ở đây ta dùng chiến lược: Đọc hết rồi lọc bằng C# để kiểm soát tốt hơn
-					int ret = model.DatabaseTables.GetTableForDisplayArray(
-						tableName, ref input, "All", ref tableVer, ref _fields, ref _numRecs, ref _data);
-					if (ret == 0 && _numRecs > 0 && _fields != null && _data != null)
-					{
-						_colCount = _fields.Length;
-						// Map tên cột sang index (trim và bỏ rỗng)
-						for (int i = 0; i < _colCount; i++)
-						{
-							var f = _fields[i];
-							if (!string.IsNullOrEmpty(f))
-							{
-								f = f.Trim();
-								if (!_colMap.ContainsKey(f))
-									_colMap[f] = i;
-							}
-						}
-					}
-				}
-				catch (Exception ex)
-				{
-					System.Diagnostics.Debug.WriteLine($"SapTableReader: failed reading table '{tableName}': {ex.Message}");
-				}
-			}
-
-			/// <summary>
-			/// Kiểm tra xem cột có tồn tại không
-			/// </summary>
-			public bool HasColumn(string colName) => _colMap.ContainsKey(colName);
-
-			/// <summary>
-			/// Lấy giá trị chuỗi tại dòng row, cột colName
-			/// </summary>
-			public string GetString(int row, string colName)
-			{
-				if (row < 0 || row >= _numRecs) return null;
-				if (_data == null || _colCount <= 0) return null;
-				if (string.IsNullOrEmpty(colName)) return null;
-				if (!_colMap.TryGetValue(colName, out int colIdx)) return null;
-				int idx = row * _colCount + colIdx;
-				if (idx < 0 || idx >= _data.Length) return null;
-				return _data[idx];
-			}
-
-			/// <summary>
-			/// Lấy giá trị double tại dòng row, cột colName. Trả về 0 nếu lỗi/rỗng.
-			/// </summary>
-			public double GetDouble(int row, string colName)
-			{
-				string val = GetString(row, colName);
-				if (string.IsNullOrEmpty(val)) return 0.0;
-				if (double.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
-					return result;
-				return 0.0;
-			}
-		}
-
-		#endregion
 		#region AUDIT: Load Pattern Detection (REFACTORED - UNIFIED)
 
 		public class PatternSummary

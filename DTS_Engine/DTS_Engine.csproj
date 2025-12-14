@@ -180,6 +180,7 @@
     <Compile Include="Core\Utils\LabelPlotter.cs" />
     <Compile Include="Core\Utils\LabelUtils.cs" />
     <Compile Include="Core\Utils\LinkRules.cs" />
+    <Compile Include="Core\Utils\ElementClassifier.cs" />
     <Compile Include="Core\Utils\SapDatabaseReader.cs" />
     <Compile Include="Core\Utils\SapUtils.cs" />
     <Compile Include="Core\Utils\UnitManager.cs" />

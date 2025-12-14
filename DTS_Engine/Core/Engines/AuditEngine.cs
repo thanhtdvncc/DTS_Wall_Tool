@@ -125,6 +125,7 @@ namespace DTS_Engine.Core.Engines
 
         /// <summary>
         /// Chạy kiểm toán cho một Load Pattern cụ thể
+        /// REFACTORED: Wrapped in Unit Safe Context (kN, mm, C)
         /// </summary>
         public AuditReport RunSingleAudit(string loadPattern)
         {
@@ -136,60 +137,78 @@ namespace DTS_Engine.Core.Engines
                 UnitInfo = UnitManager.Info.ToString()
             };
 
-            var allLoads = _loadReader.ReadAllLoads(loadPattern);
-
-            if (allLoads.Count == 0)
+            // UNIT SAFE CONTEXT: Force kN, mm, C for consistent calculations
+            var originalUnit = SapUtils.SetAuditUnits();
+            try
             {
-                report.IsAnalyzed = false;
+                // Rebuild inventory inside safe context to ensure coords are in mm
+                if (_inventory != null)
+                {
+                    _inventory.Reset();
+                    _inventory.Build();
+                    Log("[AUDIT] Inventory rebuilt in kN_mm_C context.");
+                }
+
+                var allLoads = _loadReader.ReadAllLoads(loadPattern);
+
+                if (allLoads.Count == 0)
+                {
+                    report.IsAnalyzed = false;
+                    report.SapBaseReaction = 0;
+                    return report;
+                }
+
+                // --- PROCESS DATA ---
+                var storyBuckets = GroupLoadsByStory(allLoads);
+                Log($"[AUDIT-START] Identified {storyBuckets.Count} potential stories.");
+
+                foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
+                {
+                    if (bucket.Loads.Count == 0) continue;
+
+                    Log($"[AUDIT-PROC] Processing Story {bucket.StoryName} with {bucket.Loads.Count} loads...");
+
+                    var storyGroup = ProcessStory(bucket.StoryName, bucket.Elevation, bucket.Loads);
+
+                    if (storyGroup != null && storyGroup.LoadTypes.Count > 0)
+                    {
+                        report.Stories.Add(storyGroup);
+                        Log($"[AUDIT-ADD] Story {bucket.StoryName} added to report.");
+                    }
+                    else
+                    {
+                        Log($"[AUDIT-WARN] Story {bucket.StoryName} processed but result empty/null.");
+                    }
+                }
+
+                // --- CALCULATE SUMMARY ---
+                double aggFx = 0;
+                double aggFy = 0;
+                double aggFz = 0;
+
+                foreach (var story in report.Stories)
+                {
+                    foreach (var loadType in story.LoadTypes)
+                    {
+                        aggFx += loadType.SubTotalFx;
+                        aggFy += loadType.SubTotalFy;
+                        aggFz += loadType.SubTotalFz;
+                    }
+                }
+
+                report.CalculatedFx = aggFx;
+                report.CalculatedFy = aggFy;
+                report.CalculatedFz = aggFz;
+
+                // Base Reaction = 0 (Check thủ công hoặc đọc từ SAP nếu cần)
                 report.SapBaseReaction = 0;
-                return report;
+                report.IsAnalyzed = false;
             }
-
-            // --- PROCESS DATA ---
-            var storyBuckets = GroupLoadsByStory(allLoads);
-            Log($"[AUDIT-START] Identified {storyBuckets.Count} potential stories.");
-            
-            foreach (var bucket in storyBuckets.OrderByDescending(b => b.Elevation))
+            finally
             {
-                if (bucket.Loads.Count == 0) continue;
-                
-                Log($"[AUDIT-PROC] Processing Story {bucket.StoryName} with {bucket.Loads.Count} loads...");
-                
-                var storyGroup = ProcessStory(bucket.StoryName, bucket.Elevation, bucket.Loads);
-                
-                if (storyGroup != null && storyGroup.LoadTypes.Count > 0)
-                {
-                    report.Stories.Add(storyGroup);
-                    Log($"[AUDIT-ADD] Story {bucket.StoryName} added to report.");
-                }
-                else
-                {
-                     Log($"[AUDIT-WARN] Story {bucket.StoryName} processed but result empty/null.");
-                }
+                // ALWAYS restore user's original units
+                SapUtils.RestoreUnits(originalUnit);
             }
-
-            // --- CALCULATE SUMMARY ---
-            double aggFx = 0;
-            double aggFy = 0;
-            double aggFz = 0;
-
-            foreach (var story in report.Stories)
-            {
-                foreach (var loadType in story.LoadTypes)
-                {
-                    aggFx += loadType.SubTotalFx;
-                    aggFy += loadType.SubTotalFy;
-                    aggFz += loadType.SubTotalFz;
-                }
-            }
-
-            report.CalculatedFx = aggFx;
-            report.CalculatedFy = aggFy;
-            report.CalculatedFz = aggFz;
-
-            // Base Reaction = 0 (Check thủ công hoặc đọc từ SAP nếu cần)
-            report.SapBaseReaction = 0;
-            report.IsAnalyzed = false;
 
             return report;
         }
@@ -536,16 +555,6 @@ namespace DTS_Engine.Core.Engines
             }
             catch { }
 
-            // DEBUG TRACE
-            var _trace = new System.Text.StringBuilder();
-            _trace.AppendLine(new string('=', 150));
-            _trace.AppendLine($"[ProcessAreaLoads v5.1 - kN_m_C Mode] Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            _trace.AppendLine($"Original Unit: {originalUnit}, Switched: {unitSwitched}");
-            _trace.AppendLine($"Input: {loads.Count} loads, LoadValue={loadVal} (already in kN/m²)");
-            _trace.AppendLine(new string('-', 150));
-            _trace.AppendLine($"{"Elem",-8} {"mat[2,5,8]",-20} {"Axis",-12} {"Sign",-6} {"AreaM2",-10} {"PlaneBin",-10} GroupKey");
-            _trace.AppendLine(new string('-', 150));
-
             var groups = new Dictionary<string, List<(RawSapLoad Load, double AreaM2, string Axis, int Sign, SapArea Geom)>>();
 
 
@@ -556,7 +565,7 @@ namespace DTS_Engine.Core.Engines
                 // 1. LẤY MA TRẬN TRANSFORMATION TỪ API
                 double[] mat = new double[9];
                 int ret = model.AreaObj.GetTransformationMatrix(name, ref mat, true);
-                if (ret != 0) { _trace.AppendLine($"{name,-8} [SKIP: No Matrix]"); continue; }
+                if (ret != 0) { continue; }
 
                 // Global Direction = Cột 3 của ma trận (Local 3 -> Global)
                 double gx = mat[2], gy = mat[5], gz = mat[8];
@@ -568,7 +577,7 @@ namespace DTS_Engine.Core.Engines
                 // 2. LẤY TỌA ĐỘ ĐIỂM TỪ API
                 int numPts = 0; string[] ptNames = null;
                 ret = model.AreaObj.GetPoints(name, ref numPts, ref ptNames);
-                if (ret != 0 || numPts < 3) { _trace.AppendLine($"{name,-8} [SKIP: No Points]"); continue; }
+                if (ret != 0 || numPts < 3) { continue; }
 
                 var pts = new List<(double x, double y, double z)>();
                 foreach (var pn in ptNames)
@@ -608,7 +617,7 @@ namespace DTS_Engine.Core.Engines
                 // Tạo SapArea để dùng cho NTS
                 var sapArea = new SapArea { Name = name, BoundaryPoints = pts.Select(p => new Point2D(p.x, p.y)).ToList(), ZValues = pts.Select(p => p.z).ToList() };
 
-                _trace.AppendLine($"{name,-8} ({gx:F2},{gy:F2},{gz:F2})     {globalAxis,-12} {sign,-6} {areaM2,-10:F2} {planeBin,-10} {groupKey}");
+
 
                 if (!groups.ContainsKey(groupKey))
                     groups[groupKey] = new List<(RawSapLoad, double, string, int, SapArea)>();
@@ -616,8 +625,7 @@ namespace DTS_Engine.Core.Engines
             }
 
             Log($"[ProcessAreaLoads] Created {groups.Count} groups.");
-            _trace.AppendLine(); _trace.AppendLine($"Total Groups: {groups.Count}");
-            _trace.AppendLine(new string('-', 150));
+
 
             // XỬ LÝ TỪNG NHÓM
             foreach (var kv in groups)
@@ -633,9 +641,8 @@ namespace DTS_Engine.Core.Engines
                     var elementNames = items.Select(x => x.Load.ElementName).Distinct().ToList();
                     double totalArea = items.Sum(x => x.AreaM2);
 
-                    _trace.AppendLine($">>> {kv.Key} | Elements: {string.Join(",", elementNames)} | Area={totalArea:F2}");
 
-                    if (totalArea < MIN_AREA_THRESHOLD_M2) { _trace.AppendLine("    [SKIP: Area<Threshold]"); continue; }
+                    if (totalArea < MIN_AREA_THRESHOLD_M2) { continue; }
 
                     // NTS GEOMETRY
                     Geometry combinedGeom = null;
@@ -658,9 +665,11 @@ namespace DTS_Engine.Core.Engines
                     double force = loadValue * totalArea * sign;
                     double fx = 0, fy = 0, fz = 0;
 
+                    // Get load direction for all elements (moved outside if block for accessibility)
+                    string loadDir = (items[0].Load.Direction ?? "").Trim().ToUpperInvariant();
+
                     if (isSlab)
                     {
-                        string loadDir = (items[0].Load.Direction ?? "").Trim().ToUpperInvariant();
                         if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(force);
                         else if (loadDir.Contains("X")) fx = force;
                         else if (loadDir.Contains("Y")) fy = force;
@@ -677,7 +686,12 @@ namespace DTS_Engine.Core.Engines
                                         globalAxis.Contains("Y") ? (sign > 0 ? "+Y" : "-Y") :
                                         (sign > 0 ? "+Z" : "-Z");
 
-                    _trace.AppendLine($"    Force={loadValue:F4}*{totalArea:F2}*{sign}={force:F2} | Dir={dirDisplay} | Fx={fx:F2},Fy={fy:F2},Fz={fz:F2}");
+                    // [FIX v5.4] For GRAVITY loads, show negative UnitLoad for consistency
+                    double displayLoadValue = loadValue;
+                    if (isSlab && loadDir.Contains("GRAVITY"))
+                    {
+                        displayLoadValue = -Math.Abs(loadValue);
+                    }
 
                     targetList.Add(new AuditEntry
                     {
@@ -685,8 +699,8 @@ namespace DTS_Engine.Core.Engines
                         Explanation = formula,
                         Quantity = totalArea,
                         QuantityUnit = "m²",
-                        UnitLoad = loadValue,
-                        UnitLoadString = $"{loadValue:0.00}",
+                        UnitLoad = displayLoadValue,
+                        UnitLoadString = $"{displayLoadValue:0.00}",
                         TotalForce = force,
                         Direction = dirDisplay,
                         DirectionSign = sign,
@@ -696,19 +710,10 @@ namespace DTS_Engine.Core.Engines
                     });
                     Log($"   [ADDED] {location}: {dirDisplay}, F={force:F2}");
                 }
-                catch (Exception ex) { _trace.AppendLine($"    [ERROR] {ex.Message}"); }
+                catch (Exception ex) { Log($"[ERROR] {ex.Message}"); }
             }
 
-            // WRITE DEBUG FILE
-            _trace.AppendLine(new string('=', 150));
-            _trace.AppendLine($"Total Entries: {targetList.Count}");
-            try
-            {
-                string file = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), $"AuditTrace_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
-                System.IO.File.WriteAllText(file, _trace.ToString());
-                System.Diagnostics.Process.Start("notepad.exe", file);
-            }
-            catch { }
+
 
             // === BƯỚC CUỐI: TRẢ LẠI UNIT GỐC ===
             if (unitSwitched)
@@ -1213,7 +1218,9 @@ namespace DTS_Engine.Core.Engines
                 double coveredLength = CalculateCoveredLengthMeters(load, frame, out startM, out endM);
                 if (coveredLength < 1e-6)
                 {
-                    coveredLength = frame.Length2D * UnitManager.Info.LengthScaleToMeter;
+                    // [FIX v5.9] Fallback for full coverage (or vertical elements where Length2D~0)
+                    // Must use 3D Length for columns!
+                    coveredLength = frame.Length3D * UnitManager.Info.LengthScaleToMeter;
                     startM = 0;
                     endM = coveredLength;
                 }
@@ -1233,11 +1240,11 @@ namespace DTS_Engine.Core.Engines
             
             if (frameItems.Count == 0) return;
 
-            // [FIX v4.10] Group by Grid AND Structural Type to split Beams/Columns
+            // [FIX v5.3] Use ElementClassifier for strict Beam/Column/Oblique classification
             var groups = frameItems.GroupBy(f => new 
             { 
                 Grid = f.PrimaryGrid, 
-                Type = (Math.Abs(f.Frame.Z1 - f.Frame.Z2) > 500 || f.Frame.IsVertical) ? "Column Elements" : "Beam Elements"
+                Type = GetFrameStructuralTypeName(f.Frame)
             });
 
             foreach (var grp in groups)
@@ -1352,6 +1359,26 @@ namespace DTS_Engine.Core.Engines
         }
 
         /// <summary>
+        /// [v5.3] Use ElementClassifier to determine frame structural type.
+        /// Returns display name for grouping: "Beam Elements", "Column Elements", or "Oblique Elements"
+        /// </summary>
+        private string GetFrameStructuralTypeName(SapFrame frame)
+        {
+            var elementType = Utils.ElementClassifier.DetermineFrameType(frame);
+            switch (elementType)
+            {
+                case Utils.ElementClassifier.ElementType.Column:
+                    return "Column Elements";
+                case Utils.ElementClassifier.ElementType.Beam:
+                    return "Beam Elements";
+                case Utils.ElementClassifier.ElementType.ObliqueFrame:
+                    return "Oblique Elements";
+                default:
+                    return "Other Elements";
+            }
+        }
+
+        /// <summary>
         /// Xác định thanh nằm trên trục nào (Grid A, Grid 1, hoặc Diagonal)
         /// FIX: Added English translation support
         /// </summary>
@@ -1427,95 +1454,93 @@ namespace DTS_Engine.Core.Engines
         // --- XỬ LÝ TẢI ĐIỂM (POINT) - IMPROVED GROUPING ---
         private void ProcessPointLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
-            var pointGroups = new Dictionary<string, List<(RawSapLoad load, SapUtils.SapPoint coord)>>(StringComparer.OrdinalIgnoreCase);
+            // [FIX v5.6] Don't group by individual location. 
+            // Group ALL points with same load value together, then analyze their grid positions.
+            var allPoints = new List<(RawSapLoad load, SapUtils.SapPoint coord)>();
 
             foreach (var load in loads)
             {
                 var info = _inventory.GetElement(load.ElementName);
                 if (info == null || info.PointGeometry == null) continue;
-                var ptCoord = info.PointGeometry;
-
-                string loc = GetGridLocationForPoint(ptCoord);
-
-                if (!pointGroups.ContainsKey(loc))
-                    pointGroups[loc] = new List<(RawSapLoad, SapUtils.SapPoint)>();
-
-                pointGroups[loc].Add((load, ptCoord));
+                allPoints.Add((load, info.PointGeometry));
             }
 
-            var sortedGroups = pointGroups.OrderByDescending(g => g.Value.Count);
+            if (allPoints.Count == 0) return;
 
-            foreach (var group in sortedGroups)
+            // Generate smart grid location description from all points
+            string location = GetSmartPointGridDescription(allPoints);
+            int count = allPoints.Count;
+
+            // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
+            double signedForce = count * loadVal;
+
+            // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
+            double fx = 0, fy = 0, fz = 0;
+            string loadDir = dir.ToUpper();
+            
+            if (loadDir.Contains("GRAVITY"))
             {
-                string location = group.Key;
-                var groupLoads = group.Value;
-                int count = groupLoads.Count;
-
-                // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
-                double signedForce = count * loadVal;
-
-                // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
-                double fx = 0, fy = 0, fz = 0;
-                string loadDir = dir.ToUpper();
-                
-                if (loadDir.Contains("GRAVITY"))
-                {
-                    fz = -Math.Abs(signedForce);
-                }
-                else if (loadDir.Contains("GLOBAL X"))
-                {
-                    fx = signedForce;
-                }
-                else if (loadDir.Contains("GLOBAL Y"))
-                {
-                    fy = signedForce;
-                }
-                else if (loadDir.Contains("GLOBAL Z"))
-                {
-                    fz = signedForce;
-                }
+                fz = -Math.Abs(signedForce);
+            }
+            else if (loadDir.Contains("GLOBAL X"))
+            {
+                fx = signedForce;
+            }
+            else if (loadDir.Contains("GLOBAL Y"))
+            {
+                fy = signedForce;
+            }
+            else if (loadDir.Contains("GLOBAL Z"))
+            {
+                fz = signedForce;
+            }
+            else
+            {
+                // Fallback using raw string check
+                if (dir.Contains("X")) fx = signedForce;
+                else if (dir.Contains("Y")) fy = signedForce;
+                else if (dir.Contains("Z")) fz = signedForce;
                 else
                 {
-                    // Fallback using raw string check
-                    if (dir.Contains("X")) fx = signedForce;
-                    else if (dir.Contains("Y")) fy = signedForce;
-                    else if (dir.Contains("Z")) fz = signedForce;
-                    else
-                    {
-                        // Fallback: assume gravity
-                        fz = signedForce;
-                    }
+                    // Fallback: assume gravity
+                    fz = signedForce;
                 }
-
-                var sorted = SortPointsLeftToRight(groupLoads);
-                var elementNames = sorted.Select(p => p.load.ElementName).ToList();
-
-                Log($"   -> Point Group [{location}]: {count} items, Force={signedForce:F2}");
-
-                // Clean Direction String
-                string dirDisplay = dir.Replace("Global ", "");
-                if (dir.Contains("X")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "X";
-                else if (dir.Contains("Y")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "Y";
-                else if (dir.Contains("Z")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "Z";
-
-                // CRITICAL v4.4: Store signed values - these will be displayed and summed
-                targetList.Add(new AuditEntry
-                {
-                    GridLocation = location,
-                    Explanation = "",
-                    Quantity = count,
-                    QuantityUnit = "ea",
-                    UnitLoad = loadVal, // Signed value from SAP
-                    UnitLoadString = $"{loadVal:0.00}",
-                    TotalForce = signedForce, // Signed magnitude
-                    Direction = dirDisplay,
-                    DirectionSign = Math.Sign(signedForce), // Sign for display
-                    ForceX = fx, // Signed component
-                    ForceY = fy, // Signed component
-                    ForceZ = fz, // Signed component
-                    ElementList = elementNames
-                });
             }
+
+            var sorted = SortPointsLeftToRight(allPoints);
+            var elementNames = sorted.Select(p => p.load.ElementName).ToList();
+
+            Log($"   -> Point Group [{location}]: {count} items, Force={signedForce:F2}");
+
+            // Clean Direction String
+            string dirDisplay = dir.Replace("Global ", "");
+            if (dir.Contains("X")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "X";
+            else if (dir.Contains("Y")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "Y";
+            else if (dir.Contains("Z")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "Z";
+
+            // Generate Calculator formula: count × loadVal (e.g., "8×(-1.2)")
+            string formula = loadVal < 0 
+                ? $"{count}×({loadVal:0.00})" 
+                : $"{count}×{loadVal:0.00}";
+
+            // CRITICAL v4.4: Store signed values - these will be displayed and summed
+            targetList.Add(new AuditEntry
+            {
+                GridLocation = location,
+                Explanation = formula,
+                Quantity = count,
+                QuantityUnit = "ea",
+                UnitLoad = loadVal, // Signed value from SAP
+                UnitLoadString = $"{loadVal:0.00}",
+                TotalForce = signedForce, // Signed magnitude
+                Direction = dirDisplay,
+                DirectionSign = Math.Sign(signedForce), // Sign for display
+                ForceX = fx, // Signed component
+                ForceY = fy, // Signed component
+                ForceZ = fz, // Signed component
+                ElementList = elementNames,
+                StructuralType = "Point Elements"
+            });
         }
 
         /// <summary>
@@ -1597,6 +1622,65 @@ namespace DTS_Engine.Core.Engines
             string x = FindAxisRange(pt.X, pt.X, _xGrids, true);
             string y = FindAxisRange(pt.Y, pt.Y, _yGrids, true);
             return $"{x}/{y}";
+        }
+
+        /// <summary>
+        /// [v5.6] Analyze all points and generate smart grid range description.
+        /// Example: 8 points at 1/A, 1/B, 1/C... -> "1 x A-H"
+        /// Logic: Find axis with fewer unique values, use that as primary axis.
+        /// </summary>
+        private string GetSmartPointGridDescription(List<(RawSapLoad load, SapUtils.SapPoint coord)> points)
+        {
+            if (points.Count == 0) return "Unknown";
+            if (points.Count == 1) return GetGridLocationForPoint(points[0].coord);
+
+            // Get all grid coordinates
+            var xCoords = points.Select(p => p.coord.X).ToList();
+            var yCoords = points.Select(p => p.coord.Y).ToList();
+
+            // Find unique grid names for X and Y axes
+            var uniqueXGrids = new HashSet<string>();
+            var uniqueYGrids = new HashSet<string>();
+
+            foreach (var pt in points)
+            {
+                string xGrid = FindAxisRange(pt.coord.X, pt.coord.X, _xGrids, true);
+                string yGrid = FindAxisRange(pt.coord.Y, pt.coord.Y, _yGrids, true);
+                uniqueXGrids.Add(xGrid);
+                uniqueYGrids.Add(yGrid);
+            }
+
+            // Choose grouping strategy: use axis with fewer unique values as primary
+            if (uniqueXGrids.Count <= uniqueYGrids.Count)
+            {
+                // Primary axis is X (numeric grids like 1,2,3)
+                string xRange = string.Join(",", uniqueXGrids.OrderBy(x => x));
+                if (uniqueXGrids.Count == 1) xRange = uniqueXGrids.First();
+                
+                string yRange = GetOrderedRange(uniqueYGrids);
+                return $"{xRange} x {yRange}";
+            }
+            else
+            {
+                // Primary axis is Y (letter grids like A,B,C)
+                string yRange = GetOrderedRange(uniqueYGrids);
+                if (uniqueYGrids.Count == 1) yRange = uniqueYGrids.First();
+                
+                string xRange = string.Join("-", new[] { uniqueXGrids.Min(), uniqueXGrids.Max() }.Distinct().OrderBy(x => x));
+                return $"{yRange} x {xRange}";
+            }
+        }
+
+        /// <summary>
+        /// Convert a set of grid names to a range string like "A-F" or "A,C,E"
+        /// </summary>
+        private string GetOrderedRange(HashSet<string> grids)
+        {
+            if (grids.Count == 0) return "?";
+            if (grids.Count == 1) return grids.First();
+
+            var sorted = grids.OrderBy(g => g).ToList();
+            return $"{sorted.First()}-{sorted.Last()}";
         }
 
         #endregion
@@ -1870,15 +1954,28 @@ namespace DTS_Engine.Core.Engines
             // 1. Grid Location
             string grid = TruncateString(entry.GridLocation ?? "", gridWidth - 2).PadRight(gridWidth);
 
-            // 2. Calculator
-            string calc = TruncateString(entry.Explanation ?? "", calcWidth - 2).PadRight(calcWidth);
+            // 4. Unit Load (Giá trị hiển thị) - Apply unit conversion FIRST (needed for calc)
+            double displayUnitLoad = entry.UnitLoad * forceFactor;
+            string unitLoad = $"{displayUnitLoad:0.00}".PadRight(unitWidth);
+
+            // 2. Calculator - [FIX v5.5] For Point Elements, regenerate formula with scaled UnitLoad
+            string calc;
+            if (entry.QuantityUnit == "ea")
+            {
+                // Point loads: show "count×(unitLoad)" with converted unit
+                int count = (int)entry.Quantity;
+                calc = displayUnitLoad < 0 
+                    ? $"{count}×({displayUnitLoad:0.00})" 
+                    : $"{count}×{displayUnitLoad:0.00}";
+            }
+            else
+            {
+                calc = entry.Explanation ?? "";
+            }
+            calc = TruncateString(calc, calcWidth - 2).PadRight(calcWidth);
 
             // 3. Value (Quantity) - Giữ 2 số thập phân chuẩn
             string value = $"{entry.Quantity:0.00}".PadRight(valueWidth);
-
-            // 4. Unit Load (Giá trị hiển thị) - Apply unit conversion
-            double displayUnitLoad = entry.UnitLoad * forceFactor;
-            string unitLoad = $"{displayUnitLoad:0.00}".PadRight(unitWidth);
 
             // 5. Direction
             string dir = FormatDirection(entry.Direction, entry).PadRight(dirWidth);

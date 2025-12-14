@@ -20,7 +20,7 @@ namespace DTS_Engine.Core.Utils
 	public class SapDatabaseReader : ISapLoadReader
 	{
 		private readonly cSapModel _model;
-		private readonly Dictionary<string, TableSchema> _schemaCache;
+		// [DELETED] private readonly Dictionary<string, TableSchema> _schemaCache; - Removed with Table Mode
 		private readonly ModelInventory _inventory;
 
 		private bool _useFallbackApi = false;
@@ -29,7 +29,7 @@ namespace DTS_Engine.Core.Utils
 		public SapDatabaseReader(cSapModel model, ModelInventory inventory = null)
 		{
 			_model = model ?? throw new ArgumentNullException(nameof(model));
-			_schemaCache = new Dictionary<string, TableSchema>();
+			// [DELETED] _schemaCache initialization - Removed with Table Mode
 			_inventory = inventory;
 
 			CheckDataSourceHealth();
@@ -61,157 +61,16 @@ namespace DTS_Engine.Core.Utils
 
 		public List<RawSapLoad> ReadAllLoads(string patternFilter)
 		{
-			// FIX BUG #6: Always prefer Direct API for reliability
-			if (_preferApi || _useFallbackApi)
-			{
-				try
-				{
-					var apiLoads = ReadAllLoads_ViaDirectAPI(patternFilter);
-					if (apiLoads != null && apiLoads.Count > 0)
-					{
-						return apiLoads;
-					}
-				}
-				catch (Exception ex)
-				{
-					System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] API Mode failed: {ex.Message}.");
-				}
-			}
-
-			// Table Mode fallback (rarely used now)
-			if (_useFallbackApi)
-			{
-				return ReadAllLoads_ViaDirectAPI(patternFilter);
-			}
-
-			var loads = new List<RawSapLoad>();
-			try
-			{
-				var frameLoads = ReadFrameDistributedLoads(patternFilter);
-				if (frameLoads.Count == 0 && SapUtils.CountFrames() > 0)
-				{
-					if (ReadFrameDistributedLoads(null).Count == 0)
-					{
-						_useFallbackApi = true;
-						return ReadAllLoads_ViaDirectAPI(patternFilter);
-					}
-				}
-
-				loads.AddRange(frameLoads);
-				loads.AddRange(ReadAreaUniformLoads(patternFilter));
-				loads.AddRange(ReadAreaUniformToFrameLoads(patternFilter));
-				loads.AddRange(ReadJointLoads(patternFilter));
-				try { loads.AddRange(SapUtils.GetAllFramePointLoads(patternFilter)); } catch { }
-			}
-			catch (Exception ex)
-			{
-				System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Table Read Error: {ex.Message}. Switching to API.");
-				_useFallbackApi = true;
-				return ReadAllLoads_ViaDirectAPI(patternFilter);
-			}
-
-			return loads;
+			// REFACTORED: Direct API Only. No Table fallback.
+			// All loads are read via the _DirectAPI methods which call SAP OAPI directly.
+			return ReadAllLoads_ViaDirectAPI(patternFilter);
 		}
 
-		#region Schema Detection
+			// [DELETED] #region Schema Detection
+		// TableSchema class and GetTableSchema method removed.
+		// All load reading now uses Direct API via Get...DirectAPI methods.
 
-		public class TableSchema
-		{
-			public string TableName { get; set; }
-			public Dictionary<string, int> ColumnMap { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-			public string[] FieldKeys { get; set; }
-			public string[] TableData { get; set; }
-			public int RecordCount { get; set; }
-			public int ColumnCount { get; set; }
 
-			public string GetString(int row, string columnName)
-			{
-				if (row < 0 || row >= RecordCount) return null;
-				if (!ColumnMap.TryGetValue(columnName, out int colIdx)) return null;
-				int idx = row * ColumnCount + colIdx;
-				if (TableData == null || idx < 0 || idx >= TableData.Length) return null;
-				return TableData[idx];
-			}
-
-			public double GetDouble(int row, string columnName)
-			{
-				var s = GetString(row, columnName);
-				if (string.IsNullOrEmpty(s)) return 0.0;
-				if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out double d)) return d;
-				return 0.0;
-			}
-
-			public string FindColumn(params string[] patterns)
-			{
-				foreach (var pattern in patterns)
-				{
-					foreach (var colName in ColumnMap.Keys)
-					{
-						if (colName.Equals(pattern, StringComparison.OrdinalIgnoreCase))
-							return colName;
-					}
-				}
-
-				foreach (var pattern in patterns)
-				{
-					foreach (var colName in ColumnMap.Keys)
-					{
-						if (colName.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0)
-							return colName;
-					}
-				}
-
-				return null;
-			}
-		}
-
-		public TableSchema GetTableSchema(string tableName, string patternFilter = null)
-		{
-			string cacheKey = $"{tableName}|{patternFilter ?? "ALL"}";
-			if (_schemaCache.TryGetValue(cacheKey, out var cached)) return cached;
-
-			var schema = new TableSchema { TableName = tableName };
-			try
-			{
-				int tableVer = 0;
-				string[] fields = null;
-				int numRec = 0;
-				string[] tableData = null;
-				string[] input = new string[] { "" };
-
-				int ret = _model.DatabaseTables.GetTableForDisplayArray(tableName, ref input, "All", ref tableVer, ref fields, ref numRec, ref tableData);
-
-				if (ret != 0)
-				{
-					_useFallbackApi = true;
-					return schema;
-				}
-
-				if (numRec == 0 || fields == null || tableData == null)
-				{
-					return schema;
-				}
-
-				schema.FieldKeys = fields;
-				schema.TableData = tableData;
-				schema.RecordCount = numRec;
-				schema.ColumnCount = fields.Length;
-
-				for (int i = 0; i < fields.Length; i++)
-					if (!string.IsNullOrEmpty(fields[i]))
-						schema.ColumnMap[fields[i].Trim()] = i;
-
-				_schemaCache[cacheKey] = schema;
-			}
-			catch (Exception ex)
-			{
-				System.Diagnostics.Debug.WriteLine($"[SapDatabaseReader] Exception reading table '{tableName}': {ex.Message}.");
-				_useFallbackApi = true;
-			}
-			return schema;
-		}
-
-		#endregion
 
 		#region Vector Calculation Helpers - FIX BUG #4
 
@@ -289,8 +148,8 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>
         /// Calculate force vector using SAP direction codes with proper transformation matrix.
-        /// FIX BUG #2: Use GetTransformationMatrix from SAP API for accurate Local→Global conversion
-        /// ⚠️ CRITICAL: This fixes the most severe bug - incorrect force summation due to wrong vector direction
+        /// REFACTORED: Uses ModelInventory cache for Local Axes (performance optimization).
+        /// Falls back to SapUtils API only if cache miss.
         /// </summary>
         private Vector3D CalculateForceVector(string elementName, double rawValue, int directionCode, string coordSys)
         {
@@ -310,12 +169,21 @@ namespace DTS_Engine.Core.Utils
                 }
             }
 
-            // LOCAL AXES (1, 2, 3)
+            // LOCAL AXES (1, 2, 3) - Use Inventory Cache first
             if (directionCode >= 1 && directionCode <= 3)
             {
-                // [FIX]: Gọi trực tiếp Utility đã sửa chuẩn Matrix
-                var vectors = SapUtils.GetElementVectors(elementName);
+                // PRIORITY 1: Use cached vectors from ModelInventory (fast)
+                if (_inventory != null)
+                {
+                    var cachedAxis = _inventory.GetLocalAxis(elementName, directionCode);
+                    if (cachedAxis.HasValue)
+                    {
+                        return cachedAxis.Value * signedVal;
+                    }
+                }
 
+                // PRIORITY 2: Fallback to API call (slow, but necessary if cache miss)
+                var vectors = SapUtils.GetElementVectors(elementName);
                 if (vectors.HasValue)
                 {
                     Vector3D axisVector;
@@ -387,295 +255,12 @@ namespace DTS_Engine.Core.Utils
 			return 0;
 		}
 
+	
 		#endregion
 
-		#region TABLE MODE: Readers
+		// [DELETED] #region TABLE MODE: Readers
+		// Legacy Table-based methods removed. Using Direct API methods below.
 
-		public List<RawSapLoad> ReadFrameDistributedLoads(string patternFilter = null)
-		{
-			if (_useFallbackApi) return GetFrameLoads_DirectAPI(patternFilter);
-
-			var loads = new List<RawSapLoad>();
-			var schema = GetTableSchema("Frame Loads - Distributed", patternFilter);
-			if (schema == null || schema.RecordCount == 0)
-			{
-				if (SapUtils.CountFrames() > 0)
-				{
-					_useFallbackApi = true;
-					return GetFrameLoads_DirectAPI(patternFilter);
-				}
-				return loads;
-			}
-
-			string colFrame = schema.FindColumn("Frame");
-			string colPattern = schema.FindColumn("LoadPat", "OutputCase");
-			string colDir = schema.FindColumn("Dir");
-			string colCoordSys = schema.FindColumn("CoordSys");
-			string colFOverLA = schema.FindColumn("FOverLA", "FOverL");
-			string colFOverLB = schema.FindColumn("FOverLB");
-			string colAbsA = schema.FindColumn("AbsDistA");
-			string colAbsB = schema.FindColumn("AbsDistB");
-			string colRelA = schema.FindColumn("RelDistA");
-			string colRelB = schema.FindColumn("RelDistB");
-
-			if (colFrame == null || colPattern == null || colDir == null)
-			{
-				_useFallbackApi = true;
-				return GetFrameLoads_DirectAPI(patternFilter);
-			}
-
-			for (int r = 0; r < schema.RecordCount; r++)
-			{
-				string frameName = schema.GetString(r, colFrame);
-				string pattern = schema.GetString(r, colPattern);
-				if (string.IsNullOrEmpty(frameName) || string.IsNullOrEmpty(pattern)) continue;
-				if (!string.IsNullOrEmpty(patternFilter) && !pattern.Equals(patternFilter, StringComparison.OrdinalIgnoreCase)) continue;
-
-				double valA = colFOverLA != null ? schema.GetDouble(r, colFOverLA) : 0.0;
-				double valB = colFOverLB != null ? schema.GetDouble(r, colFOverLB) : valA;
-				double avgVal = (valA + valB) / 2.0;
-				// CRITICAL FIX: Store magnitude WITH sign preserved (no Math.Abs)
-				double magnitude = SapUtils.ConvertLoadToKnPerM(avgVal);
-
-				string dir = schema.GetString(r, colDir) ?? "Gravity";
-				string sys = schema.GetString(r, colCoordSys) ?? "Global";
-
-				double absA = colAbsA != null ? schema.GetDouble(r, colAbsA) : 0.0;
-				double absB = colAbsB != null ? schema.GetDouble(r, colAbsB) : 0.0;
-				double relA = colRelA != null ? schema.GetDouble(r, colRelA) : 0.0;
-				double relB = colRelB != null ? schema.GetDouble(r, colRelB) : 0.0;
-
-				bool hasAbs = Math.Abs(absA) > 1e-9 || Math.Abs(absB) > 1e-9;
-				bool isRelative = !hasAbs && (Math.Abs(relA) > 1e-9 || Math.Abs(relB) > 1e-9);
-				double distStart = hasAbs ? absA : relA;
-				double distEnd = hasAbs ? absB : relB;
-
-				int dirCode = NormalizeDirectionCode(dir);
-				string dirDisplay = GetDirectionDisplayName(dirCode, frameName); // FIX: Pass element name
-
-				var vec = CalculateForceVector(frameName, magnitude, dirCode, sys);
-				double z = GetElementElevation(frameName, "Frame");
-
-				var raw = new RawSapLoad
-				{
-					ElementName = frameName,
-					LoadPattern = pattern,
-					Value1 = magnitude, // Preserve sign from SAP
-					LoadType = "FrameDistributed",
-					Direction = dirDisplay,
-					DirectionCode = dirCode,
-					CoordSys = sys,
-					DistStart = distStart,
-					DistEnd = distEnd,
-					IsRelative = isRelative,
-					ElementZ = z
-				};
-				raw.SetForceVector(vec);
-				loads.Add(raw);
-			}
-
-			return loads;
-		}
-
-		public List<RawSapLoad> ReadAreaUniformLoads(string patternFilter = null)
-		{
-			if (_useFallbackApi) return GetAreaLoads_DirectAPI(patternFilter);
-
-			var loads = new List<RawSapLoad>();
-			var schema = GetTableSchema("Area Loads - Uniform", patternFilter);
-			if (schema == null || schema.RecordCount == 0)
-			{
-				try
-				{
-					int c = 0; string[] n = null; _model.AreaObj.GetNameList(ref c, ref n);
-					if (c > 0) { _useFallbackApi = true; return GetAreaLoads_DirectAPI(patternFilter); }
-				}
-				catch { }
-				return loads;
-			}
-
-			string colArea = schema.FindColumn("Area");
-			string colPat = schema.FindColumn("LoadPat", "OutputCase");
-			string colVal = schema.FindColumn("UnifLoad");
-			string colDir = schema.FindColumn("Dir");
-			string colCoordSys = schema.FindColumn("CoordSys");
-
-			if (colArea == null || colPat == null || colDir == null)
-			{
-				_useFallbackApi = true;
-				return GetAreaLoads_DirectAPI(patternFilter);
-			}
-
-			for (int r = 0; r < schema.RecordCount; r++)
-			{
-				string area = schema.GetString(r, colArea);
-				string pat = schema.GetString(r, colPat);
-				if (string.IsNullOrEmpty(area) || string.IsNullOrEmpty(pat)) continue;
-				if (!string.IsNullOrEmpty(patternFilter) && !pat.Equals(patternFilter, StringComparison.OrdinalIgnoreCase)) continue;
-
-				double val = schema.GetDouble(r, colVal);
-				// CRITICAL FIX: Store magnitude WITH sign preserved
-				double magnitude = SapUtils.ConvertLoadToKnPerM2(val);
-
-                // [FILTER] Ignore zero loads
-                if (Math.Abs(magnitude) < 1e-9) continue;
-
-				string dir = schema.GetString(r, colDir) ?? "Gravity";
-				string sys = schema.GetString(r, colCoordSys) ?? "Local";
-
-				int dirCode = NormalizeDirectionCode(dir);
-				string dirDisplay = GetDirectionDisplayName(dirCode, area); // FIX: Pass element name
-				var vec = CalculateForceVector(area, magnitude, dirCode, sys);
-				double z = GetElementElevation(area, "Area");
-
-				var raw = new RawSapLoad
-				{
-					ElementName = area,
-					LoadPattern = pat,
-					Value1 = magnitude, // Preserve sign
-					LoadType = "AreaUniform",
-					Direction = dirDisplay,
-					DirectionCode = dirCode,
-					CoordSys = sys,
-					ElementZ = z
-				};
-				raw.SetForceVector(vec);
-				loads.Add(raw);
-			}
-
-			return loads;
-		}
-
-		public List<RawSapLoad> ReadAreaUniformToFrameLoads(string patternFilter = null)
-		{
-			if (_useFallbackApi) return GetAreaUniformToFrameLoads_DirectAPI(patternFilter);
-
-			var loads = new List<RawSapLoad>();
-			var schema = GetTableSchema("Area Loads - Uniform To Frame", patternFilter);
-			if (schema == null || schema.RecordCount == 0)
-			{
-				try { int c = 0; string[] n = null; _model.AreaObj.GetNameList(ref c, ref n); if (c > 0) { _useFallbackApi = true; return GetAreaUniformToFrameLoads_DirectAPI(patternFilter); } }
-				catch { }
-				return loads;
-			}
-
-			string colArea = schema.FindColumn("Area");
-			string colPat = schema.FindColumn("LoadPat");
-			string colVal = schema.FindColumn("UnifLoad");
-			string colDir = schema.FindColumn("Dir");
-			string colDist = schema.FindColumn("DistType");
-			string colCoordSys = schema.FindColumn("CoordSys");
-
-			if (colArea == null || colPat == null || colDir == null)
-			{
-				_useFallbackApi = true;
-				return GetAreaUniformToFrameLoads_DirectAPI(patternFilter);
-			}
-
-			for (int r = 0; r < schema.RecordCount; r++)
-			{
-				string area = schema.GetString(r, colArea);
-				string pat = schema.GetString(r, colPat);
-				if (string.IsNullOrEmpty(area) || string.IsNullOrEmpty(pat)) continue;
-				if (!string.IsNullOrEmpty(patternFilter) && !pat.Equals(patternFilter, StringComparison.OrdinalIgnoreCase)) continue;
-
-				double val = schema.GetDouble(r, colVal);
-				// CRITICAL FIX: Store magnitude WITH sign preserved
-				double magnitude = SapUtils.ConvertLoadToKnPerM2(val);
-				string dir = schema.GetString(r, colDir) ?? "Gravity";
-				string sys = schema.GetString(r, colCoordSys) ?? "Global";
-
-				int dirCode = NormalizeDirectionCode(dir);
-				string dirDisplay = GetDirectionDisplayName(dirCode, area); // FIX: Pass element name
-				var vec = CalculateForceVector(area, magnitude, dirCode, sys);
-				double z = GetElementElevation(area, "Area");
-
-				var raw = new RawSapLoad
-				{
-					ElementName = area,
-					LoadPattern = pat,
-					Value1 = magnitude, // Preserve sign
-					LoadType = "AreaUniformToFrame",
-					Direction = dirDisplay,
-					DirectionCode = dirCode,
-					CoordSys = sys,
-					DistributionType = schema.GetString(r, colDist),
-					ElementZ = z
-				};
-				raw.SetForceVector(vec);
-				loads.Add(raw);
-			}
-
-			return loads;
-		}
-
-		public List<RawSapLoad> ReadJointLoads(string patternFilter = null)
-		{
-			if (_useFallbackApi) return GetJointLoads_DirectAPI(patternFilter);
-
-			var loads = new List<RawSapLoad>();
-			var schema = GetTableSchema("Joint Loads - Force", patternFilter);
-			if (schema == null || schema.RecordCount == 0) return loads;
-
-			string colJoint = schema.FindColumn("Joint");
-			string colPat = schema.FindColumn("LoadPat");
-			string colF1 = schema.FindColumn("F1");
-			string colF2 = schema.FindColumn("F2");
-			string colF3 = schema.FindColumn("F3");
-			string colSys = schema.FindColumn("CoordSys");
-
-			if (colJoint == null || colPat == null)
-			{
-				_useFallbackApi = true;
-				return GetJointLoads_DirectAPI(patternFilter);
-			}
-
-			for (int r = 0; r < schema.RecordCount; r++)
-			{
-				string joint = schema.GetString(r, colJoint);
-				string pat = schema.GetString(r, colPat);
-				if (string.IsNullOrEmpty(joint) || string.IsNullOrEmpty(pat)) continue;
-				if (!string.IsNullOrEmpty(patternFilter) && !pat.Equals(patternFilter, StringComparison.OrdinalIgnoreCase)) continue;
-
-				double f1 = schema.GetDouble(r, colF1);
-				double f2 = schema.GetDouble(r, colF2);
-				double f3 = schema.GetDouble(r, colF3);
-				string sys = schema.GetString(r, colSys) ?? "Global";
-
-				double z = GetElementElevation(joint, "Point");
-
-				void AddComp(double val, string dirName, string localAxis)
-				{
-					if (Math.Abs(val) < 1e-6) return;
-					double mag = SapUtils.ConvertForceToKn(val);
-					int dirCode = NormalizeDirectionCode(localAxis);
-					var vec = CalculateForceVector(joint, mag, dirCode, sys);
-					string dirDisplay = string.IsNullOrEmpty(dirName) ? GetDirectionDisplayName(dirCode) : dirName;
-
-					var raw = new RawSapLoad
-					{
-						ElementName = joint,
-						LoadPattern = pat,
-						Value1 = mag,
-						LoadType = "PointForce",
-						Direction = dirDisplay,
-						DirectionCode = dirCode,
-						CoordSys = sys,
-						ElementZ = z
-					};
-					raw.SetForceVector(vec);
-					loads.Add(raw);
-				}
-
-				AddComp(f1, "F1/X", "1");
-				AddComp(f2, "F2/Y", "2");
-				AddComp(f3, "F3/Z", "3");
-			}
-
-			return loads;
-		}
-
-		#endregion
 
 		#region FALLBACK MODE: Direct API Readers
 
