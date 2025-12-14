@@ -1197,19 +1197,17 @@ namespace DTS_Engine.Core.Engines
             return $"{env.Width / 1000.0:0.##}x{env.Height / 1000.0:0.##}";
         }
 
-        // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
-        // [FIX v5.2] STRICT ROUTING: Frame là Frame, Area là Area. 
-        // Không còn auto-reroute sang Area khi thiếu geometry.
+        // --- XỬ LÝ TẢI THANH (FRAME) - ENGINEERING STYLE v7.0 ---
+        // Full vs Partial separation, Calculator formulas, engineering-focused output
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
-            Log($"[ProcessFrameLoads] Processing {loads.Count} loads. Val={loadVal}, Dir={dir}");
+            Log($"[ProcessFrameLoads v7.0] Processing {loads.Count} loads. Val={loadVal}, Dir={dir}");
             
             var frameItems = new List<FrameAuditItem>();
             int skipCount = 0;
 
             foreach (var load in loads)
             {
-                // [v6.0] Type-safe lookup: Frame loads -> Frame dictionary only
                 var info = _inventory.GetFrame(load.ElementName);
                 if (info == null)
                 {
@@ -1217,23 +1215,37 @@ namespace DTS_Engine.Core.Engines
                     skipCount++;
                     continue;
                 }
-                
+
                 var frame = info.FrameGeometry;
-
                 string primaryGrid = DeterminePrimaryGrid(frame);
-
-                double startM, endM;
-                double coveredLength = CalculateCoveredLengthMeters(load, frame, out startM, out endM);
-                if (coveredLength < 1e-6)
+                
+                // Calculate load length
+                double frameLen = frame.Length3D * UnitManager.Info.LengthScaleToMeter;
+                double startM = 0, endM = 0;
+                
+                if (load.IsRelative) 
                 {
-                    // [FIX v5.9] Fallback for full coverage (or vertical elements where Length2D~0)
-                    // Must use 3D Length for columns!
-                    coveredLength = frame.Length3D * UnitManager.Info.LengthScaleToMeter;
-                    startM = 0;
-                    endM = coveredLength;
+                    startM = load.DistStart * frameLen;
+                    endM = load.DistEnd * frameLen;
+                } 
+                else 
+                {
+                    startM = load.DistStart * UnitManager.Info.LengthScaleToMeter;
+                    endM = load.DistEnd * UnitManager.Info.LengthScaleToMeter;
+                }
+                
+                double loadLen = Math.Abs(endM - startM);
+                if (loadLen < 1e-6) loadLen = frameLen; // Fallback for full load
+                
+                // Logic to determine Full Load: Covers >98% OR is a column (Length2D ~ 0)
+                bool isFull = false;
+                if (frameLen > 0.001)
+                {
+                    if (loadLen >= frameLen * 0.98) isFull = true;
+                    if (frame.Length2D < 1e-4) isFull = true; // Column = always "full"
                 }
 
-                // [v6.0] Calculate Global Interval for load continuity analysis
+                // Calculate Global Interval for span analysis
                 var globalInterval = CalculateGlobalInterval(load, frame);
 
                 frameItems.Add(new FrameAuditItem
@@ -1241,88 +1253,142 @@ namespace DTS_Engine.Core.Engines
                     Load = load,
                     Frame = frame,
                     PrimaryGrid = primaryGrid,
-                    Length = coveredLength,
+                    Length = loadLen,
                     StartM = startM,
                     EndM = endM,
                     GlobalStart = globalInterval.Start,
-                    GlobalEnd = globalInterval.End
+                    GlobalEnd = globalInterval.End,
+                    IsFullLoad = isFull
                 });
             }
 
-            Log($"[ProcessFrameLoads] Valid frames: {frameItems.Count}, Skipped: {skipCount}");
-            
+            Log($"[ProcessFrameLoads v7.0] Valid: {frameItems.Count}, Skipped: {skipCount}, Full: {frameItems.Count(f => f.IsFullLoad)}, Partial: {frameItems.Count(f => !f.IsFullLoad)}");
             if (frameItems.Count == 0) return;
 
-            // [FIX v5.3] Use ElementClassifier for strict Beam/Column/Oblique classification
-            var groups = frameItems.GroupBy(f => new 
-            { 
-                Grid = f.PrimaryGrid, 
-                Type = GetFrameStructuralTypeName(f.Frame)
-            });
+            // Group by [Grid] + [Structural Type]
+            var gridGroups = frameItems.GroupBy(f => new { Grid = f.PrimaryGrid, Type = GetFrameStructuralTypeName(f.Frame) });
 
-            foreach (var grp in groups)
+            foreach (var grp in gridGroups)
             {
                 string gridName = grp.Key.Grid;
                 string structType = grp.Key.Type;
-                double totalLength = grp.Sum(f => f.Length);
-
-                // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
-                double signedForce = totalLength * loadVal;
-
-                // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
-                double fx = 0, fy = 0, fz = 0;
-                string loadDir = dir.ToUpper();
                 
-                if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(signedForce);
-                else if (loadDir.Contains("GLOBAL X")) fx = signedForce;
-                else if (loadDir.Contains("GLOBAL Y")) fy = signedForce;
-                else if (loadDir.Contains("GLOBAL Z")) fz = signedForce;
-                else
+                // Calculate cross-axis range for the entire group (e.g., "x 1-12")
+                string rangeDesc = DetermineCrossAxisRange(grp.ToList());
+                string fullGridLoc = string.IsNullOrEmpty(rangeDesc) ? gridName : $"{gridName} x {rangeDesc}";
+
+                // GROUP 1: Full Loads -> Aggregate into sum formula
+                var fullLoads = grp.Where(f => f.IsFullLoad).ToList();
+                if (fullLoads.Count > 0)
                 {
-                    // Fallback to legacy parsing if "Global" is not explicit
-                    if (dir.Contains("X")) fx = signedForce;
-                    else if (dir.Contains("Y")) fy = signedForce;
-                    else if (dir.Contains("Z")) fz = signedForce;
+                    CreateFullLoadEntry(fullLoads, fullGridLoc, loadVal, dir, structType, targetList);
                 }
 
-                string rangeDesc = DetermineCrossAxisRange(grp.ToList());
-
-                // [v6.0] Use Load Continuity Analysis for engineering-focused output
-                // Output: "Span 1-5" or "Span 1-2 & 4-5" instead of "Full Length"
-                var groupItems = grp.ToList();
-                bool isVertical = IsGridVertical(groupItems);
-                string explanation = AnalyzeLoadContinuity(groupItems, isVertical);
-
-                var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
-                
-                Log($"   -> Frame Group [{gridName}]: {elementNames.Count} elements, Length={totalLength:F2}m, Force={signedForce:F2}");
-
-                // Clean Direction String
-                string dirDisplay = dir.Replace("Global ", "");
-                if (dir.Contains("X")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "X";
-                else if (dir.Contains("Y")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "Y";
-                else if (dir.Contains("Z")) dirDisplay = (Math.Sign(signedForce) > 0 ? "+" : "-") + "Z";
-
-                // CRITICAL v4.4: Store signed values - these will be displayed and summed
-                targetList.Add(new AuditEntry
+                // GROUP 2: Partial Loads -> Individual rows with element ID and range
+                var partialLoads = grp.Where(f => !f.IsFullLoad).ToList();
+                foreach (var p in partialLoads)
                 {
-                    GridLocation = $"{gridName} x {rangeDesc}",
-                    Explanation = explanation,
-                    Quantity = totalLength,
-                    QuantityUnit = "m",
-                    UnitLoad = loadVal, // Signed value from SAP
-                    UnitLoadString = $"{loadVal:0.00}",
-                    TotalForce = signedForce, // Signed magnitude
-                    Direction = dirDisplay,
-                    DirectionSign = Math.Sign(signedForce), // Sign for display
-                    ForceX = fx, // Signed component
-                    ForceY = fy, // Signed component
-                    ForceZ = fz, // Signed component
-                    ElementList = elementNames,
-                    StructuralType = structType
-                });
+                    CreatePartialLoadEntry(p, fullGridLoc, loadVal, dir, structType, targetList);
+                }
             }
         }
+
+        #region Frame Load Entry Helpers v7.0
+
+        /// <summary>
+        /// Create display row for Full Load group: Sum lengths as formula (1.2 + 1.7 + ... or 3x(4.0))
+        /// </summary>
+        private void CreateFullLoadEntry(List<FrameAuditItem> items, string location, double loadVal, string dir, string structType, List<AuditEntry> targetList)
+        {
+            double totalLen = items.Sum(i => i.Length);
+            double force = totalLen * loadVal;
+            
+            // Group by length (rounded to 2 decimals) and create formula
+            var lenGroups = items.GroupBy(i => Math.Round(i.Length, 2))
+                                 .OrderByDescending(g => g.Key);
+            
+            var parts = new List<string>();
+            foreach (var g in lenGroups)
+            {
+                int count = g.Count();
+                double l = g.Key;
+                if (count > 2) 
+                    parts.Add($"{count}x{l:0.##}"); // Aggregate if many
+                else
+                {
+                    for (int k = 0; k < count; k++) 
+                        parts.Add($"{l:0.##}"); // List individually
+                }
+            }
+            string formula = string.Join("+", parts);
+            
+            // Truncate if too long, but prioritize showing formula
+            if (formula.Length > 50) 
+                formula = $"Sum={totalLen:0.00}m ({items.Count} elems)";
+
+            var elementNames = items.Select(x => x.Load.ElementName).Distinct().ToList();
+            AddFrameEntry(location, formula, totalLen, loadVal, force, dir, elementNames, structType, targetList);
+            
+            Log($"   -> Full [{location}]: {items.Count} elems, L={totalLen:0.00}m, F={force:0.00}");
+        }
+
+        /// <summary>
+        /// Create display row for Partial Load: Show element ID and load range (I=start-end)
+        /// </summary>
+        private void CreatePartialLoadEntry(FrameAuditItem item, string location, double loadVal, string dir, string structType, List<AuditEntry> targetList)
+        {
+            double force = item.Length * loadVal;
+            // Format: "217, I=0to2.5" - engineering clarity on load position
+            string explanation = $"{item.Load.ElementName}, I={item.StartM:0.##}to{item.EndM:0.##}";
+            
+            AddFrameEntry(location, explanation, item.Length, loadVal, force, dir, 
+                         new List<string> { item.Load.ElementName }, structType, targetList);
+            
+            Log($"   -> Partial [{location}]: {item.Load.ElementName}, L={item.Length:0.00}m, F={force:0.00}");
+        }
+
+        /// <summary>
+        /// Helper to create AuditEntry with consistent direction/vector handling
+        /// </summary>
+        private void AddFrameEntry(string loc, string expl, double qty, double unitLoad, double force, string dir, 
+                                   List<string> elems, string structType, List<AuditEntry> targetList)
+        {
+            double fx = 0, fy = 0, fz = 0;
+            string dUpper = dir.ToUpper();
+            int sign = Math.Sign(force);
+
+            // Direction mapping
+            if (dUpper.Contains("GRAV")) fz = -Math.Abs(force);
+            else if (dUpper.Contains("X")) fx = force;
+            else if (dUpper.Contains("Y")) fy = force;
+            else fz = force; // Default Z
+
+            // Clean direction display
+            string dirDisplay = dUpper.Replace("GLOBAL ", "");
+            if (dUpper.Contains("X")) dirDisplay = (sign > 0 ? "+" : "-") + "X";
+            else if (dUpper.Contains("Y")) dirDisplay = (sign > 0 ? "+" : "-") + "Y";
+            else if (dUpper.Contains("Z") || dUpper.Contains("GRAV")) dirDisplay = (sign > 0 ? "+" : "-") + "Z";
+
+            targetList.Add(new AuditEntry
+            {
+                GridLocation = loc,
+                Explanation = expl,
+                Quantity = qty,
+                QuantityUnit = "m",
+                UnitLoad = unitLoad,
+                UnitLoadString = $"{unitLoad:0.00}",
+                TotalForce = force,
+                Direction = dirDisplay,
+                DirectionSign = sign,
+                ForceX = fx, 
+                ForceY = fy, 
+                ForceZ = fz,
+                ElementList = elems,
+                StructuralType = structType
+            });
+        }
+
+        #endregion
 
         // [FIXED] Tính toán chiều dài chịu tải dựa trên 3D (dùng cho cả Dầm & Cột)
         private double CalculateCoveredLengthMeters(RawSapLoad load, SapFrame frame, out double startMeters, out double endMeters)
@@ -1379,6 +1445,7 @@ namespace DTS_Engine.Core.Engines
             // [v6.0] Global Coordinates for Interval Merging
             public double GlobalStart; // Global X or Y coordinate (mm)
             public double GlobalEnd;   // Global X or Y coordinate (mm)
+            public bool IsFullLoad;    // [v7.0] True if load covers >98% of element
         }
 
         /// <summary>
