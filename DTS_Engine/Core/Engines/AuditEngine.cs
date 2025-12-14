@@ -29,9 +29,12 @@ namespace DTS_Engine.Core.Engines
     {
         #region Constants & Fields
 
-        private const double STORY_TOLERANCE = 200.0; // mm
-        private const double GRID_SNAP_TOLERANCE = 250.0; // mm (increased slightly for better snapping)
-        private const double MIN_AREA_THRESHOLD_M2 = 0.0001;
+        // ĐƠN VỊ: Tất cả tính toán nội bộ dùng UNIT từ SAP hiện tại (thường là mm)
+        // GroupLoadsByStory: dùng load.ElementZ từ SapDatabaseReader (đơn vị SAP gốc)
+        // ProcessAreaLoads: switch sang kN_m_C (mét) để tính area
+        private const double STORY_TOLERANCE_MM = 200.0; // mm - cho grouping stories
+        private const double GRID_SNAP_TOLERANCE_MM = 250.0; // mm - cho snap grids
+        private const double MIN_AREA_THRESHOLD_M2 = 0.0001; // m² - threshold cho area
 
         // Cache grids tách biệt X và Y để tìm kiếm nhanh
         private List<SapUtils.GridLineRecord> _xGrids;
@@ -224,78 +227,99 @@ namespace DTS_Engine.Core.Engines
         /// Nhóm tải theo tầng (Story) dựa trên cao độ Z của phần tử.
         /// Uses DetermineElementStoryZ to pick top for vertical elements.
         /// </summary>
+        /// <summary>
+        /// Nhóm tải theo tầng (Story) dựa trên cao độ Z của phần tử.
+        /// REFACTORED: Dynamic Clustering (VBA-style) to catch intermediate levels.
+        /// </summary>
         private List<TempStoryBucket> GroupLoadsByStory(List<RawSapLoad> loads)
         {
-            var stories = SapUtils.GetStories()
-                .Where(s => s.IsElevation)
-                .OrderBy(s => s.Coordinate) // Sort ascending Z
-                .ToList();
+            // 1. Collect all valid Z-coordinates
+            var distinctZ = loads.Select(l => Math.Round(l.ElementZ, 1)) // Round to 0.1mm to reduce noise
+                                 .Distinct()
+                                 .OrderBy(z => z)
+                                 .ToList();
 
-            if (stories.Count == 0)
+            if (distinctZ.Count == 0) return new List<TempStoryBucket>();
+
+            // 2. Cluster Z-coordinates into physical levels (using tolerance)
+            // Each cluster represents a physical floor (e.g. 500mm, 4500mm, 6500mm)
+            var clusters = new List<List<double>>();
+            if (distinctZ.Any())
             {
-                return new List<TempStoryBucket> {
-                    new TempStoryBucket { StoryName = "All", Elevation = 0, Loads = loads.ToList() }
-                };
+                var currentCluster = new List<double> { distinctZ[0] };
+                clusters.Add(currentCluster);
+
+                for (int i = 1; i < distinctZ.Count; i++)
+                {
+                    double z = distinctZ[i];
+                    double prevZ = currentCluster.Average(); // Compare with cluster center/avg
+                    
+                    if (Math.Abs(z - prevZ) < STORY_TOLERANCE_MM) 
+                    {
+                        currentCluster.Add(z);
+                    }
+                    else
+                    {
+                        currentCluster = new List<double> { z };
+                        clusters.Add(currentCluster);
+                    }
+                }
             }
 
-            var buckets = stories.Select(s => new TempStoryBucket
+            // 3. Create buckets from clusters
+            var buckets = new List<TempStoryBucket>();
+            var sortedStories = _stories.OrderBy(s => s.Coordinate).ToList(); // Defined SAP Stories
+
+            foreach (var cluster in clusters)
             {
-                StoryName = s.Name ?? s.StoryName ?? $"Z={s.Coordinate}",
-                Elevation = s.Coordinate,
-                Loads = new List<RawSapLoad>()
-            }).ToList();
+                double avgZ = cluster.Average();
+                
+                // Try to name the cluster using SAP Stories
+                string bucketName = $"Elevation Z={avgZ:0}"; // Default name
+                
+                // Find matching SAP story
+                var match = sortedStories.FirstOrDefault(s => Math.Abs(s.Coordinate - avgZ) < STORY_TOLERANCE_MM);
+                if (match != null)
+                {
+                    bucketName = match.Name ?? match.StoryName ?? $"Z={match.Coordinate}";
+                }
 
-            // Tolerance 500mm
-            const double tolerance = 50.0;
+                buckets.Add(new TempStoryBucket
+                {
+                    StoryName = bucketName,
+                    Elevation = avgZ,
+                    Loads = new List<RawSapLoad>()
+                });
+            }
 
+            // 4. Assign loads to the nearest bucket
+            // Since we built buckets from the actual data, every load MUST find a home nearby.
             foreach (var load in loads)
             {
                 double z = load.ElementZ;
-                TempStoryBucket bestBucket = null;
-                double minDistance = double.MaxValue;
+                var bestBucket = buckets.FirstOrDefault(b => Math.Abs(b.Elevation - z) < STORY_TOLERANCE_MM);
 
-                // [FIX] Ưu tiên 1: Khớp chính xác (hoặc rất gần) với cao độ tầng
-                // Cột (MinZ) thường nằm chính xác trên cao độ tầng
-                foreach (var bucket in buckets)
-                {
-                    double dist = Math.Abs(z - bucket.Elevation);
-                    if (dist < 50.0) // Dung sai 50mm cho sai số vẽ/làm tròn
-                    {
-                        bestBucket = bucket;
-                        break; // Tìm thấy tầng chính xác, dừng tìm kiếm
-                    }
-                }
-
-                // Ưu tiên 2: Nếu không khớp chính xác, tìm tầng gần nhất (cho các phần tử lửng)
+                // Fallback: Find absolute nearest (shouldn't happen often if clustering is correct)
                 if (bestBucket == null)
                 {
-                    foreach (var bucket in buckets)
-                    {
-                        double dist = Math.Abs(z - bucket.Elevation);
-                        if (dist < minDistance)
-                        {
-                            minDistance = dist;
-                            bestBucket = bucket;
-                        }
-                    }
-                    Log($"   [STORY-MATCH] {load.ElementName} (Z={z}) -> Nearest Story: {bestBucket?.StoryName} (Diff={minDistance:F1})");
+                    bestBucket = buckets.OrderBy(b => Math.Abs(b.Elevation - z)).First();
                 }
 
-                if (bestBucket != null)
-                {
-                    bestBucket.Loads.Add(load);
-                }
-                else
-                {
-                    // Fallback an toàn (không nên xảy ra)
-                    buckets[0].Loads.Add(load);
-                    Log($"   [STORY-FALLBACK] {load.ElementName} (Z={z}) -> Force assigned to first bucket: {buckets[0].StoryName}");
-                }
+                bestBucket.Loads.Add(load);
             }
-            
-            Log($"[STORY-SUMMARY] Assigned {loads.Count} loads to {buckets.Count(b => b.Loads.Count > 0)} stories.");
 
-            return buckets;
+            // 5. Remove empty buckets and Sort Descending (Top-down)
+            var result = buckets.Where(b => b.Loads.Count > 0)
+                                .OrderByDescending(b => b.Elevation)
+                                .ToList();
+
+            Log($"[STORY-SUMMARY] Dynamic Grouping: {result.Count} levels identified from {loads.Count} loads.");
+            foreach (var b in result)
+            {
+                Log($"   > {b.StoryName} (Z~{b.Elevation:F0}): {b.Loads.Count} loads");
+            }
+
+            return result;
         }
 
         #endregion
@@ -309,6 +333,10 @@ namespace DTS_Engine.Core.Engines
                 StoryName = storyName,
                 Elevation = elevation
             };
+
+            // DEBUG: Log all load types received
+            var loadTypeSummary = loads.GroupBy(l => l.LoadType).Select(g => $"{g.Key}:{g.Count()}");
+            Log($"   [LOADTYPES] {storyName}: {string.Join(", ", loadTypeSummary)}");
 
             // Gom nhóm theo loại tải (Area, Frame, Point)
             var loadTypeGroups = loads.GroupBy(l => l.LoadType);
@@ -335,25 +363,39 @@ namespace DTS_Engine.Core.Engines
                 ValueGroups = new List<AuditValueGroup>()
             };
 
-            var valueGroups = loads.GroupBy(l => new { Val = Math.Round(l.Value1, 3), Dir = l.Direction });
-
-            foreach (var group in valueGroups.OrderByDescending(g => g.Key.Val))
+            // [FIX v4.13] Area loads: Chỉ group theo Value (BỎ Direction!)
+            // Vì ProcessAreaLoads sẽ tự xử lý Direction dựa trên effectiveAxis của element.
+            // Frame/Point loads: Vẫn group theo cả Value và Direction.
+            
+            if (loadType.Contains("Area"))
             {
-                double val = group.Key.Val;
-                string dir = group.Key.Dir;
-                var subLoads = group.ToList();
+                // Area: Group CHỈ theo Value
+                var valueOnlyGroups = loads.GroupBy(l => Math.Round(l.Value1, 3));
+                foreach (var group in valueOnlyGroups.OrderByDescending(g => g.Key))
+                {
+                    double val = group.Key;
+                    var subLoads = group.ToList();
+                    ProcessAreaLoads(subLoads, val, "", typeGroup.Entries);
+                }
+            }
+            else
+            {
+                // Frame/Point: Group theo Value + Direction
+                var valueGroups = loads.GroupBy(l => new { Val = Math.Round(l.Value1, 3), Dir = l.Direction });
+                foreach (var group in valueGroups.OrderByDescending(g => g.Key.Val))
+                {
+                    double val = group.Key.Val;
+                    string dir = group.Key.Dir;
+                    var subLoads = group.ToList();
 
-                if (loadType.Contains("Area"))
-                {
-                    ProcessAreaLoads(subLoads, val, dir, typeGroup.Entries);
-                }
-                else if (loadType.Contains("Frame"))
-                {
-                    ProcessFrameLoads(subLoads, val, dir, typeGroup.Entries);
-                }
-                else
-                {
-                    ProcessPointLoads(subLoads, val, dir, typeGroup.Entries);
+                    if (loadType.Contains("Frame"))
+                    {
+                        ProcessFrameLoads(subLoads, val, dir, typeGroup.Entries);
+                    }
+                    else
+                    {
+                        ProcessPointLoads(subLoads, val, dir, typeGroup.Entries);
+                    }
                 }
             }
 
@@ -363,9 +405,60 @@ namespace DTS_Engine.Core.Engines
             typeGroup.SubTotalFy = typeGroup.Entries.Sum(e => e.ForceY);
             typeGroup.SubTotalFz = typeGroup.Entries.Sum(e => e.ForceZ);
 
-            typeGroup.Entries = typeGroup.Entries.OrderBy(e => e.GridLocation).ToList();
+            // [FIX v4.9] User-defined Sorting: Direction (+X,-X,+Y,-Y) -> Grid Alpha -> Grid Num
+            typeGroup.Entries = typeGroup.Entries
+                .OrderBy(e => GetDirectionSortIndex(e.Direction))
+                .ThenBy(e => GetGridAlphaSort(e.GridLocation))
+                .ThenBy(e => GetGridNumericSort(e.GridLocation))
+                .ToList();
 
             return typeGroup;
+        }
+
+        // --- SORTING HELPERS (v4.9) ---
+
+        private int GetDirectionSortIndex(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return 9;
+            dir = dir.ToUpper().Trim();
+            if (dir.Contains("+X")) return 1;
+            if (dir.Contains("-X")) return 2;
+            if (dir.Contains("+Y")) return 3;
+            if (dir.Contains("-Y")) return 4;
+            return 5; // Others (Z, etc)
+        }
+
+        private string GetGridAlphaSort(string location)
+        {
+            if (string.IsNullOrEmpty(location)) return "ZZZ";
+            // Remove offset parts "(...)" to avoid parsing units as text
+            var mainPart = location.Split('(')[0]; 
+            var tokens = mainPart.Split(new[] { ' ', '-', 'x', '/', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            
+            // Find first token that is a Letter (A, B, AA...) and NOT keywords
+            var alphas = tokens.Where(t => 
+                char.IsLetter(t[0]) && 
+                !t.Equals("Grid", StringComparison.OrdinalIgnoreCase) && 
+                !t.Equals("No", StringComparison.OrdinalIgnoreCase)
+            ).OrderBy(t => t); // Order to find Min (A < B)
+
+            return alphas.FirstOrDefault() ?? "ZZZ";
+        }
+
+        private double GetGridNumericSort(string location)
+        {
+            if (string.IsNullOrEmpty(location)) return 999999;
+             // Remove offset parts "(...)" to avoid parsing offset numbers
+            var mainPart = location.Split('(')[0];
+            var tokens = mainPart.Split(new[] { ' ', '-', 'x', '/', ',' }, StringSplitOptions.RemoveEmptyEntries);
+
+            var nums = new List<double>();
+            foreach (var t in tokens)
+            {
+                if (double.TryParse(t, out double d)) nums.Add(d);
+            }
+
+            return nums.Count > 0 ? nums.Min() : 999999;
         }
 
         // --- XỬ LÝ TẢI DIỆN TÍCH (AREA - SMART GEOMETRY RECOGNITION & DECOMPOSITION) ---
@@ -417,235 +510,219 @@ namespace DTS_Engine.Core.Engines
         }
 
 
+        /// <summary>
+        /// ProcessAreaLoads v5.1 - DIRECT API với Unit Switch
+        /// - Tạm chuyển SAP về kN_m_C để lấy tọa độ mét, load kN/m²
+        /// - Sau xử lý, trả lại unit gốc
+        /// </summary>
         private void ProcessAreaLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
-            Log($"[ProcessAreaLoads v4.6] Processing {loads.Count} loads. Threshold={MIN_AREA_THRESHOLD_M2}, Val={loadVal}");
+            Log($"[ProcessAreaLoads v5.1] Processing {loads.Count} loads. Val={loadVal}");
 
-            // BƯỚC 1: GOM NHÓM CHI TIẾT (Dựa trên Global Axis đã tính sẵn)
-            var groups = new Dictionary<AreaGroupingKey, List<string>>(); // Key -> List<ElementName>
-            var groupAreas = new Dictionary<AreaGroupingKey, double>();   // Key -> Total Area
+            var model = SapUtils.GetModel();
+            if (model == null) { Log("[ERROR] Cannot get SAP Model"); return; }
+
+            // === BƯỚC 1: LƯU UNIT HIỆN TẠI VÀ CHUYỂN SANG kN_m_C ===
+            var originalUnit = SapUtils.GetSapCurrentUnit();
+            bool unitSwitched = false;
+            try
+            {
+                // Chuyển SAP về kN_m_C (mét, kN) - đơn vị chuẩn
+                if (model.SetPresentUnits(SAP2000v1.eUnits.kN_m_C) == 0)
+                {
+                    unitSwitched = true;
+                    Log($"   [UNIT] Switched to kN_m_C (was {originalUnit})");
+                }
+            }
+            catch { }
+
+            // DEBUG TRACE
+            var _trace = new System.Text.StringBuilder();
+            _trace.AppendLine(new string('=', 150));
+            _trace.AppendLine($"[ProcessAreaLoads v5.1 - kN_m_C Mode] Timestamp: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            _trace.AppendLine($"Original Unit: {originalUnit}, Switched: {unitSwitched}");
+            _trace.AppendLine($"Input: {loads.Count} loads, LoadValue={loadVal} (already in kN/m²)");
+            _trace.AppendLine(new string('-', 150));
+            _trace.AppendLine($"{"Elem",-8} {"mat[2,5,8]",-20} {"Axis",-12} {"Sign",-6} {"AreaM2",-10} {"PlaneBin",-10} GroupKey");
+            _trace.AppendLine(new string('-', 150));
+
+            var groups = new Dictionary<string, List<(RawSapLoad Load, double AreaM2, string Axis, int Sign, SapArea Geom)>>();
+
 
             foreach (var load in loads)
             {
-                var info = _inventory.GetElement(load.ElementName);
-                if (info == null) 
+                string name = load.ElementName;
+
+                // 1. LẤY MA TRẬN TRANSFORMATION TỪ API
+                double[] mat = new double[9];
+                int ret = model.AreaObj.GetTransformationMatrix(name, ref mat, true);
+                if (ret != 0) { _trace.AppendLine($"{name,-8} [SKIP: No Matrix]"); continue; }
+
+                // Global Direction = Cột 3 của ma trận (Local 3 -> Global)
+                double gx = mat[2], gy = mat[5], gz = mat[8];
+                string globalAxis = "Mix"; int sign = 1;
+                if (Math.Abs(gx) > 0.7) { globalAxis = "Global X"; sign = gx > 0 ? 1 : -1; }
+                else if (Math.Abs(gy) > 0.7) { globalAxis = "Global Y"; sign = gy > 0 ? 1 : -1; }
+                else if (Math.Abs(gz) > 0.7) { globalAxis = "Global Z"; sign = gz > 0 ? 1 : -1; }
+
+                // 2. LẤY TỌA ĐỘ ĐIỂM TỪ API
+                int numPts = 0; string[] ptNames = null;
+                ret = model.AreaObj.GetPoints(name, ref numPts, ref ptNames);
+                if (ret != 0 || numPts < 3) { _trace.AppendLine($"{name,-8} [SKIP: No Points]"); continue; }
+
+                var pts = new List<(double x, double y, double z)>();
+                foreach (var pn in ptNames)
                 {
-                    Log($"   [SKIP] {load.ElementName}: Not found in Inventory.");
-                    continue;
+                    double x = 0, y = 0, z = 0;
+                    if (model.PointObj.GetCoordCartesian(pn, ref x, ref y, ref z) == 0)
+                        pts.Add((x, y, z));
                 }
-                if (info.AreaGeometry == null)
+                if (pts.Count < 3) continue;
+
+                // 3. TÍNH DIỆN TÍCH 3D (tọa độ đã ở mét do unit switch)
+                double sumX = 0, sumY = 0, sumZ = 0;
+                var p0 = pts[0];
+                for (int k = 1; k < pts.Count - 1; k++)
                 {
-                     Log($"   [SKIP] {load.ElementName}: No AreaGeometry.");
-                     continue;
+                    var p1 = pts[k]; var p2 = pts[k + 1];
+                    double v1x = p1.x - p0.x, v1y = p1.y - p0.y, v1z = p1.z - p0.z;
+                    double v2x = p2.x - p0.x, v2y = p2.y - p0.y, v2z = p2.z - p0.z;
+                    sumX += v1y * v2z - v1z * v2y;
+                    sumY += v1z * v2x - v1x * v2z;
+                    sumZ += v1x * v2y - v1y * v2x;
                 }
+                // Tọa độ đã ở mét (kN_m_C) -> diện tích trực tiếp là m²
+                double areaM2 = 0.5 * Math.Sqrt(sumX * sumX + sumY * sumY + sumZ * sumZ);
 
-                // 1. Lấy thông tin trục chuẩn từ Inventory
-                string axisName = info.GlobalAxisName;
-                int sign = info.DirectionSign;
-                
-                // Logging Area
-                double areaM2 = info.Area / 1_000_000.0;
-                // Log($"   > El={load.ElementName} Axis={axisName} Area={info.Area}mm2 ({areaM2:F6}m2)");
+                // 4. PLANE COORDINATE (mét)
+                double planeCoord = globalAxis.Contains("X") ? pts.Average(p => p.x) :
+                                   globalAxis.Contains("Y") ? pts.Average(p => p.y) : pts.Average(p => p.z);
+                // Tolerance 0.5m cho grouping walls cùng plane
+                long planeBin = (long)Math.Round(planeCoord / 0.5);
 
-                Log($"   > Processing {load.ElementName}: Axis={axisName}, Sign={sign}, LoadVal={load.Value1}");
+                // 5. GROUP KEY
+                string groupKey = globalAxis.Contains("Z")
+                    ? $"SLAB|{(load.Direction ?? "").Trim().ToUpperInvariant()}|{load.Value1:F4}"
+                    : $"WALL|{globalAxis}|{load.Value1:F4}|{planeBin}|{sign}";
 
-                // 2. Xác định Position (Coordinate của mặt phẳng)
-                // Nếu Global +Z/-Z (Sàn) -> Lấy Z trung bình
-                // Nếu Global +X/-X (Vách đứng X) -> Lấy X trung bình
-                // Nếu Global +Y/-Y (Vách đứng Y) -> Lấy Y trung bình
-                double position = 0;
-                if (axisName.Contains("Z")) position = info.AverageZ;
-                else if (axisName.Contains("X") || axisName.Contains("Y"))
-                {
-                     if (info.AreaGeometry != null && info.AreaGeometry.BoundaryPoints.Count > 0)
-                     {
-                         if (axisName.Contains("X")) position = info.AreaGeometry.BoundaryPoints.Average(p => p.X);
-                         else position = info.AreaGeometry.BoundaryPoints.Average(p => p.Y);
-                     }
-                     else
-                     {
-                         // Fallback internal
-                         position = info.AverageZ;
-                     }
-                }
-                else position = info.AverageZ; // Default
+                // Tạo SapArea để dùng cho NTS
+                var sapArea = new SapArea { Name = name, BoundaryPoints = pts.Select(p => new Point2D(p.x, p.y)).ToList(), ZValues = pts.Select(p => p.z).ToList() };
 
-                // Rounding for better grouping
-                position = Math.Round(position, 3);
+                _trace.AppendLine($"{name,-8} ({gx:F2},{gy:F2},{gz:F2})     {globalAxis,-12} {sign,-6} {areaM2,-10:F2} {planeBin,-10} {groupKey}");
 
-                var key = new AreaGroupingKey
-                {
-                    GlobalAxis = axisName,
-                    Position = position,
-                    LoadValue = load.Value1,
-                    LoadDir = load.Direction,
-                    DirectionSign = sign
-                };
-                
-                Log($"     -> Group Key: Axis={key.GlobalAxis}, Pos={key.Position}, Val={key.LoadValue}");
-
-                if (!groups.ContainsKey(key))
-                {
-                    groups[key] = new List<string>();
-                    groupAreas[key] = 0;
-                }
-
-                groups[key].Add(load.ElementName);
-                groupAreas[key] += areaM2;
+                if (!groups.ContainsKey(groupKey))
+                    groups[groupKey] = new List<(RawSapLoad, double, string, int, SapArea)>();
+                groups[groupKey].Add((load, areaM2, globalAxis, sign, sapArea));
             }
 
-            Log($"[ProcessAreaLoads] Created {groups.Count} groups from {loads.Count} loads.");
+            Log($"[ProcessAreaLoads] Created {groups.Count} groups.");
+            _trace.AppendLine(); _trace.AppendLine($"Total Groups: {groups.Count}");
+            _trace.AppendLine(new string('-', 150));
 
-            // BƯỚC 2: TẠO ENTRY BÁO CÁO
+            // XỬ LÝ TỪNG NHÓM
             foreach (var kv in groups)
             {
-                var key = kv.Key;
-                var elementNames = kv.Value;
-                double totalArea = groupAreas[key];
-                
-                Log($"     -> Filter Check [Key={key.GlobalAxis}/{key.Position}]: TotalArea={totalArea:F6} m2");
-
-                if (totalArea < MIN_AREA_THRESHOLD_M2) 
-                {
-                     Log("        [FILTERED] Too small.");
-                     continue;
-                }
-
-                // --- FORCE CALCULATION ---
-                // Force = LoadValue * Area * DirectionSign (hướng của vector pháp tuyến)
-                // LoadValue đã có dấu từ SAP. DirectionSign (+1/-1) cho biết vector hướng theo trục dương hay âm.
-                
-                // Về độ lớn tuyệt đối:
-                double magnitude = Math.Abs(key.LoadValue * totalArea);
-                
-                // Về vector components:
-                // Nếu Global +Z: ForceZ = magnitude * (+1) = +F
-                // Nếu Global -Z: ForceZ = magnitude * (-1) = -F
-                // Nhưng LoadValue của Gravity thường là Âm (-).
-                // Ví dụ Gravity Load = -5. Normal = +Z (Sàn).
-                // Force thực tế là hướng xuống (-Z). 
-                // Force = (-5) * Area * (+1) = -5*Area. Đúng.
-                
-                // Ví dụ Wind Pressure = +1. Normal = +X (Vách đón gió).
-                // Force = (+1) * Area * (+1) = +X. Đúng.
-                
-                // Ví dụ Wind Suction = -1. Normal = +X (Vách hút gió).
-                // Force = (-1) * Area * (+1) = -X. Đúng.
-
-                double fx = 0, fy = 0, fz = 0;
-                if (key.GlobalAxis.Contains("X")) fx = key.LoadValue * totalArea * key.DirectionSign;
-                if (key.GlobalAxis.Contains("Y")) fy = key.LoadValue * totalArea * key.DirectionSign;
-                if (key.GlobalAxis.Contains("Z")) fz = key.LoadValue * totalArea * key.DirectionSign;
-
-                // Tổng hợp lại
-                double totalForceSigned = key.LoadValue * totalArea * key.DirectionSign;
-
-                // Location Description
-                // Lấy bounding box của các phần tử trong nhóm để tìm Grid
-                // (Tạm thời simplified: Liệt kê Grid range của phần tử đầu và cuối)
-                string locationDesc = GetGroupGridLocation(elementNames);
-
-                // Clean Direction String
-                string dirDisplay = key.GlobalAxis.Replace("Global ", "");
-                if (key.GlobalAxis.Contains("X")) dirDisplay = (key.DirectionSign > 0 ? "+" : "-") + "X";
-                else if (key.GlobalAxis.Contains("Y")) dirDisplay = (key.DirectionSign > 0 ? "+" : "-") + "Y";
-                else if (key.GlobalAxis.Contains("Z")) dirDisplay = (key.DirectionSign > 0 ? "+" : "-") + "Z";
-                
-                // --- SMART CALCULATOR LOGIC ---
-                // Re-added: Combine geometry and decompose into rectangles
-                string calculatorFormula = $"~{totalArea:0.00}";
                 try
                 {
-                    Geometry combinedGeom = null;
-                    foreach (var name in elementNames)
-                    {
-                        var info = _inventory.GetElement(name);
-                        if (info?.AreaGeometry == null) continue;
+                    var items = kv.Value;
+                    if (items.Count == 0) continue;
 
-                        // Project to 2D based on plane (XY, XZ, or YZ)
-                        // This ensures walls are treated as 2D shapes for "Length x Height" calculation
-                        var projPts = ProjectAreaToBestPlane(info.AreaGeometry);
-                        var poly = CreateNtsPolygon(projPts);
-                        
-                        if (poly != null && poly.IsValid)
+                    bool isSlab = kv.Key.StartsWith("SLAB|");
+                    string globalAxis = items[0].Axis;
+                    int sign = items[0].Sign;
+                    var elementNames = items.Select(x => x.Load.ElementName).Distinct().ToList();
+                    double totalArea = items.Sum(x => x.AreaM2);
+
+                    _trace.AppendLine($">>> {kv.Key} | Elements: {string.Join(",", elementNames)} | Area={totalArea:F2}");
+
+                    if (totalArea < MIN_AREA_THRESHOLD_M2) { _trace.AppendLine("    [SKIP: Area<Threshold]"); continue; }
+
+                    // NTS GEOMETRY
+                    Geometry combinedGeom = null;
+                    try
+                    {
+                        foreach (var item in items)
                         {
-                            combinedGeom = combinedGeom == null ? poly : combinedGeom.Union(poly);
+                            var projPts = ProjectAreaToBestPlane(item.Geom);
+                            var poly = CreateNtsPolygon(projPts);
+                            if (poly?.IsValid == true) combinedGeom = combinedGeom == null ? poly : combinedGeom.Union(poly);
                         }
                     }
+                    catch { }
 
-                    if (combinedGeom != null)
+                    string formula = combinedGeom != null && !combinedGeom.IsEmpty ? FormatGeomGrouping(combinedGeom) : $"~{totalArea:0.00}";
+                    string location = GetGroupGridLocation(elementNames);
+
+                    // FORCE CALCULATION
+                    double loadValue = items[0].Load.Value1;
+                    double force = loadValue * totalArea * sign;
+                    double fx = 0, fy = 0, fz = 0;
+
+                    if (isSlab)
                     {
-                        // [FIX v4.5]: Use grouped formula (e.g., 6*(4*5))
-                        calculatorFormula = FormatGeomGrouping(combinedGeom);
+                        string loadDir = (items[0].Load.Direction ?? "").Trim().ToUpperInvariant();
+                        if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(force);
+                        else if (loadDir.Contains("X")) fx = force;
+                        else if (loadDir.Contains("Y")) fy = force;
+                        else fz = force;
                     }
-                }
-                catch (Exception ex)
-                {
-                    // Fallback if NTS fails
-                    System.Diagnostics.Debug.WriteLine($"Decomposition Error: {ex.Message}");
-                }
-                
-                Log($"     -> Group Formula: {calculatorFormula} (Area={totalArea:F2})");
+                    else
+                    {
+                        if (globalAxis.Contains("X")) fx = force;
+                        else if (globalAxis.Contains("Y")) fy = force;
+                        else fz = force;
+                    }
 
-                // --- FORCE DIRECTION CALCULATION (FIXED v4.5) ---
-                // Old logic: Derived from Element Axis (wrong for Lateral loads on Floors)
-                // New logic: Derived from Load Direction (Global X/Y/Z)
-                
-                // remove redundant earlier fx/fy/fz declarations
-                string loadDir = key.LoadDir.ToUpper();
+                    string dirDisplay = globalAxis.Contains("X") ? (sign > 0 ? "+X" : "-X") :
+                                        globalAxis.Contains("Y") ? (sign > 0 ? "+Y" : "-Y") :
+                                        (sign > 0 ? "+Z" : "-Z");
 
-                // Case 1: Gravity (Always -Z)
-                if (loadDir.Contains("GRAVITY"))
-                {
-                    fz = -Math.Abs(totalForceSigned);
-                }
-                // Case 2: Global X/Y/Z
-                else if (loadDir.Contains("GLOBAL X"))
-                {
-                    fx = totalForceSigned;
-                }
-                else if (loadDir.Contains("GLOBAL Y"))
-                {
-                    fy = totalForceSigned;
-                }
-                else if (loadDir.Contains("GLOBAL Z"))
-                {
-                    fz = totalForceSigned;
-                }
-                // Case 3: Local 3 (Projected) -> Use Element Normal (Legacy behavior)
-                // If user specifies Local 3, it acts along the element normal.
-                else 
-                {
-                     if (key.GlobalAxis.Contains("X")) fx = totalForceSigned;
-                     else if (key.GlobalAxis.Contains("Y")) fy = totalForceSigned;
-                     else if (key.GlobalAxis.Contains("Z")) fz = totalForceSigned;
-                     else
-                     {
-                         // final fallback: assume gravity
-                         fz = totalForceSigned;
-                     }
-                }
+                    _trace.AppendLine($"    Force={loadValue:F4}*{totalArea:F2}*{sign}={force:F2} | Dir={dirDisplay} | Fx={fx:F2},Fy={fy:F2},Fz={fz:F2}");
 
-                targetList.Add(new AuditEntry
+                    targetList.Add(new AuditEntry
+                    {
+                        GridLocation = location,
+                        Explanation = formula,
+                        Quantity = totalArea,
+                        QuantityUnit = "m²",
+                        UnitLoad = loadValue,
+                        UnitLoadString = $"{loadValue:0.00}",
+                        TotalForce = force,
+                        Direction = dirDisplay,
+                        DirectionSign = sign,
+                        ForceX = fx, ForceY = fy, ForceZ = fz,
+                        ElementList = elementNames,
+                        StructuralType = isSlab ? "Slab Elements" : "Wall Elements"
+                    });
+                    Log($"   [ADDED] {location}: {dirDisplay}, F={force:F2}");
+                }
+                catch (Exception ex) { _trace.AppendLine($"    [ERROR] {ex.Message}"); }
+            }
+
+            // WRITE DEBUG FILE
+            _trace.AppendLine(new string('=', 150));
+            _trace.AppendLine($"Total Entries: {targetList.Count}");
+            try
+            {
+                string file = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), $"AuditTrace_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                System.IO.File.WriteAllText(file, _trace.ToString());
+                System.Diagnostics.Process.Start("notepad.exe", file);
+            }
+            catch { }
+
+            // === BƯỚC CUỐI: TRẢ LẠI UNIT GỐC ===
+            if (unitSwitched)
+            {
+                try
                 {
-                    GridLocation = locationDesc,
-                    Explanation = calculatorFormula,
-                    Quantity = totalArea,
-                    QuantityUnit = "m²",
-                    UnitLoad = key.LoadValue,
-                    UnitLoadString = $"{key.LoadValue:0.00}",
-                    TotalForce = totalForceSigned,
-                    Direction = dirDisplay,
-                    DirectionSign = Math.Sign(totalForceSigned),
-                    ForceX = fx,
-                    ForceY = fy,
-                    ForceZ = fz,
-                    ElementList = elementNames.Distinct().ToList()
-                });
+                    model.SetPresentUnits(originalUnit);
+                    Log($"   [UNIT] Restored to {originalUnit}");
+                }
+                catch { }
             }
         }
 
-        // [ADDED v4.5] Helper for grouping geometry terms (Converted to Meters for Report)
+        // [ADDED v4.5] Helper for grouping geometry terms (Already in Meters after unit switch)
         private string FormatGeomGrouping(Geometry geom)
         {
             var terms = new List<string>();
@@ -653,8 +730,8 @@ namespace DTS_Engine.Core.Engines
             {
                 var g = geom.GetGeometryN(i);
                 var env = g.EnvelopeInternal;
-                // Format: 4*5 (Converted from mm to m)
-                string term = $"{(env.Width / 1000.0):0.##}*{(env.Height / 1000.0):0.##}";
+                // Tọa độ đã ở mét sau unit switch
+                string term = $"{env.Width:0.##}*{env.Height:0.##}";
                 terms.Add(term);
             }
 
@@ -732,7 +809,47 @@ namespace DTS_Engine.Core.Engines
             if (covered.Count == 1)
                 return covered.First().Name;
 
-            // No nearby grid
+            // [FIX v4.8] Robust Nearest Grid + Offset logic
+            // Instead of displaying raw coordinates (~7300..7300), find the closest grid.
+            
+            double width = max - min;
+            
+            // Case A: Narrow object (Wall/Beam) -> Single Nearest Grid
+            if (width < 1000.0) 
+            {
+                double center = (min + max) / 2.0;
+                var nearest = grids.OrderBy(g => Math.Abs(g.Coordinate - center)).FirstOrDefault();
+                if (nearest != null)
+                {
+                    double offset = center - nearest.Coordinate;
+                    double offsetM = offset / 1000.0;
+                    
+                    // Format: "A (+1.2m)" or "A (-0.5m)" or just "A" if very close
+                    if (Math.Abs(offset) < 50.0) return nearest.Name; // Practically on grid
+                    return $"{nearest.Name} ({offsetM:+#.0;-#.0}m)";
+                }
+            }
+            // Case B: Wide range (Slab width) -> Start & End Nearest Grids
+            else
+            {
+                 var nearStart = grids.OrderBy(g => Math.Abs(g.Coordinate - min)).FirstOrDefault();
+                 var nearEnd = grids.OrderBy(g => Math.Abs(g.Coordinate - max)).FirstOrDefault();
+                 
+                 if (nearStart != null && nearEnd != null)
+                 {
+                     if (nearStart == nearEnd) return nearStart.Name; // Should be covered by Case A usually
+                     
+                     double offStart = min - nearStart.Coordinate;
+                     double offEnd = max - nearEnd.Coordinate;
+                     
+                     string sPart = Math.Abs(offStart) < 50 ? nearStart.Name : $"{nearStart.Name}({offStart/1000.0:+#.0;-#.0}m)";
+                     string ePart = Math.Abs(offEnd) < 50 ? nearEnd.Name : $"{nearEnd.Name}({offEnd/1000.0:+#.0;-#.0}m)";
+                     
+                     return $"{sPart}-{ePart}";
+                 }
+            }
+        
+            // Ultimate fallback
             return $"(~{min:0}..{max:0})";
         }
 
@@ -1062,12 +1179,31 @@ namespace DTS_Engine.Core.Engines
         // --- XỬ LÝ TẢI THANH (FRAME) - SMART GROUPING THEOREM ---
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
+            Log($"[ProcessFrameLoads] Processing {loads.Count} loads. Val={loadVal}, Dir={dir}");
+            
             var frameItems = new List<FrameAuditItem>();
+            var areaLoads = new List<RawSapLoad>(); // Phần tử Area bị đánh nhầm type
+            int skipCount = 0;
 
             foreach (var load in loads)
             {
                 var info = _inventory.GetElement(load.ElementName);
-                if (info == null || info.FrameGeometry == null) continue;
+                if (info == null)
+                {
+                    Log($"   [SKIP] {load.ElementName}: info=null");
+                    skipCount++;
+                    continue;
+                }
+                
+                // FIX: Nếu element là Area mà load type là FrameDistributed 
+                // -> Đây là load tường/sàn, route sang ProcessAreaLoads
+                if (info.ElementType == "Area" || info.FrameGeometry == null)
+                {
+                    Log($"   [REROUTE] {load.ElementName}: Type={info.ElementType}, routing to Area processing");
+                    areaLoads.Add(load);
+                    continue;
+                }
+                
                 var frame = info.FrameGeometry;
 
                 string primaryGrid = DeterminePrimaryGrid(frame);
@@ -1092,13 +1228,28 @@ namespace DTS_Engine.Core.Engines
                 });
             }
 
+            Log($"[ProcessFrameLoads] Valid frames: {frameItems.Count}, Rerouted to Area: {areaLoads.Count}, Skipped: {skipCount}");
+            
+            // Process rerouted Area loads
+            if (areaLoads.Count > 0)
+            {
+                Log($"[ProcessFrameLoads] Processing {areaLoads.Count} rerouted loads as Area...");
+                ProcessAreaLoads(areaLoads, loadVal, dir, targetList);
+            }
+            
             if (frameItems.Count == 0) return;
 
-            var groups = frameItems.GroupBy(f => f.PrimaryGrid);
+            // [FIX v4.10] Group by Grid AND Structural Type to split Beams/Columns
+            var groups = frameItems.GroupBy(f => new 
+            { 
+                Grid = f.PrimaryGrid, 
+                Type = (Math.Abs(f.Frame.Z1 - f.Frame.Z2) > 500 || f.Frame.IsVertical) ? "Column Elements" : "Beam Elements"
+            });
 
             foreach (var grp in groups)
             {
-                string gridName = grp.Key;
+                string gridName = grp.Key.Grid;
+                string structType = grp.Key.Type;
                 double totalLength = grp.Sum(f => f.Length);
 
                 // CRITICAL v4.4: Calculate SIGNED force from loadVal (already contains SAP sign)
@@ -1156,7 +1307,8 @@ namespace DTS_Engine.Core.Engines
                     ForceX = fx, // Signed component
                     ForceY = fy, // Signed component
                     ForceZ = fz, // Signed component
-                    ElementList = elementNames
+                    ElementList = elementNames,
+                    StructuralType = structType
                 });
             }
         }
@@ -1423,7 +1575,7 @@ namespace DTS_Engine.Core.Engines
             var startGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - minVal)).First();
             double startDiff = minVal - startGrid.Coordinate;
 
-            if (isPoint || Math.Abs(maxVal - minVal) < GRID_SNAP_TOLERANCE)
+            if (isPoint || Math.Abs(maxVal - minVal) < GRID_SNAP_TOLERANCE_MM)
             {
                 // Format: A(+1.2m)
                 return FormatGridWithOffset(startGrid.Name, startDiff);
@@ -1441,7 +1593,7 @@ namespace DTS_Engine.Core.Engines
 
         private string FormatGridWithOffset(string name, double offsetMm)
         {
-            if (Math.Abs(offsetMm) < GRID_SNAP_TOLERANCE) return name;
+            if (Math.Abs(offsetMm) < GRID_SNAP_TOLERANCE_MM) return name;
             double offsetM = offsetMm / 1000.0;
             return $"{name}({offsetM:+0.#;-0.#}m)";
         }
@@ -1527,7 +1679,7 @@ namespace DTS_Engine.Core.Engines
 
             foreach (var z in allZ)
             {
-                var existingGroup = zGroups.FirstOrDefault(g => Math.Abs(g.Average() - z) <= STORY_TOLERANCE);
+                var existingGroup = zGroups.FirstOrDefault(g => Math.Abs(g.Average() - z) <= STORY_TOLERANCE_MM);
                 if (existingGroup != null) existingGroup.Add(z);
                 else zGroups.Add(new List<double> { z });
             }
@@ -1537,7 +1689,7 @@ namespace DTS_Engine.Core.Engines
             foreach (var group in zGroups)
             {
                 double avgZ = group.Average();
-                var match = stories.FirstOrDefault(s => Math.Abs(s.Elevation - avgZ) <= STORY_TOLERANCE);
+                var match = stories.FirstOrDefault(s => Math.Abs(s.Elevation - avgZ) <= STORY_TOLERANCE_MM);
                 string name = match != null ? match.Name : $"Z={avgZ / 1000.0:0.0}m";
 
                 if (!result.ContainsKey(name)) result[name] = avgZ;
@@ -1609,28 +1761,47 @@ namespace DTS_Engine.Core.Engines
                     double typeFy = loadType.SubTotalFy * forceFactor;
                     double typeFz = loadType.SubTotalFz * forceFactor;
 
-                    sb.AppendLine($"  [{typeName}] [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]");
+                    // CRITICAL v4.4: LoadType totals hidden from table header as per request v4.10
+                    // but we still calculate them for internal validation if needed.
+                    // Removed: sb.AppendLine($"  [{typeName}] [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]");
 
-                    // Setup cột
+                    // Setup cột (variable needed inside loop)
                     string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
 
-                    // Column Header formatting
-                    string hGrid = (isVN ? "Vị trí trục" : "Grid Location").PadRight(30);
-                    string hCalc = (isVN ? "Chi tiết" : "Calculator").PadRight(35);
-                    string hValue = $"Value({valueUnit})".PadRight(15);
-                    string hUnit = $"Unit Load({targetUnit}/{valueUnit})".PadRight(20);
-                    string hDir = (isVN ? "Hướng" : "Dir").PadRight(8);
-                    string hForce = $"Force({targetUnit})".PadRight(15);
-                    string hElem = (isVN ? "Phần tử" : "Elements");
+                    // [FIX v4.10] Split by Structural Type (Slab, Wall, Beam, Column)
+                    // Create separate tables for each structural type.
+                    var typeGroups = loadType.Entries.GroupBy(e => e.StructuralType).OrderBy(g => g.Key);
 
-                    sb.AppendLine($"    {hGrid}{hCalc}{hValue}{hUnit}{hDir}{hForce}{hElem}");
-                    sb.AppendLine($"    {new string('-', 160)}");
-
-                    var allEntries = loadType.Entries;
-
-                    foreach (var entry in allEntries.OrderByDescending(e => Math.Abs(e.TotalForce)))
+                    foreach (var subGroup in typeGroups)
                     {
-                        FormatDataRow(sb, entry, forceFactor, targetUnit);
+                        string structHeader = subGroup.Key;
+                        // Basic translation for VN
+                        if (isVN)
+                        {
+                            if (structHeader == "Slab Elements") structHeader = "Sàn (Slab)";
+                            else if (structHeader == "Wall Elements") structHeader = "Vách (Wall)";
+                            else if (structHeader == "Beam Elements") structHeader = "Dầm (Beam)";
+                            else if (structHeader == "Column Elements") structHeader = "Cột (Column)";
+                        }
+
+                        // Column Header formatting (Last column takes StructType name, e.g. "Slab Elements")
+                        string hGrid = (isVN ? "Vị trí trục" : "Grid Location").PadRight(30);
+                        string hCalc = (isVN ? "Chi tiết" : "Calculator").PadRight(35);
+                        string hValue = $"Value({valueUnit})".PadRight(15);
+                        string hUnit = $"Unit Load({targetUnit}/{valueUnit})".PadRight(20);
+                        string hDir = (isVN ? "Hướng" : "Dir").PadRight(8);
+                        string hForce = $"Force({targetUnit})".PadRight(15);
+                        string hElem = structHeader; 
+
+                        sb.AppendLine($"    {hGrid}{hCalc}{hValue}{hUnit}{hDir}{hForce}{hElem}");
+                        sb.AppendLine($"    {new string('-', 160)}");
+
+                        // Entries are already sorted in ProcessLoadType
+                        foreach (var entry in subGroup)
+                        {
+                            FormatDataRow(sb, entry, forceFactor, targetUnit);
+                        }
+                        sb.AppendLine();
                     }
                     sb.AppendLine();
                 }

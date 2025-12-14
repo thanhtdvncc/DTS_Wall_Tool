@@ -228,6 +228,9 @@ namespace DTS_Engine.Core.Data
         public string Direction { get; set; } // Gravity, X, Y
         public double DirectionSign { get; set; } = -1.0; // +1 or -1 for force direction
 
+        // NEW v4.10: Structural Type for Report Grouping (Slab, Wall, Beam, Column)
+        public string StructuralType { get; set; } = "General Elements";
+
         // NEW v4.2: Vector components for accurate summation
         public double ForceX { get; set; }
         public double ForceY { get; set; }

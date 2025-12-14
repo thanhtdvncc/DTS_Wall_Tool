@@ -71,6 +71,7 @@ namespace DTS_Engine.Core.Engines
         private void BuildFrames()
         {
             var frames = SapUtils.GetAllFramesGeometry();
+            Debug.WriteLine($"[BuildFrames] GetAllFramesGeometry returned {frames.Count} frames");
             foreach (var f in frames)
             {
                 // [FIX]: Luôn lấy vector từ API, không tự tính
