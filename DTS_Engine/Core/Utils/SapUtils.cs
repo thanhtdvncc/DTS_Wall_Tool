@@ -1063,53 +1063,23 @@ namespace DTS_Engine.Core.Utils
 
 			try
 			{
-				int tableVersion = 0;
-				string[] tableData = null;
-				int numberRecords = 0;
-				string[] fieldsKeysIncluded = null;
+				// [FIX v6.2] Use DIRECT API instead of Database Table
+				// Database Table "Joint Coordinates" was unreliable and columns were mis-matched
+				int count = 0;
+				string[] names = null;
+				int ret = model.PointObj.GetNameList(ref count, ref names);
+				
+				if (ret != 0 || count == 0 || names == null) 
+					return result;
 
-				string[] fieldKeyListInput = new string[] { "" };
-
-				int ret = model.DatabaseTables.GetTableForDisplayArray(
-					 "Joint Coordinates",
-					ref fieldKeyListInput, "All", ref tableVersion, ref fieldsKeysIncluded,
-				ref numberRecords, ref tableData
-					 );
-
-				if (ret == 0 && numberRecords > 0 && fieldsKeysIncluded != null && tableData != null)
+				foreach (var name in names)
 				{
-					int idxName = Array.IndexOf(fieldsKeysIncluded, "Joint");
-					int idxX = -1, idxY = -1, idxZ = -1;
-
-					for (int i = 0; i < fieldsKeysIncluded.Length; i++)
+					double x = 0, y = 0, z = 0;
+					ret = model.PointObj.GetCoordCartesian(name, ref x, ref y, ref z);
+					
+					if (ret == 0)
 					{
-						var f = fieldsKeysIncluded[i] ?? string.Empty;
-						var fl = f.ToLowerInvariant();
-						if (fl.Contains("x") || fl.Contains("coord1") || fl.Contains("globalx") || fl.Contains("xor")) idxX = i;
-						if (fl.Contains("y") || fl.Contains("coord2") || fl.Contains("globaly")) idxY = i;
-						if (fl.Contains("z") || fl.Contains("coord3") || fl.Contains("globalz")) idxZ = i;
-					}
-
-					if (idxName >= 0 && idxX >= 0 && idxY >= 0 && idxZ >= 0)
-					{
-						int cols = fieldsKeysIncluded.Length;
-						for (int r = 0; r < numberRecords; r++)
-						{
-							try
-							{
-								string name = tableData[r * cols + idxName] ?? string.Empty;
-								double x = 0, y = 0, z = 0;
-								double.TryParse(tableData[r * cols + idxX], NumberStyles.Any, CultureInfo.InvariantCulture, out x);
-								double.TryParse(tableData[r * cols + idxY], NumberStyles.Any, CultureInfo.InvariantCulture, out y);
-								double.TryParse(tableData[r * cols + idxZ], NumberStyles.Any, CultureInfo.InvariantCulture, out z);
-
-								result.Add(new SapPoint { Name = name, X = x, Y = y, Z = z });
-							}
-							catch (Exception ex)
-							{
-								System.Diagnostics.Debug.WriteLine($"GetAllPoints: row parse failed: {ex}");
-							}
-						}
+						result.Add(new SapPoint { Name = name, X = x, Y = y, Z = z });
 					}
 				}
 			}

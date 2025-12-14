@@ -402,6 +402,36 @@ namespace DTS_Engine.Commands
                 inventory.Build();
                 WriteMessage($"    {inventory.GetStatistics()}");
 
+                // [DEBUG] Print raw frame geometry to trace zero-length bug
+                WriteMessage("\n[STEP 1.5] Frame Geometry Sample (First 5 Frames with loads)...");
+                
+                // Get distributed loads
+                var distLoads = SapUtils.GetAllFrameDistributedLoads(pattern);
+                var frameNamesWithLoad = distLoads.Select(l => l.ElementName).Distinct().Take(5).ToList();
+                WriteMessage($"    Pattern '{pattern}' has {distLoads.Count} distributed load records on {distLoads.Select(l => l.ElementName).Distinct().Count()} frames.");
+
+                if (frameNamesWithLoad.Count == 0)
+                {
+                    WriteWarning("    ⚠️ NO FRAME DISTRIBUTED LOADS found for this pattern! Check pattern name.");
+                }
+                else
+                {
+                    foreach (var fname in frameNamesWithLoad)
+                    {
+                        var fInfo = inventory.GetFrame(fname);
+                        if (fInfo?.FrameGeometry != null)
+                        {
+                            var f = fInfo.FrameGeometry;
+                            WriteMessage($"    Frame '{fname}': Start({f.StartPt.X:0.00},{f.StartPt.Y:0.00},Z1={f.Z1:0.00}) -> End({f.EndPt.X:0.00},{f.EndPt.Y:0.00},Z2={f.Z2:0.00})");
+                            WriteMessage($"        L2D={f.Length2D:0.00}mm, L3D={f.Length3D:0.00}mm, IsVert={f.IsVertical}");
+                        }
+                        else
+                        {
+                            WriteError($"    Frame '{fname}': ❌ NOT FOUND in Inventory (Segregated Storage lookup failed?)");
+                        }
+                    }
+                }
+
                 // Initialize LoadReader (Data Access)
                 var model = SapUtils.GetModel();
                 ISapLoadReader loadReader = new SapDatabaseReader(model, inventory);
