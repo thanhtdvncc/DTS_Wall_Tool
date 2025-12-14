@@ -373,8 +373,10 @@ namespace DTS_Engine.Core.Engines
             var loadTypeSummary = loads.GroupBy(l => l.LoadType).Select(g => $"{g.Key}:{g.Count()}");
             Log($"   [LOADTYPES] {storyName}: {string.Join(", ", loadTypeSummary)}");
 
-            // Gom nhóm theo loại tải (Area, Frame, Point)
-            var loadTypeGroups = loads.GroupBy(l => l.LoadType);
+            // [FIX v7.2] Normalize load types to prevent duplicate tables
+            // "AreaUniform" and "AreaUniformToFrame" -> "Area"
+            // "FrameDistributed" and "FrameForce" -> "Frame"
+            var loadTypeGroups = loads.GroupBy(l => NormalizeLoadType(l.LoadType));
 
             foreach (var typeGroup in loadTypeGroups)
             {
@@ -387,6 +389,28 @@ namespace DTS_Engine.Core.Engines
 
             Log($"   [STORY-DONE] {storyName}: {storyGroup.LoadTypes.Count} load types, {storyGroup.LoadTypes.Sum(t => t.Entries.Count)} total entries.");
             return storyGroup;
+        }
+
+        /// <summary>
+        /// [v7.2] Normalize load type names to consolidate related types.
+        /// Prevents duplicate tables for AreaUniform/AreaUniformToFrame.
+        /// </summary>
+        private string NormalizeLoadType(string loadType)
+        {
+            if (string.IsNullOrEmpty(loadType)) return "Unknown";
+            
+            string upper = loadType.ToUpperInvariant();
+            
+            // Consolidate all Area types
+            if (upper.Contains("AREA")) return "Area";
+            
+            // Consolidate all Frame types  
+            if (upper.Contains("FRAME")) return "FrameDistributed";
+            
+            // Consolidate Point types
+            if (upper.Contains("POINT") || upper.Contains("JOINT")) return "PointForce";
+            
+            return loadType; // Keep original for unknown types
         }
 
         private AuditLoadTypeGroup ProcessLoadType(string loadType, List<RawSapLoad> loads)
