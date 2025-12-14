@@ -1282,14 +1282,23 @@ namespace DTS_Engine.Core.Engines
 
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
 
-                // Build segment details for partial loads
-                var partialSegments = grp.Where(f => f.StartM > 0.01 || Math.Abs(f.EndM - f.Frame.Length2D * UnitManager.Info.LengthScaleToMeter) > 0.01)
-                    .Select(f => $"{f.Load.ElementName}_{f.StartM:0.##}to{f.EndM:0.##}")
-                    .ToList();
-
-                string explanation = partialSegments.Count > 0
-                    ? string.Join(",", partialSegments)
-                    : "";
+                // [FIXED] Logic diễn giải thông minh hơn
+                string explanation = "";
+                
+                // Kiểm tra xem có phải tất cả đều chất tải full không
+                bool isAllFull = grp.All(f => Math.Abs(f.Length - (f.Frame.Length3D * UnitManager.Info.LengthScaleToMeter)) < 0.01);
+                
+                if (isAllFull)
+                {
+                    explanation = "Full Length";
+                }
+                else
+                {
+                    // Nếu chất tải từng đoạn, liệt kê chi tiết (tối đa 3 đoạn để không vỡ layout)
+                    var segments = grp.Select(f => $"{f.StartM:0.##}-{f.EndM:0.##}m").Distinct().Take(3).ToList();
+                    explanation = string.Join(", ", segments);
+                    if (grp.Select(f => $"{f.StartM}-{f.EndM}").Distinct().Count() > 3) explanation += "...";
+                }
 
                 var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
                 
@@ -1322,16 +1331,20 @@ namespace DTS_Engine.Core.Engines
             }
         }
 
-        // Normalize covered length to meters regardless of SAP working unit
+        // [FIXED] Tính toán chiều dài chịu tải dựa trên 3D (dùng cho cả Dầm & Cột)
         private double CalculateCoveredLengthMeters(RawSapLoad load, SapFrame frame, out double startMeters, out double endMeters)
         {
             startMeters = 0;
             endMeters = 0;
 
-            if (load == null || frame == null)
-                return 0;
+            if (load == null || frame == null) return 0;
 
-            double frameLenM = frame.Length2D * UnitManager.Info.LengthScaleToMeter;
+            // [FIX CRITICAL] LUÔN DÙNG Length3D. 
+            // Length2D sẽ bằng 0 đối với Cột, dẫn đến mất tải trọng.
+            double frameLenM = frame.Length3D * UnitManager.Info.LengthScaleToMeter;
+
+            // Bảo vệ chống chia cho 0 hoặc thanh quá ngắn
+            if (frameLenM < 1e-6) frameLenM = 1e-6;
 
             if (load.IsRelative)
             {
@@ -1346,11 +1359,17 @@ namespace DTS_Engine.Core.Engines
 
             double covered = Math.Abs(endMeters - startMeters);
 
-            if (covered < 1e-6)
+            // [Logic thông minh] Nếu tải phủ gần như toàn bộ thanh (>99%), coi như full
+            if (covered > frameLenM * 0.99)
             {
                 covered = frameLenM;
                 startMeters = 0;
                 endMeters = frameLenM;
+            }
+            // Fallback: Nếu tính ra 0 (do lỗi nhập liệu), force về full length để cảnh báo an toàn
+            else if (covered < 1e-6)
+            {
+                covered = frameLenM;
             }
 
             return covered;
@@ -1390,32 +1409,33 @@ namespace DTS_Engine.Core.Engines
         /// Xác định thanh nằm trên trục nào (Grid A, Grid 1, hoặc Diagonal)
         /// FIX: Added English translation support
         /// </summary>
+        // [FIXED] Xác định trục chính xác hơn cho Cột
         private string DeterminePrimaryGrid(SapFrame frame)
         {
+            // Ưu tiên check Cột trước (Vertical Column)
+            if (frame.IsVertical || frame.Length2D < 1e-4) 
+            {
+                // Với cột, tìm giao điểm gần nhất của lưới X và Y
+                string gridX = FindAxisRange(frame.StartPt.X, frame.StartPt.X, _xGrids, true);
+                string gridY = FindAxisRange(frame.StartPt.Y, frame.StartPt.Y, _yGrids, true);
+                return $"{gridX}/{gridY}"; // Trả về dạng giao lưới (VD: 1/A)
+            }
+
+            // Logic cũ cho Dầm (Beam)
             double angle = Math.Abs(frame.Angle);
             while (angle > Math.PI) angle -= Math.PI;
 
             bool isHorizontal = (angle < 0.1 || Math.Abs(angle - Math.PI) < 0.1);
-            bool isVertical = (Math.Abs(angle - Math.PI / 2) < 0.1);
-
+            
             Point2D mid = frame.Midpoint;
 
-            if (isHorizontal)
-            {
-                string gridY = FindAxisRange(mid.Y, mid.Y, _yGrids, true);
-                return $"Grid {gridY}";
-            }
-            else if (isVertical)
-            {
-                string gridX = FindAxisRange(mid.X, mid.X, _xGrids, true);
-                return $"Grid {gridX}";
-            }
-            else
-            {
-                string gridX = FindAxisRange(mid.X, mid.X, _xGrids, true);
-                string gridY = FindAxisRange(mid.Y, mid.Y, _yGrids, true);
-                return $"Diagonal {gridX}-{gridY}";
-            }
+            if (isHorizontal) return "Grid " + FindAxisRange(mid.Y, mid.Y, _yGrids, true);
+            
+            // Nếu không ngang thì check dọc (cho dầm dọc)
+            if (Math.Abs(angle - Math.PI / 2) < 0.1) 
+                return "Grid " + FindAxisRange(mid.X, mid.X, _xGrids, true);
+
+            return "Diagonal";
         }
 
         /// <summary>
