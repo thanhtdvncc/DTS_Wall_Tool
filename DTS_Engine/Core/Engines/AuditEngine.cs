@@ -361,6 +361,10 @@ namespace DTS_Engine.Core.Engines
 
         #region Core Processing Logic
 
+        /// <summary>
+        /// REFACTORED v7.3: Group by Generalized Category (Area/Frame/Point) to avoid splitting
+        /// distinct SAP load types (e.g., AreaUniform vs AreaConstraint) into separate rows.
+        /// </summary>
         private AuditStoryGroup ProcessStory(string storyName, double elevation, List<RawSapLoad> loads)
         {
             var storyGroup = new AuditStoryGroup
@@ -369,16 +373,23 @@ namespace DTS_Engine.Core.Engines
                 Elevation = elevation
             };
 
-            // DEBUG: Log all load types received
+            // DEBUG: Log all raw load types received
             var loadTypeSummary = loads.GroupBy(l => l.LoadType).Select(g => $"{g.Key}:{g.Count()}");
-            Log($"   [LOADTYPES] {storyName}: {string.Join(", ", loadTypeSummary)}");
+            Log($"   [LOADTYPES-RAW] {storyName}: {string.Join(", ", loadTypeSummary)}");
 
-            // Gom nhóm theo loại tải (Area, Frame, Point)
-            var loadTypeGroups = loads.GroupBy(l => l.LoadType);
+            // FIX v7.3: Group by GENERAL CATEGORY instead of raw LoadType string
+            // This merges "AreaUniform", "AreaUniformToFrame", "AreaConstraint" etc. into one "Area Loads" group.
+            var loadTypeGroups = loads.GroupBy(l => GetGeneralLoadCategory(l.LoadType));
+
+            // DEBUG: Log grouped categories
+            var catSummary = loadTypeGroups.Select(g => $"{g.Key}:{g.Count()}");
+            Log($"   [LOADTYPES-MERGED] {storyName}: {string.Join(", ", catSummary)}");
 
             foreach (var typeGroup in loadTypeGroups)
             {
+                // Pass the Category Name (e.g., "Area Loads") to processing
                 var typeResult = ProcessLoadType(typeGroup.Key, typeGroup.ToList());
+                
                 if (typeResult.Entries != null && typeResult.Entries.Count > 0)
                     storyGroup.LoadTypes.Add(typeResult);
                 else
@@ -387,6 +398,22 @@ namespace DTS_Engine.Core.Engines
 
             Log($"   [STORY-DONE] {storyName}: {storyGroup.LoadTypes.Count} load types, {storyGroup.LoadTypes.Sum(t => t.Entries.Count)} total entries.");
             return storyGroup;
+        }
+
+        /// <summary>
+        /// [v7.3] Normalizes SAP Load Types into broad categories for reporting.
+        /// This prevents SAP's internal type variants from splitting into separate tables.
+        /// </summary>
+        private string GetGeneralLoadCategory(string rawLoadType)
+        {
+            if (string.IsNullOrEmpty(rawLoadType)) return "UNKNOWN";
+            
+            // Normalize: Group all Area-related types together
+            if (rawLoadType.Contains("Area")) return "Area Loads"; // AreaUniform, AreaUniformToFrame, AreaConstraint, etc.
+            if (rawLoadType.Contains("Frame")) return "Frame Loads"; // FrameDistributed, etc.
+            if (rawLoadType.Contains("Point") || rawLoadType.Contains("Joint") || rawLoadType.Contains("Force")) return "Point Loads";
+            
+            return rawLoadType; // Fallback to original
         }
 
         private AuditLoadTypeGroup ProcessLoadType(string loadType, List<RawSapLoad> loads)
