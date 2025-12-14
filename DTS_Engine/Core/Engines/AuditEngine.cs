@@ -788,7 +788,7 @@ namespace DTS_Engine.Core.Engines
             var groups = terms.GroupBy(t => t)
                               .Select(g => g.Count() > 1 ? $"{g.Count()}*({g.Key})" : g.Key);
             
-            return string.Join(" + ", groups);
+            return string.Join("+", groups);
         }
 
         private string GetGroupGridLocation(List<string> elements)
@@ -2173,8 +2173,8 @@ namespace DTS_Engine.Core.Engines
 
         #region Report Generation (With Unit Conversion & New Format v4.2)
 
-        // [UPDATE v9.0] REPORT PRO: GROUP BY AXIS & SMART SORTING
-        // "Out trình kỹ sư": Tự động gom nhóm các grid lẻ (D, D-1m...) về trục chính
+        // [UPDATE v11.0] REPORT CLEAN: SORTED BUT NO HEADERS
+        // Chỉ sắp xếp (Hướng -> Trục -> Span) mà không in tiêu đề phân nhóm.
         public string GenerateTextReport(AuditReport report, string targetUnit = "kN", string language = "English")
         {
             var sb = new StringBuilder();
@@ -2191,7 +2191,7 @@ namespace DTS_Engine.Core.Engines
 
             // HEADER
             sb.AppendLine("".PadRight(150, '='));
-            sb.AppendLine(isVN ? "   BÁO CÁO KIỂM TOÁN TẢI TRỌNG (DTS ENGINE v9.0 - AXIS GROUPING)" : "   LOAD AUDIT REPORT (DTS ENGINE v9.0 - AXIS GROUPING)");
+            sb.AppendLine(isVN ? "   BÁO CÁO KIỂM TOÁN TẢI TRỌNG (DTS ENGINE v11.0 - CLEAN SORT)" : "   LOAD AUDIT REPORT (DTS ENGINE v11.0 - CLEAN SORT)");
             sb.AppendLine($"   {(isVN ? "Dự án" : "Project")}: {report.ModelName ?? "Unknown"}");
             sb.AppendLine($"   {(isVN ? "Tổ hợp tải" : "Load Pattern")}: {report.LoadPattern}");
             sb.AppendLine($"   {(isVN ? "Ngày tính" : "Audit Date")}: {report.AuditDate:yyyy-MM-dd HH:mm:ss}");
@@ -2209,7 +2209,7 @@ namespace DTS_Engine.Core.Engines
 
                 foreach (var loadType in story.LoadTypes)
                 {
-                    // Group by Structural Type (Beam, Column, Wall...)
+                    // Group by Structural Type
                     var typeGroups = loadType.Entries.GroupBy(e => e.StructuralType).OrderBy(g => g.Key);
 
                     foreach (var subGroup in typeGroups)
@@ -2224,7 +2224,7 @@ namespace DTS_Engine.Core.Engines
                             else if (structHeader == "Point Elements") structHeader = "Nút (Point)";
                         }
 
-                        // Column Headers
+                        // Table Header
                         string hGrid = (isVN ? "Vị trí trục" : "Grid Location").PadRight(30);
                         string hCalc = (isVN ? "Chi tiết tính toán" : "Calculator").PadRight(35);
                         string hValue = $"Value({subGroup.First().QuantityUnit})".PadRight(15);
@@ -2236,24 +2236,24 @@ namespace DTS_Engine.Core.Engines
                         sb.AppendLine($"    {hGrid}{hCalc}{hValue}{hUnit}{hDir}{hForce}{hElem}");
                         sb.AppendLine($"    {new string('-', 160)}");
 
-                        // --- LOGIC GOM NHÓM THEO TRỤC (AXIS GROUPING) ---
-                        // 1. Phân loại từng Entry về trục cơ sở (Ví dụ: "D-1m" về "D")
-                        var axisGroups = subGroup.GroupBy(e => GetBaseGridName(e.GridLocation))
-                                                 .ToList();
+                        // === SORTING LOGIC (NO HEADERS) ===
+                        // 1. Lấy tất cả entries
+                        var entries = subGroup.ToList();
 
-                        // 2. Sắp xếp trục: Số trước, Chữ sau (1, 2, 3... A, B, C...)
-                        var sortedGroups = SortAxisGroups(axisGroups);
+                        // 2. Sắp xếp phẳng (Flat Sort) theo thứ tự ưu tiên:
+                        //    Priority 1: Hướng (+X, -X, +Y, -Y...)
+                        //    Priority 2: Tên Trục (1, 2, A, B...)
+                        //    Priority 3: Span (Khoảng rải)
+                        var sortedEntries = entries
+                            .OrderBy(e => GetDirectionPriority(e.Direction))
+                            .ThenBy(e => GetAxisSortValue(GetBaseGridName(e.GridLocation)))
+                            .ThenBy(e => GetCrossAxisSortKey(e.GridLocation))
+                            .ToList();
 
-                        foreach (var axisGroup in sortedGroups)
+                        // 3. In ra liên tục
+                        foreach (var entry in sortedEntries)
                         {
-                            // 3. Trong mỗi trục, sắp xếp theo phương vuông góc (Span)
-                            // GridLocation thường là "Grid D x 1-2". Ta sort theo phần sau "x".
-                            var sortedEntries = axisGroup.OrderBy(e => GetCrossAxisSortKey(e.GridLocation)).ToList();
-
-                            foreach (var entry in sortedEntries)
-                            {
-                                FormatDataRow(sb, entry, forceFactor, targetUnit);
-                            }
+                            FormatDataRow(sb, entry, forceFactor, targetUnit);
                         }
                         sb.AppendLine();
                     }
@@ -2270,7 +2270,6 @@ namespace DTS_Engine.Core.Engines
             double displayFx = visualFx * forceFactor;
             double displayFy = visualFy * forceFactor;
             double displayFz = visualFz * forceFactor;
-            double displayTotal = Math.Sqrt(displayFx * displayFx + displayFy * displayFy + displayFz * displayFz);
 
             sb.AppendLine("".PadRight(150, '='));
             sb.AppendLine(isVN ? "TỔNG HỢP LỰC TOÀN CÔNG TRÌNH:" : "PROJECT AUDIT SUMMARY:");
@@ -2284,52 +2283,52 @@ namespace DTS_Engine.Core.Engines
             return sb.ToString();
         }
 
-        #region Smart Axis Grouping Helpers (New v9.0)
+        #region Smart Grouping Helpers (v11.0)
 
-        // Trích xuất tên trục cơ sở từ chuỗi vị trí
-        // VD: "Grid D x 1-2" -> "D"
-        //     "Grid D(-2.5m) x 1-2" -> "D"
+        // [Priority 1] Sắp xếp hướng: +X, -X, +Y, -Y, +Z, -Z
+        private int GetDirectionPriority(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return 99;
+            dir = dir.Trim().ToUpper();
+            if (dir == "+X") return 1;
+            if (dir == "-X") return 2;
+            if (dir == "+Y") return 3;
+            if (dir == "-Y") return 4;
+            if (dir == "+Z") return 5;
+            if (dir == "-Z") return 6;
+            return 10; 
+        }
+
+        // [Priority 2] Sắp xếp tên trục: Số trước, Chữ sau
+        private double GetAxisSortValue(string axis)
+        {
+            if (string.IsNullOrEmpty(axis)) return 9999999;
+            
+            // Nếu là số (1, 2, 10...) -> Dùng chính giá trị đó
+            if (double.TryParse(axis, out double val)) return val;
+
+            // Nếu là chữ (A, B, C...) -> Gán giá trị lớn (1 triệu + mã ASCII) để đẩy xuống sau số
+            // VD: A -> 1000065, B -> 1000066
+            return 1000000.0 + (int)axis[0] * 1000 + (axis.Length > 1 ? (int)axis[1] : 0);
+        }
+
+        // Trích xuất tên trục cơ sở (Grid D x 1-2 -> D)
         private string GetBaseGridName(string gridLoc)
         {
             if (string.IsNullOrEmpty(gridLoc)) return "Unknown";
-            
-            // 1. Lấy phần đầu trước dấu "x" (Grid D...)
             var parts = gridLoc.Split(new[] { " x " }, StringSplitOptions.RemoveEmptyEntries);
             string mainPart = parts[0].Replace("Grid", "").Trim();
-
-            // 2. Bỏ phần offset trong ngoặc đơn (nếu có)
-            // VD: "D(-2.5m)" -> lấy "D"
             int parenIndex = mainPart.IndexOf('(');
-            if (parenIndex > 0)
-            {
-                mainPart = mainPart.Substring(0, parenIndex).Trim();
-            }
-
+            if (parenIndex > 0) mainPart = mainPart.Substring(0, parenIndex).Trim();
             return mainPart;
         }
 
-        // Tạo key sắp xếp cho phần Span (phần sau chữ x)
-        // VD: "Grid D x 1-2" -> key là "1-2"
+        // Key sắp xếp span (phần sau chữ x)
         private string GetCrossAxisSortKey(string gridLoc)
         {
             var parts = gridLoc.Split(new[] { " x " }, StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length > 1) return parts[1].Trim();
-            return "ZZZ"; // Không có span thì đẩy xuống cuối
-        }
-
-        // Sắp xếp danh sách các nhóm trục: Số trước, Chữ sau
-        private List<IGrouping<string, AuditEntry>> SortAxisGroups(List<IGrouping<string, AuditEntry>> groups)
-        {
-            return groups.OrderBy(g => 
-            {
-                string key = g.Key;
-                // Thử parse ra số
-                if (double.TryParse(key, out double num)) return num; // Nhóm số (1, 2, 3...)
-                
-                // Nhóm chữ (A, B, C...): Cộng thêm 1000000 để đẩy ra sau số
-                // Nhưng vẫn đảm bảo thứ tự Alpha
-                return 1000000 + (key.Length > 0 ? (int)key[0] : 0);
-            }).ToList();
+            return "ZZZ";
         }
 
         #endregion

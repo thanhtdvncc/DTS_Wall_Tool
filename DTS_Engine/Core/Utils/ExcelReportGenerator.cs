@@ -118,8 +118,8 @@ namespace DTS_Engine.Core.Utils
             // Title
             var titleCell = ws.Cell(row, 1);
             titleCell.Value = isVN 
-                ? "KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v4.0)" 
-                : "SAP2000 LOAD AUDIT REPORT (DTS ENGINE v4.0)";
+                ? "KIỂM TOÁN TẢI TRỌNG SAP2000 (DTS ENGINE v11.0)" 
+                : "SAP2000 LOAD AUDIT REPORT (DTS ENGINE v11.0)";
             titleCell.Style.Font.Bold = true;
             titleCell.Style.Font.FontSize = 14;
             titleCell.Style.Fill.BackgroundColor = HEADER_COLOR;
@@ -167,16 +167,15 @@ namespace DTS_Engine.Core.Utils
 
             foreach (var story in report.Stories.OrderByDescending(s => s.Elevation))
             {
-                // FIX v4.2.1: Calculate story total from vector components
+                // [v11.0] Calculate story total from vector components
                 double storyFx = story.LoadTypes.Sum(lt => lt.SubTotalFx) * forceFactor;
                 double storyFy = story.LoadTypes.Sum(lt => lt.SubTotalFy) * forceFactor;
                 double storyFz = story.LoadTypes.Sum(lt => lt.SubTotalFz) * forceFactor;
-                double storyTotal = Math.Sqrt(storyFx * storyFx + storyFy * storyFy + storyFz * storyFz);
 
                 // Story Header with vector breakdown
                 var storyHeaderCell = ws.Cell(row, 1);
                 storyHeaderCell.Value = $">>> {(isVN ? "TẦNG" : "STORY")}: {story.StoryName} | Z={story.Elevation:0}mm | " +
-                    $"{(isVN ? "Tổng" : "Total")}: {storyTotal:0.00} {targetUnit} [Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]";
+                    $"[Fx={storyFx:0.00}, Fy={storyFy:0.00}, Fz={storyFz:0.00}]";
                 storyHeaderCell.Style.Font.Bold = true;
                 storyHeaderCell.Style.Fill.BackgroundColor = STORY_HEADER_COLOR;
                 ws.Range(row, 1, row, 7).Merge();
@@ -184,73 +183,95 @@ namespace DTS_Engine.Core.Utils
 
                 foreach (var loadType in story.LoadTypes)
                 {
-                    // FIX v4.2.1: Use vector-based subtotal with component breakdown
-                    double typeFx = loadType.SubTotalFx * forceFactor;
-                    double typeFy = loadType.SubTotalFy * forceFactor;
-                    double typeFz = loadType.SubTotalFz * forceFactor;
-                    double typeTotal = Math.Sqrt(
-                        typeFx * typeFx + 
-                        typeFy * typeFy + 
-                        typeFz * typeFz);
+                    // Group by Structural Type (Slab, Wall, Beam, Column, Point)
+                    var typeGroups = loadType.Entries.GroupBy(e => e.StructuralType).OrderBy(g => g.Key);
 
-                    // Load Type Header with vector breakdown
-                    var typeHeaderCell = ws.Cell(row, 1);
-                    typeHeaderCell.Value = $"[{loadType.LoadTypeName}] " +
-                        $"{(isVN ? "Tổng phụ" : "Subtotal")}: {typeTotal:0.00} {targetUnit} [Fx={typeFx:0.00}, Fy={typeFy:0.00}, Fz={typeFz:0.00}]";
-                    typeHeaderCell.Style.Font.Bold = true;
-                    ws.Range(row, 1, row, 7).Merge();
-                    row++;
-
-                    // FIX v4.2: New column headers - removed Type, added Value, reordered
-                    string valueUnit = loadType.Entries.FirstOrDefault()?.QuantityUnit ?? "m²";
-                    
-                    string[] headers = isVN
-                        ? new[] { "Vị trí trục", "Chi tiết", $"Value({valueUnit})", $"Unit Load({targetUnit}/{valueUnit})", "Hướng", $"Force({targetUnit})", "Phần tử" }
-                        : new[] { "Grid Location", "Calculator", $"Value({valueUnit})", $"Unit Load({targetUnit}/{valueUnit})", "Dir", $"Force({targetUnit})", "Elements" };
-
-                    for (int i = 0; i < headers.Length; i++)
+                    foreach (var subGroup in typeGroups)
                     {
-                        var headerCell = ws.Cell(row, i + 1);
-                        headerCell.Value = headers[i];
-                        headerCell.Style.Font.Bold = true;
-                        headerCell.Style.Fill.BackgroundColor = SUBHEADER_COLOR;
-                        headerCell.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
-                    }
-                    row++;
+                        string structHeader = subGroup.Key;
+                        if (isVN)
+                        {
+                            if (structHeader == "Slab Elements") structHeader = "Sàn (Slab)";
+                            else if (structHeader == "Wall Elements") structHeader = "Vách (Wall)";
+                            else if (structHeader == "Beam Elements") structHeader = "Dầm (Beam)";
+                            else if (structHeader == "Column Elements") structHeader = "Cột (Column)";
+                            else if (structHeader == "Point Elements") structHeader = "Nút (Point)";
+                        }
 
-                    // Data Rows
-                    var entries = loadType.Entries?.OrderByDescending(e => Math.Abs(e.TotalForce)) ?? Enumerable.Empty<AuditEntry>();
-                    foreach (var entry in entries)
-                    {
-                        ws.Cell(row, 1).Value = entry.GridLocation;
-                        ws.Cell(row, 2).Value = entry.Explanation;
-                        ws.Cell(row, 3).Value = entry.Quantity;
-                        ws.Cell(row, 3).Style.NumberFormat.Format = "0.00";
-                        
-                        // FIX v4.2.1: Apply forceFactor to UnitLoad for display consistency
-                        double displayUnitLoad = entry.UnitLoad * forceFactor;
-                        ws.Cell(row, 4).Value = displayUnitLoad;
-                        ws.Cell(row, 4).Style.NumberFormat.Format = "0.00";
-                        
-                        // Direction
-                        ws.Cell(row, 5).Value = entry.Direction;
-                        
-                        // FIX v4.2.1: TotalForce already signed, just apply unit conversion
-                        double displayForce = entry.TotalForce * forceFactor;
-                        ws.Cell(row, 6).Value = displayForce;
-                        ws.Cell(row, 6).Style.NumberFormat.Format = "0.00";
-                        
-                        // FIX v4.2: Full element list (no truncation for Excel)
-                        ws.Cell(row, 7).Value = entry.ElementCount > 0 
-                            ? string.Join(", ", entry.ElementList)
-                            : "";
-
-                        // Apply borders
-                        ws.Range(row, 1, row, 7).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                        // Structural Type Header
+                        var typeHeaderCell = ws.Cell(row, 1);
+                        typeHeaderCell.Value = $"[{loadType.LoadTypeName}] - {structHeader}";
+                        typeHeaderCell.Style.Font.Bold = true;
+                        ws.Range(row, 1, row, 7).Merge();
                         row++;
-                    }
 
-                    row++; // Empty row between load types
+                        // [v11.0] Column headers
+                        string valueUnit = subGroup.FirstOrDefault()?.QuantityUnit ?? "m²";
+                        
+                        string[] headers = isVN
+                            ? new[] { "Vị trí trục", "Chi tiết tính toán", $"Value({valueUnit})", $"Unit Load", "Hướng", $"Force({targetUnit})", "Phần tử" }
+                            : new[] { "Grid Location", "Calculator", $"Value({valueUnit})", $"Unit Load", "Dir", $"Force({targetUnit})", "Elements" };
+
+                        for (int i = 0; i < headers.Length; i++)
+                        {
+                            var headerCell = ws.Cell(row, i + 1);
+                            headerCell.Value = headers[i];
+                            headerCell.Style.Font.Bold = true;
+                            headerCell.Style.Fill.BackgroundColor = SUBHEADER_COLOR;
+                            headerCell.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                        }
+                        row++;
+
+                        // [v11.0] FLAT SORT: Direction -> Axis -> Span (NO HEADERS)
+                        var sortedEntries = subGroup
+                            .OrderBy(e => GetDirectionPriority(e.Direction))
+                            .ThenBy(e => GetAxisSortValue(GetBaseGridName(e.GridLocation)))
+                            .ThenBy(e => GetCrossAxisSortKey(e.GridLocation))
+                            .ToList();
+
+                        foreach (var entry in sortedEntries)
+                        {
+                            // [v11.0] FULL DATA - NO TRUNCATION
+                            ws.Cell(row, 1).Value = entry.GridLocation ?? "";
+                            ws.Cell(row, 2).Value = entry.Explanation ?? "";
+                            ws.Cell(row, 3).Value = entry.Quantity;
+                            ws.Cell(row, 3).Style.NumberFormat.Format = "0.00";
+                            
+                            // Apply forceFactor to UnitLoad for display consistency
+                            double displayUnitLoad = entry.UnitLoad * forceFactor;
+                            ws.Cell(row, 4).Value = displayUnitLoad;
+                            ws.Cell(row, 4).Style.NumberFormat.Format = "0.00";
+                            
+                            // Direction
+                            ws.Cell(row, 5).Value = entry.Direction ?? "";
+                            
+                            // Display primary force component (matching text report logic)
+                            double forceX = entry.ForceX * forceFactor;
+                            double forceY = entry.ForceY * forceFactor;
+                            double forceZ = entry.ForceZ * forceFactor;
+                            double displayForce = 0;
+                            if (Math.Abs(forceX) > Math.Abs(forceY) && Math.Abs(forceX) > Math.Abs(forceZ))
+                                displayForce = forceX;
+                            else if (Math.Abs(forceY) > Math.Abs(forceZ))
+                                displayForce = forceY;
+                            else
+                                displayForce = forceZ;
+                            
+                            ws.Cell(row, 6).Value = displayForce;
+                            ws.Cell(row, 6).Style.NumberFormat.Format = "0.00";
+                            
+                            // [v11.0] FULL element list (NO truncation for Excel)
+                            ws.Cell(row, 7).Value = entry.ElementList != null && entry.ElementList.Count > 0 
+                                ? string.Join(", ", entry.ElementList)
+                                : "";
+
+                            // Apply borders
+                            ws.Range(row, 1, row, 7).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                            row++;
+                        }
+
+                        row++; // Empty row between structural types
+                    }
                 }
 
                 row++; // Empty row between stories
@@ -258,6 +279,51 @@ namespace DTS_Engine.Core.Utils
 
             return row;
         }
+
+        #region Sorting Helpers (v11.0)
+
+        // [Priority 1] Direction priority: +X, -X, +Y, -Y, +Z, -Z
+        private static int GetDirectionPriority(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return 99;
+            dir = dir.Trim().ToUpper();
+            if (dir == "+X") return 1;
+            if (dir == "-X") return 2;
+            if (dir == "+Y") return 3;
+            if (dir == "-Y") return 4;
+            if (dir == "+Z") return 5;
+            if (dir == "-Z") return 6;
+            return 10;
+        }
+
+        // [Priority 2] Axis sort: Numbers first, Letters after
+        private static double GetAxisSortValue(string axis)
+        {
+            if (string.IsNullOrEmpty(axis)) return 9999999;
+            if (double.TryParse(axis, out double val)) return val;
+            return 1000000.0 + (int)axis[0] * 1000 + (axis.Length > 1 ? (int)axis[1] : 0);
+        }
+
+        // Extract base grid name (Grid D x 1-2 -> D)
+        private static string GetBaseGridName(string gridLoc)
+        {
+            if (string.IsNullOrEmpty(gridLoc)) return "Unknown";
+            var parts = gridLoc.Split(new[] { " x " }, StringSplitOptions.RemoveEmptyEntries);
+            string mainPart = parts[0].Replace("Grid", "").Trim();
+            int parenIndex = mainPart.IndexOf('(');
+            if (parenIndex > 0) mainPart = mainPart.Substring(0, parenIndex).Trim();
+            return mainPart;
+        }
+
+        // Sort key for span (part after x)
+        private static string GetCrossAxisSortKey(string gridLoc)
+        {
+            var parts = gridLoc.Split(new[] { " x " }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 1) return parts[1].Trim();
+            return "ZZZ";
+        }
+
+        #endregion
 
         private static int WriteSummary(
             IXLWorksheet ws, 
