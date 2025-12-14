@@ -266,94 +266,71 @@ namespace DTS_Engine.Core.Engines
         /// Nhóm tải theo tầng (Story) dựa trên cao độ Z của phần tử.
         /// REFACTORED: Dynamic Clustering (VBA-style) to catch intermediate levels.
         /// </summary>
+        /// <summary>
+        /// Nhóm tải theo tầng (Story) - Đã sửa lỗi dùng sai Z
+        /// </summary>
         private List<TempStoryBucket> GroupLoadsByStory(List<RawSapLoad> loads)
         {
-            // 1. Collect all valid Z-coordinates
-            var distinctZ = loads.Select(l => Math.Round(l.ElementZ, 1)) // Round to 0.1mm to reduce noise
-                                 .Distinct()
-                                 .OrderBy(z => z)
-                                 .ToList();
-
-            if (distinctZ.Count == 0) return new List<TempStoryBucket>();
-
-            // 2. Cluster Z-coordinates into physical levels (using tolerance)
-            // Each cluster represents a physical floor (e.g. 500mm, 4500mm, 6500mm)
-            var clusters = new List<List<double>>();
-            if (distinctZ.Any())
-            {
-                var currentCluster = new List<double> { distinctZ[0] };
-                clusters.Add(currentCluster);
-
-                for (int i = 1; i < distinctZ.Count; i++)
-                {
-                    double z = distinctZ[i];
-                    double prevZ = currentCluster.Average(); // Compare with cluster center/avg
-                    
-                    if (Math.Abs(z - prevZ) < STORY_TOLERANCE_MM) 
-                    {
-                        currentCluster.Add(z);
-                    }
-                    else
-                    {
-                        currentCluster = new List<double> { z };
-                        clusters.Add(currentCluster);
-                    }
-                }
-            }
-
-            // 3. Create buckets from clusters
+            // 1. Lấy danh sách tầng định nghĩa từ SAP (Mốc chuẩn)
+            var definedStories = _stories.OrderByDescending(s => s.Coordinate).ToList();
+            
+            // Tạo bucket cho các tầng chuẩn trước
             var buckets = new List<TempStoryBucket>();
-            var sortedStories = _stories.OrderBy(s => s.Coordinate).ToList(); // Defined SAP Stories
-
-            foreach (var cluster in clusters)
+            foreach (var s in definedStories)
             {
-                double avgZ = cluster.Average();
-                
-                // Try to name the cluster using SAP Stories
-                string bucketName = $"Elevation Z={avgZ:0}"; // Default name
-                
-                // Find matching SAP story
-                var match = sortedStories.FirstOrDefault(s => Math.Abs(s.Coordinate - avgZ) < STORY_TOLERANCE_MM);
-                if (match != null)
-                {
-                    bucketName = match.Name ?? match.StoryName ?? $"Z={match.Coordinate}";
-                }
-
                 buckets.Add(new TempStoryBucket
                 {
-                    StoryName = bucketName,
-                    Elevation = avgZ,
+                    StoryName = s.Name ?? s.StoryName,
+                    Elevation = s.Coordinate,
                     Loads = new List<RawSapLoad>()
                 });
             }
 
-            // 4. Assign loads to the nearest bucket
-            // Since we built buckets from the actual data, every load MUST find a home nearby.
+            // Bucket phụ cho các tầng lửng/không xác định
+            var miscBuckets = new Dictionary<double, TempStoryBucket>();
+
+            // 2. Phân phối tải trọng
             foreach (var load in loads)
             {
-                double z = load.ElementZ;
-                var bestBucket = buckets.FirstOrDefault(b => Math.Abs(b.Elevation - z) < STORY_TOLERANCE_MM);
+                // [FIX CRITICAL] Dùng DetermineElementStoryZ để lấy MaxZ (Đỉnh cột) thay vì load.ElementZ
+                double z = DetermineElementStoryZ(load);
 
-                // Fallback: Find absolute nearest (shouldn't happen often if clustering is correct)
-                if (bestBucket == null)
+                // Tìm tầng gần nhất với sai số lớn (2000mm) để bắt dầm hạ cốt/lanh tô
+                var bestMatch = buckets
+                    .Select(b => new { Bucket = b, Dist = Math.Abs(b.Elevation - z) })
+                    .OrderBy(x => x.Dist)
+                    .FirstOrDefault();
+
+                if (bestMatch != null && bestMatch.Dist < 2000.0) 
                 {
-                    bestBucket = buckets.OrderBy(b => Math.Abs(b.Elevation - z)).First();
+                    bestMatch.Bucket.Loads.Add(load);
                 }
-
-                bestBucket.Loads.Add(load);
+                else
+                {
+                    // Nếu quá xa tầng chuẩn -> Tạo tầng ảo
+                    double roundedZ = Math.Round(z, 0);
+                    if (!miscBuckets.ContainsKey(roundedZ))
+                    {
+                        miscBuckets[roundedZ] = new TempStoryBucket
+                        {
+                            StoryName = $"Level Z={roundedZ}",
+                            Elevation = roundedZ,
+                            Loads = new List<RawSapLoad>()
+                        };
+                    }
+                    miscBuckets[roundedZ].Loads.Add(load);
+                }
             }
 
-            // 5. Remove empty buckets and Sort Descending (Top-down)
-            var result = buckets.Where(b => b.Loads.Count > 0)
-                                .OrderByDescending(b => b.Elevation)
-                                .ToList();
-
-            Log($"[STORY-SUMMARY] Dynamic Grouping: {result.Count} levels identified from {loads.Count} loads.");
-            foreach (var b in result)
+            // 3. Gộp và sắp xếp kết quả
+            var result = buckets.Where(b => b.Loads.Count > 0).ToList();
+            if (miscBuckets.Count > 0)
             {
-                Log($"   > {b.StoryName} (Z~{b.Elevation:F0}): {b.Loads.Count} loads");
+                result.AddRange(miscBuckets.Values);
+                result = result.OrderByDescending(b => b.Elevation).ToList();
             }
 
+            Log($"[STORY-SNAP] Snapped {loads.Count} loads to {result.Count} levels using MaxZ logic.");
             return result;
         }
 
@@ -712,10 +689,11 @@ namespace DTS_Engine.Core.Engines
                             }
                         }
 
+                        // [FIX SPEED] Sử dụng CascadedPolygonUnion thay vì Iterative Union
+                        // Tốc độ: O(N log N) thay vì O(N^2). Xử lý 1000 sàn trong tíc tắc.
                         if (polygonList.Count > 0)
                         {
-                            // UnaryUnion is O(N log N) vs Iterative Union O(N^2)
-                            combinedGeom = UnaryUnionOp.Union(polygonList);
+                            combinedGeom = CascadedPolygonUnion.Union(polygonList);
                         }
                     }
                     catch (Exception ex) 
@@ -1247,29 +1225,26 @@ namespace DTS_Engine.Core.Engines
             return $"{env.Width / 1000.0:0.##}x{env.Height / 1000.0:0.##}";
         }
 
-        // --- XỬ LÝ TẢI THANH (FRAME) - ENGINEERING STYLE v7.0 ---
-        // Full vs Partial separation, Calculator formulas, engineering-focused output
+        // [ProcessFrameLoads v8.1] Optimized Partial Load Handling
+        // - Merges split load segments on the same frame -> Full Load
+        // - Merges display of partial segments (e.g., I=0to2.3 & 2.3to4.5) -> Single Line
         private void ProcessFrameLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
-            Log($"[ProcessFrameLoads v7.0] Processing {loads.Count} loads. Val={loadVal}, Dir={dir}");
+            Log($"[ProcessFrameLoads v8.1] Processing {loads.Count} loads. Val={loadVal}, Dir={dir}");
             
             var frameItems = new List<FrameAuditItem>();
             int skipCount = 0;
 
+            // 1. CONVERT RAW LOADS TO ITEMS
             foreach (var load in loads)
             {
                 var info = _inventory.GetFrame(load.ElementName);
-                if (info == null)
-                {
-                    Log($"   [SKIP] {load.ElementName}: not found in Frame inventory");
-                    skipCount++;
-                    continue;
-                }
+                if (info == null) { skipCount++; continue; }
 
                 var frame = info.FrameGeometry;
                 string primaryGrid = DeterminePrimaryGrid(frame);
                 
-                // Calculate load length
+                // Calculate lengths
                 double frameLen = frame.Length3D * UnitManager.Info.LengthScaleToMeter;
                 double startM = 0, endM = 0;
                 
@@ -1285,18 +1260,15 @@ namespace DTS_Engine.Core.Engines
                 }
                 
                 double loadLen = Math.Abs(endM - startM);
-                if (loadLen < 1e-6) loadLen = frameLen; // Fallback for full load
+                if (loadLen < 1e-6) loadLen = frameLen; 
                 
-                // Logic to determine Full Load: Covers >98% OR is a column (Length2D ~ 0)
+                // Initial check (check từng mảnh lẻ)
                 bool isFull = false;
                 if (frameLen > 0.001)
                 {
-                    if (loadLen >= frameLen * 0.98) isFull = true;
-                    if (frame.Length2D < 1e-4) isFull = true; // Column = always "full"
+                    if (loadLen >= frameLen * 0.99) isFull = true;
+                    if (frame.Length2D < 1e-4) isFull = true; // Cột luôn full
                 }
-
-                // Calculate Global Interval for span analysis
-                var globalInterval = CalculateGlobalInterval(load, frame);
 
                 frameItems.Add(new FrameAuditItem
                 {
@@ -1306,15 +1278,33 @@ namespace DTS_Engine.Core.Engines
                     Length = loadLen,
                     StartM = startM,
                     EndM = endM,
-                    GlobalStart = globalInterval.Start,
-                    GlobalEnd = globalInterval.End,
                     IsFullLoad = isFull
                 });
             }
 
-            Log($"[ProcessFrameLoads v7.0] Valid: {frameItems.Count}, Skipped: {skipCount}, Full: {frameItems.Count(f => f.IsFullLoad)}, Partial: {frameItems.Count(f => !f.IsFullLoad)}");
             if (frameItems.Count == 0) return;
 
+            // 2. [NEW LOGIC] MERGE SPLIT SEGMENTS (GỘP CÁC ĐOẠN LẺ)
+            // Nhóm theo tên phần tử để kiểm tra xem tổng các đoạn có phủ kín thanh không
+            var elementGroups = frameItems.GroupBy(f => f.Load.ElementName).ToList();
+            
+            foreach (var grp in elementGroups)
+            {
+                var items = grp.ToList();
+                if (items.All(i => i.IsFullLoad)) continue; // Đã full hết thì bỏ qua
+
+                // Tính tổng chiều dài phủ (có xử lý chồng lấn)
+                double frameLength = items[0].Frame.Length3D * UnitManager.Info.LengthScaleToMeter;
+                double coveredLength = CalculateEffectiveCoverage(items);
+
+                // Nếu tổng phủ > 98% chiều dài thanh -> Đánh dấu TẤT CẢ là Full
+                if (frameLength > 0.001 && coveredLength >= frameLength * 0.98)
+                {
+                    foreach (var item in items) item.IsFullLoad = true;
+                }
+            }
+
+            // 3. GROUPING & DISPLAY
             // Group by [Grid] + [Structural Type]
             var gridGroups = frameItems.GroupBy(f => new { Grid = f.PrimaryGrid, Type = GetFrameStructuralTypeName(f.Frame) });
 
@@ -1323,79 +1313,126 @@ namespace DTS_Engine.Core.Engines
                 string gridName = grp.Key.Grid;
                 string structType = grp.Key.Type;
                 
-                // Calculate cross-axis range for the entire group (e.g., "x 1-12")
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
                 string fullGridLoc = string.IsNullOrEmpty(rangeDesc) ? gridName : $"{gridName} x {rangeDesc}";
 
-                // GROUP 1: Full Loads -> Aggregate into sum formula
+                // GROUP 1: Full Loads (Bao gồm cả các đoạn lẻ đã được gộp ở bước 2)
                 var fullLoads = grp.Where(f => f.IsFullLoad).ToList();
                 if (fullLoads.Count > 0)
                 {
-                    CreateFullLoadEntry(fullLoads, fullGridLoc, loadVal, dir, structType, targetList);
+                    // Gom các đoạn của cùng 1 thanh lại để không bị tính trùng số lượng phần tử
+                    // VD: Thanh 580 có 2 đoạn -> chỉ tính là 1 thanh 580
+                    var uniqueElements = fullLoads.GroupBy(f => f.Load.ElementName)
+                                                  .Select(g => new { 
+                                                      Name = g.Key, 
+                                                      TotalLen = g.First().Frame.Length3D * UnitManager.Info.LengthScaleToMeter 
+                                                  })
+                                                  .ToList();
+                    
+                    // Tạo entry tổng hợp
+                    // Pass danh sách gốc (fullLoads) để tính Force chính xác (dựa trên từng đoạn tải)
+                    CreateFullLoadEntry(fullLoads, uniqueElements.Count, uniqueElements.Sum(e => e.TotalLen), fullGridLoc, loadVal, dir, structType, targetList);
                 }
 
-                // GROUP 2: Partial Loads -> Individual rows with element ID and range
+                // GROUP 2: Partial Loads (Thực sự lẻ)
                 var partialLoads = grp.Where(f => !f.IsFullLoad).ToList();
-                foreach (var p in partialLoads)
+                
+                // [NEW] Gộp các partial loads của cùng 1 thanh thành 1 dòng duy nhất
+                var partialByElement = partialLoads.GroupBy(p => p.Load.ElementName);
+                
+                foreach (var pGrp in partialByElement)
                 {
-                    CreatePartialLoadEntry(p, fullGridLoc, loadVal, dir, structType, targetList);
+                    CreateMergedPartialEntry(pGrp.ToList(), fullGridLoc, loadVal, dir, structType, targetList);
                 }
             }
+        }
+
+        // [HELPER MỚI] Tính tổng chiều dài phủ của các đoạn tải trên 1 thanh (xử lý chồng lấn)
+        private double CalculateEffectiveCoverage(List<FrameAuditItem> items)
+        {
+            if (items.Count == 0) return 0;
+            
+            // Sắp xếp theo điểm bắt đầu
+            var sorted = items.OrderBy(i => i.StartM).ToList();
+            
+            double totalCovered = 0;
+            double currentStart = sorted[0].StartM;
+            double currentEnd = sorted[0].EndM;
+
+            for (int i = 1; i < sorted.Count; i++)
+            {
+                if (sorted[i].StartM < currentEnd + 0.001) // Có chồng lấn hoặc tiếp xúc
+                {
+                    currentEnd = Math.Max(currentEnd, sorted[i].EndM);
+                }
+                else // Ngắt quãng
+                {
+                    totalCovered += (currentEnd - currentStart);
+                    currentStart = sorted[i].StartM;
+                    currentEnd = sorted[i].EndM;
+                }
+            }
+            totalCovered += (currentEnd - currentStart); // Cộng đoạn cuối
+            return totalCovered;
+        }
+
+        // [HELPER MỚI] Tạo entry cho partial load đã gộp (VD: I=0-2 & 4-6)
+        private void CreateMergedPartialEntry(List<FrameAuditItem> items, string location, double loadVal, string dir, string structType, List<AuditEntry> targetList)
+        {
+            if (items.Count == 0) return;
+
+            string elemName = items[0].Load.ElementName;
+            double totalLen = items.Sum(i => i.Length); // Tổng chiều dài chịu tải
+            double force = totalLen * loadVal;
+
+            // Tạo chuỗi mô tả gộp: "I=0to2.3, 2.3to4.5" -> gộp logic nếu liền nhau
+            var sorted = items.OrderBy(i => i.StartM).ToList();
+            var intervals = new List<string>();
+            
+            // Logic gộp chuỗi hiển thị
+            double printStart = sorted[0].StartM;
+            double printEnd = sorted[0].EndM;
+            
+            for (int i = 1; i < sorted.Count; i++)
+            {
+                if (Math.Abs(sorted[i].StartM - printEnd) < 0.01) // Liền nhau
+                {
+                    printEnd = sorted[i].EndM;
+                }
+                else
+                {
+                    intervals.Add($"{printStart:0.##}to{printEnd:0.##}");
+                    printStart = sorted[i].StartM;
+                    printEnd = sorted[i].EndM;
+                }
+            }
+            intervals.Add($"{printStart:0.##}to{printEnd:0.##}");
+            
+            string rangeStr = string.Join(" & ", intervals);
+            string explanation = $"{elemName}, I={rangeStr}";
+
+            AddFrameEntry(location, explanation, totalLen, loadVal, force, dir, 
+                         new List<string> { elemName }, structType, targetList);
         }
 
         #region Frame Load Entry Helpers v7.0
 
-        /// <summary>
-        /// Create display row for Full Load group: Sum lengths as formula (1.2 + 1.7 + ... or 3x(4.0))
-        /// </summary>
-        private void CreateFullLoadEntry(List<FrameAuditItem> items, string location, double loadVal, string dir, string structType, List<AuditEntry> targetList)
+        // [UPDATED HELPER] Cập nhật CreateFullLoadEntry để nhận số lượng thanh và tổng chiều dài đã tính toán lại
+        private void CreateFullLoadEntry(List<FrameAuditItem> allSegments, int uniqueElemCount, double totalLenUnique, string location, double loadVal, string dir, string structType, List<AuditEntry> targetList)
         {
-            double totalLen = items.Sum(i => i.Length);
-            double force = totalLen * loadVal;
+            // Force tính từ tổng chiều dài các đoạn segment (để chính xác tuyệt đối với SAP)
+            double totalForceLen = allSegments.Sum(i => i.Length); 
+            double force = totalForceLen * loadVal;
             
-            // Group by length (rounded to 2 decimals) and create formula
-            var lenGroups = items.GroupBy(i => Math.Round(i.Length, 2))
-                                 .OrderByDescending(g => g.Key);
-            
-            var parts = new List<string>();
-            foreach (var g in lenGroups)
-            {
-                int count = g.Count();
-                double l = g.Key;
-                if (count > 2) 
-                    parts.Add($"{count}x{l:0.##}"); // Aggregate if many
-                else
-                {
-                    for (int k = 0; k < count; k++) 
-                        parts.Add($"{l:0.##}"); // List individually
-                }
-            }
-            string formula = string.Join("+", parts);
-            
-            // Truncate if too long, but prioritize showing formula
-            if (formula.Length > 50) 
-                formula = $"Sum={totalLen:0.00}m ({items.Count} elems)";
+            // Formula hiển thị
+            string formula = $"Sum={totalLenUnique:0.00}m ({uniqueElemCount} elems)";
 
-            var elementNames = items.Select(x => x.Load.ElementName).Distinct().ToList();
-            AddFrameEntry(location, formula, totalLen, loadVal, force, dir, elementNames, structType, targetList);
+            var elementNames = allSegments.Select(x => x.Load.ElementName).Distinct().ToList();
             
-            Log($"   -> Full [{location}]: {items.Count} elems, L={totalLen:0.00}m, F={force:0.00}");
+            // Lưu ý: Quantity hiển thị là tổng chiều dài của các thanh (unique length)
+            AddFrameEntry(location, formula, totalLenUnique, loadVal, force, dir, elementNames, structType, targetList);
         }
 
-        /// <summary>
-        /// Create display row for Partial Load: Show element ID and load range (I=start-end)
-        /// </summary>
-        private void CreatePartialLoadEntry(FrameAuditItem item, string location, double loadVal, string dir, string structType, List<AuditEntry> targetList)
-        {
-            double force = item.Length * loadVal;
-            // Format: "217, I=0to2.5" - engineering clarity on load position
-            string explanation = $"{item.Load.ElementName}, I={item.StartM:0.##}to{item.EndM:0.##}";
-            
-            AddFrameEntry(location, explanation, item.Length, loadVal, force, dir, 
-                         new List<string> { item.Load.ElementName }, structType, targetList);
-            
-            Log($"   -> Partial [{location}]: {item.Load.ElementName}, L={item.Length:0.00}m, F={force:0.00}");
-        }
 
         /// <summary>
         /// Helper to create AuditEntry with consistent direction/vector handling

@@ -40,7 +40,8 @@ namespace DTS_Engine.Core.Engines
 
             public double GetStoryElevation()
             {
-                return IsVertical ? MinZ : AverageZ;
+                // [FIX v8.1] SAP2000 Convention: Vertical elements belong to Top story
+                return IsVertical ? MaxZ : AverageZ;
             }
         }
 

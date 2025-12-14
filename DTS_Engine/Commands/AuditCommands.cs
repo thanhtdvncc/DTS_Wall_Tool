@@ -123,9 +123,9 @@ namespace DTS_Engine.Commands
                 unitOpt.Keywords.Add("Ton");
                 unitOpt.Keywords.Add("kN");
                 unitOpt.Keywords.Add("kgf");
-                unitOpt.Keywords.Default = "kN";
+                unitOpt.Keywords.Default = "Ton";
                 var unitRes = Ed.GetKeywords(unitOpt);
-                string selectedUnit = (unitRes.Status == PromptStatus.OK) ? unitRes.StringResult : "kN";
+                string selectedUnit = (unitRes.Status == PromptStatus.OK) ? unitRes.StringResult : "Ton";
 
                 // 7. Chọn định dạng xuất (Text hoặc Excel)
                 var formatOpt = new PromptKeywordOptions("\nChọn định dạng xuất báo cáo [Text/Excel]: ");
