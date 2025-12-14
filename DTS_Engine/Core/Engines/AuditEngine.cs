@@ -547,33 +547,24 @@ namespace DTS_Engine.Core.Engines
 
 
         /// <summary>
-        /// ProcessAreaLoads v5.1 - DIRECT API với Unit Switch
-        /// - Tạm chuyển SAP về kN_m_C để lấy tọa độ mét, load kN/m²
-        /// - Sau xử lý, trả lại unit gốc
-        /// </summary>
-        /// <summary>
-        /// ProcessAreaLoads v5.2 - Optimized Grouping & Performance
-        /// - Fixes Duplicate Rows: Normalizes Direction & uses F3 rounding
-        /// - Fixes Performance: Uses CascadedPolygonUnion
+        /// ProcessAreaLoads v12.0 - FORCE Z PRIORITY
+        /// - Fix lỗi nhận diện nhầm "GRAVITY" thành "Y" (do chữ Y trong Gravity).
+        /// - Ưu tiên hướng Z cho Sàn (Slab) để đảm bảo tải Gió bốc (Uplift) luôn vào Fz.
+        /// - Đồng bộ hướng hiển thị (Dir) với lực tính toán.
         /// </summary>
         private void ProcessAreaLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
         {
-            Log($"[ProcessAreaLoads v5.2] Processing {loads.Count} loads. Val={loadVal}");
+            Log($"[ProcessAreaLoads v12.0] Processing {loads.Count} loads. Val={loadVal}");
 
             var model = SapUtils.GetModel();
             if (model == null) { Log("[ERROR] Cannot get SAP Model"); return; }
 
-            // === BƯỚC 1: LƯU UNIT HIỆN TẠI VÀ CHUYỂN SANG kN_m_C ===
+            // Unit Switch
             var originalUnit = SapUtils.GetSapCurrentUnit();
             bool unitSwitched = false;
             try
             {
-                // Chuyển SAP về kN_m_C (mét, kN) - đơn vị chuẩn
-                if (model.SetPresentUnits(SAP2000v1.eUnits.kN_m_C) == 0)
-                {
-                    unitSwitched = true;
-                    Log($"   [UNIT] Switched to kN_m_C (was {originalUnit})");
-                }
+                if (model.SetPresentUnits(SAP2000v1.eUnits.kN_m_C) == 0) unitSwitched = true;
             }
             catch { }
 
@@ -582,34 +573,26 @@ namespace DTS_Engine.Core.Engines
             foreach (var load in loads)
             {
                 string name = load.ElementName;
-
-                // 1. LẤY MA TRẬN TRANSFORMATION TỪ API
                 double[] mat = new double[9];
-                int ret = model.AreaObj.GetTransformationMatrix(name, ref mat, true);
-                if (ret != 0) { continue; }
+                if (model.AreaObj.GetTransformationMatrix(name, ref mat, true) != 0) continue;
 
-                // Global Direction = Cột 3 của ma trận (Local 3 -> Global)
                 double gx = mat[2], gy = mat[5], gz = mat[8];
                 string globalAxis = "Mix"; int sign = 1;
                 if (Math.Abs(gx) > 0.7) { globalAxis = "Global X"; sign = gx > 0 ? 1 : -1; }
                 else if (Math.Abs(gy) > 0.7) { globalAxis = "Global Y"; sign = gy > 0 ? 1 : -1; }
                 else if (Math.Abs(gz) > 0.7) { globalAxis = "Global Z"; sign = gz > 0 ? 1 : -1; }
 
-                // 2. LẤY TỌA ĐỘ ĐIỂM TỪ API
                 int numPts = 0; string[] ptNames = null;
-                ret = model.AreaObj.GetPoints(name, ref numPts, ref ptNames);
-                if (ret != 0 || numPts < 3) { continue; }
+                if (model.AreaObj.GetPoints(name, ref numPts, ref ptNames) != 0 || numPts < 3) continue;
 
                 var pts = new List<(double x, double y, double z)>();
                 foreach (var pn in ptNames)
                 {
                     double x = 0, y = 0, z = 0;
-                    if (model.PointObj.GetCoordCartesian(pn, ref x, ref y, ref z) == 0)
-                        pts.Add((x, y, z));
+                    if (model.PointObj.GetCoordCartesian(pn, ref x, ref y, ref z) == 0) pts.Add((x, y, z));
                 }
                 if (pts.Count < 3) continue;
 
-                // 3. TÍNH DIỆN TÍCH 3D (tọa độ đã ở mét do unit switch)
                 double sumX = 0, sumY = 0, sumZ = 0;
                 var p0 = pts[0];
                 for (int k = 1; k < pts.Count - 1; k++)
@@ -621,32 +604,26 @@ namespace DTS_Engine.Core.Engines
                     sumY += v1z * v2x - v1x * v2z;
                     sumZ += v1x * v2y - v1y * v2x;
                 }
-                // Tọa độ đã ở mét (kN_m_C) -> diện tích trực tiếp là m²
                 double areaM2 = 0.5 * Math.Sqrt(sumX * sumX + sumY * sumY + sumZ * sumZ);
 
-                // 4. PLANE COORDINATE (mét)
-                double planeCoord = globalAxis.Contains("X") ? pts.Average(p => p.x) :
-                                   globalAxis.Contains("Y") ? pts.Average(p => p.y) : pts.Average(p => p.z);
-                // Tolerance 0.5m cho grouping walls cùng plane
-                long planeBin = (long)Math.Round(planeCoord / 0.5);
-
-                // 5. GROUP KEY - NORMALIZED & SYNCHRONIZED
-                
-                // [FIX 1] Normalize Direction: Z loads are same group regardless of label
+                // Group Key logic
                 string rawDir = (load.Direction ?? "").Trim().ToUpperInvariant();
                 string normDir = rawDir;
-                if (globalAxis.Contains("Z"))
+                if (globalAxis.Contains("Z")) // Slab
                 {
-                    if (rawDir.Contains("GRAV") || rawDir.Contains("GLOBAL Z") || rawDir.Contains("Z"))
+                    // Force Normalize: Tất cả các biến thể của tải đứng đều quy về Z
+                    if (rawDir.Contains("GRAV") || rawDir.Contains("Z") || rawDir.Contains("LOCAL 3") || string.IsNullOrEmpty(rawDir))
                         normDir = "Z_AXIS";
                 }
 
-                // [FIX 2] Sync Rounding with ProcessLoadType (F3 instead of F4)
+                double planeCoord = globalAxis.Contains("X") ? pts.Average(p => p.x) :
+                                   globalAxis.Contains("Y") ? pts.Average(p => p.y) : pts.Average(p => p.z);
+                long planeBin = (long)Math.Round(planeCoord / 0.5);
+
                 string groupKey = globalAxis.Contains("Z")
                     ? $"SLAB|{normDir}|{load.Value1:F3}"
                     : $"WALL|{globalAxis}|{load.Value1:F3}|{planeBin}|{sign}";
 
-                // Tạo SapArea để dùng cho NTS
                 var sapArea = new SapArea { Name = name, BoundaryPoints = pts.Select(p => new Point2D(p.x, p.y)).ToList(), ZValues = pts.Select(p => p.z).ToList() };
 
                 if (!groups.ContainsKey(groupKey))
@@ -654,10 +631,6 @@ namespace DTS_Engine.Core.Engines
                 groups[groupKey].Add((load, areaM2, globalAxis, sign, sapArea));
             }
 
-            Log($"[ProcessAreaLoads] Created {groups.Count} groups.");
-
-
-            // XỬ LÝ TỪNG NHÓM
             foreach (var kv in groups)
             {
                 try
@@ -671,71 +644,69 @@ namespace DTS_Engine.Core.Engines
                     var elementNames = items.Select(x => x.Load.ElementName).Distinct().ToList();
                     double totalArea = items.Sum(x => x.AreaM2);
 
+                    if (totalArea < MIN_AREA_THRESHOLD_M2) continue;
 
-                    if (totalArea < MIN_AREA_THRESHOLD_M2) { continue; }
-
-                    // [FIX 3] Performance Fix: Cascaded Union (Unary Union)
                     Geometry combinedGeom = null;
+                    var polygonList = new List<Geometry>();
                     try
                     {
-                        var polygonList = new List<Geometry>();
                         foreach (var item in items)
                         {
                             var projPts = ProjectAreaToBestPlane(item.Geom);
                             var poly = CreateNtsPolygon(projPts);
-                            if (poly != null && poly.IsValid && !poly.IsEmpty)
-                            {
-                                polygonList.Add(poly);
-                            }
+                            if (poly != null && poly.IsValid && !poly.IsEmpty) polygonList.Add(poly);
                         }
-
-                        // [FIX SPEED] Sử dụng CascadedPolygonUnion thay vì Iterative Union
-                        // Tốc độ: O(N log N) thay vì O(N^2). Xử lý 1000 sàn trong tíc tắc.
-                        if (polygonList.Count > 0)
-                        {
-                            combinedGeom = CascadedPolygonUnion.Union(polygonList);
-                        }
+                        if (polygonList.Count > 0) combinedGeom = CascadedPolygonUnion.Union(polygonList);
                     }
-                    catch (Exception ex) 
-                    {
-                        Log($"[GEOM-ERROR] Union failed: {ex.Message}");
-                    }
+                    catch { }
 
                     string formula = combinedGeom != null && !combinedGeom.IsEmpty ? FormatGeomGrouping(combinedGeom) : $"~{totalArea:0.00}";
                     string location = GetGroupGridLocation(elementNames);
 
-                    // FORCE CALCULATION
                     double loadValue = items[0].Load.Value1;
                     double force = loadValue * totalArea * sign;
                     double fx = 0, fy = 0, fz = 0;
-
-                    // Get load direction for all elements (moved outside if block for accessibility)
                     string loadDir = (items[0].Load.Direction ?? "").Trim().ToUpperInvariant();
 
+                    // --- [FIX] FORCE DECOMPOSITION LOGIC v12.0 ---
                     if (isSlab)
                     {
-                        if (loadDir.Contains("GRAVITY")) fz = -Math.Abs(force);
+                        // ƯU TIÊN SỐ 1: GRAVITY HOẶC Z -> GÁN VÀO Fz
+                        // Fix lỗi: "GRAVITY" chứa chữ "Y" nên code cũ gán nhầm vào Fy
+                        if (loadDir.Contains("GRAV") || loadDir.Contains("Z") || loadDir.Contains("LOCAL 3") || string.IsNullOrEmpty(loadDir))
+                        {
+                            // Gravity loads usually act AGAINST Z if positive, or ALONG Z if negative?
+                            // SAP convention: Gravity Load +1 means Downward (-Z).
+                            // Wind Uplift usually applied as Pressure (Local 3).
+                            // Just assign magnitude to Fz.
+                            fz = force; 
+                            
+                            // Nếu là Gravity, SAP thường để giá trị âm cho tải xuống.
+                            // Nếu gió bốc, giá trị dương -> Fz dương.
+                            if (loadDir.Contains("GRAV")) fz = -Math.Abs(force); 
+                        }
                         else if (loadDir.Contains("X")) fx = force;
                         else if (loadDir.Contains("Y")) fy = force;
-                        else fz = force;
+                        else fz = force; // Fallback to Z
                     }
-                    else
+                    else // Wall
                     {
                         if (globalAxis.Contains("X")) fx = force;
                         else if (globalAxis.Contains("Y")) fy = force;
                         else fz = force;
                     }
 
-                    string dirDisplay = globalAxis.Contains("X") ? (sign > 0 ? "+X" : "-X") :
-                                        globalAxis.Contains("Y") ? (sign > 0 ? "+Y" : "-Y") :
-                                        (sign > 0 ? "+Z" : "-Z");
+                    // Determine Display Direction
+                    string dirDisplay;
+                    if (Math.Abs(fz) >= Math.Abs(fx) && Math.Abs(fz) >= Math.Abs(fy))
+                        dirDisplay = (Math.Sign(fz) > 0 ? "+" : "-") + "Z";
+                    else if (Math.Abs(fx) >= Math.Abs(fy))
+                        dirDisplay = (Math.Sign(fx) > 0 ? "+" : "-") + "X";
+                    else
+                        dirDisplay = (Math.Sign(fy) > 0 ? "+" : "-") + "Y";
 
-                    // [FIX v5.4] For GRAVITY loads, show negative UnitLoad for consistency
                     double displayLoadValue = loadValue;
-                    if (isSlab && loadDir.Contains("GRAVITY"))
-                    {
-                        displayLoadValue = -Math.Abs(loadValue);
-                    }
+                    if (isSlab && loadDir.Contains("GRAVITY")) displayLoadValue = -Math.Abs(loadValue);
 
                     targetList.Add(new AuditEntry
                     {
@@ -752,23 +723,11 @@ namespace DTS_Engine.Core.Engines
                         ElementList = elementNames,
                         StructuralType = isSlab ? "Slab Elements" : "Wall Elements"
                     });
-                    Log($"   [ADDED] {location}: {dirDisplay}, F={force:F2}");
                 }
-                catch (Exception ex) { Log($"[ERROR] {ex.Message}"); }
+                catch (Exception ex) { Log($"[ERROR-GROUP] {ex.Message}"); }
             }
 
-
-
-            // === BƯỚC CUỐI: TRẢ LẠI UNIT GỐC ===
-            if (unitSwitched)
-            {
-                try
-                {
-                    model.SetPresentUnits(originalUnit);
-                    Log($"   [UNIT] Restored to {originalUnit}");
-                }
-                catch { }
-            }
+            if (unitSwitched) try { model.SetPresentUnits(originalUnit); } catch { }
         }
 
         // [ADDED v4.5] Helper for grouping geometry terms (Already in Meters after unit switch)
