@@ -1233,6 +1233,9 @@ namespace DTS_Engine.Core.Engines
                     endM = coveredLength;
                 }
 
+                // [v6.0] Calculate Global Interval for load continuity analysis
+                var globalInterval = CalculateGlobalInterval(load, frame);
+
                 frameItems.Add(new FrameAuditItem
                 {
                     Load = load,
@@ -1240,7 +1243,9 @@ namespace DTS_Engine.Core.Engines
                     PrimaryGrid = primaryGrid,
                     Length = coveredLength,
                     StartM = startM,
-                    EndM = endM
+                    EndM = endM,
+                    GlobalStart = globalInterval.Start,
+                    GlobalEnd = globalInterval.End
                 });
             }
 
@@ -1282,23 +1287,11 @@ namespace DTS_Engine.Core.Engines
 
                 string rangeDesc = DetermineCrossAxisRange(grp.ToList());
 
-                // [FIXED] Logic diễn giải thông minh hơn
-                string explanation = "";
-                
-                // Kiểm tra xem có phải tất cả đều chất tải full không
-                bool isAllFull = grp.All(f => Math.Abs(f.Length - (f.Frame.Length3D * UnitManager.Info.LengthScaleToMeter)) < 0.01);
-                
-                if (isAllFull)
-                {
-                    explanation = "Full Length";
-                }
-                else
-                {
-                    // Nếu chất tải từng đoạn, liệt kê chi tiết (tối đa 3 đoạn để không vỡ layout)
-                    var segments = grp.Select(f => $"{f.StartM:0.##}-{f.EndM:0.##}m").Distinct().Take(3).ToList();
-                    explanation = string.Join(", ", segments);
-                    if (grp.Select(f => $"{f.StartM}-{f.EndM}").Distinct().Count() > 3) explanation += "...";
-                }
+                // [v6.0] Use Load Continuity Analysis for engineering-focused output
+                // Output: "Span 1-5" or "Span 1-2 & 4-5" instead of "Full Length"
+                var groupItems = grp.ToList();
+                bool isVertical = IsGridVertical(groupItems);
+                string explanation = AnalyzeLoadContinuity(groupItems, isVertical);
 
                 var elementNames = grp.Select(f => f.Load.ElementName).Distinct().ToList();
                 
@@ -1383,6 +1376,9 @@ namespace DTS_Engine.Core.Engines
             public double Length;
             public double StartM;
             public double EndM;
+            // [v6.0] Global Coordinates for Interval Merging
+            public double GlobalStart; // Global X or Y coordinate (mm)
+            public double GlobalEnd;   // Global X or Y coordinate (mm)
         }
 
         /// <summary>
@@ -1478,6 +1474,173 @@ namespace DTS_Engine.Core.Engines
             string cleanEnd = endGrid.Split('(')[0];
             return $"{cleanStart}-{cleanEnd}";
         }
+
+        #region Load Continuity Analysis v6.0
+
+        /// <summary>
+        /// Helper struct for storing Global Axis coordinates of load intervals
+        /// </summary>
+        private struct GlobalInterval 
+        { 
+            public double Start;  // Global X or Y (mm)
+            public double End;    // Global X or Y (mm)
+        }
+
+        /// <summary>
+        /// Convert element-local load offsets to Global Axis coordinates.
+        /// This enables merging loads across multiple elements on the same axis.
+        /// </summary>
+        private GlobalInterval CalculateGlobalInterval(RawSapLoad load, SapFrame frame)
+        {
+            // Get frame direction vector
+            double dx = frame.EndPt.X - frame.StartPt.X;
+            double dy = frame.EndPt.Y - frame.StartPt.Y;
+            double len2D = Math.Sqrt(dx * dx + dy * dy);
+            
+            // Vertical column or very short element - use Z for interval
+            if (len2D < 1e-6)
+            {
+                double z1 = Math.Min(frame.Z1, frame.Z2);
+                double z2 = Math.Max(frame.Z1, frame.Z2);
+                return new GlobalInterval { Start = z1, End = z2 };
+            }
+
+            // Normalize direction
+            double uX = dx / len2D;
+            double uY = dy / len2D;
+
+            // Get load distances (convert to mm if needed)
+            double frameLenMM = frame.Length3D;
+            double dStartMM, dEndMM;
+            
+            if (load.IsRelative)
+            {
+                dStartMM = load.DistStart * frameLenMM;
+                dEndMM = load.DistEnd * frameLenMM;
+            }
+            else
+            {
+                // Absolute distance - assume already in current units (mm)
+                dStartMM = load.DistStart;
+                dEndMM = load.DistEnd;
+            }
+
+            // Determine frame axis orientation
+            bool isHorizontal = Math.Abs(dx) > Math.Abs(dy);
+
+            double gStart, gEnd;
+
+            if (isHorizontal)
+            {
+                // Project to X axis
+                gStart = frame.StartPt.X + uX * dStartMM;
+                gEnd = frame.StartPt.X + uX * dEndMM;
+            }
+            else
+            {
+                // Project to Y axis
+                gStart = frame.StartPt.Y + uY * dStartMM;
+                gEnd = frame.StartPt.Y + uY * dEndMM;
+            }
+
+            // Normalize order
+            return new GlobalInterval 
+            { 
+                Start = Math.Min(gStart, gEnd), 
+                End = Math.Max(gStart, gEnd) 
+            };
+        }
+
+        /// <summary>
+        /// Analyze load continuity by merging adjacent intervals.
+        /// Returns engineering-friendly description like "Span 1-5" or "Span 1-2 & 4-5"
+        /// </summary>
+        private string AnalyzeLoadContinuity(List<FrameAuditItem> items, bool isVerticalGroup)
+        {
+            if (items.Count == 0) return "Empty";
+
+            // 1. Sort by Global Start
+            var sorted = items.OrderBy(i => i.GlobalStart).ToList();
+            
+            // 2. Merge Intervals (Tolerance = 200mm for beam connection gaps)
+            const double MERGE_TOLERANCE = 200.0;
+            var merged = new List<GlobalInterval>();
+            
+            if (sorted.Count > 0)
+            {
+                var current = new GlobalInterval 
+                { 
+                    Start = sorted[0].GlobalStart, 
+                    End = sorted[0].GlobalEnd 
+                };
+                
+                for (int i = 1; i < sorted.Count; i++)
+                {
+                    var next = sorted[i];
+                    // If overlap or close enough (gap < tolerance)
+                    if (next.GlobalStart <= current.End + MERGE_TOLERANCE) 
+                    {
+                        current.End = Math.Max(current.End, next.GlobalEnd);
+                    }
+                    else
+                    {
+                        merged.Add(current);
+                        current = new GlobalInterval { Start = next.GlobalStart, End = next.GlobalEnd };
+                    }
+                }
+                merged.Add(current);
+            }
+
+            // 3. Map merged intervals to Grid Names
+            // Determine which grid set to use based on frame orientation
+            var crossingGrids = isVerticalGroup ? _yGrids : _xGrids;
+            
+            var parts = new List<string>();
+            foreach (var range in merged)
+            {
+                string startG = FindNearestGrid(range.Start, crossingGrids);
+                string endG = FindNearestGrid(range.End, crossingGrids);
+                
+                double lenM = (range.End - range.Start) / 1000.0;
+                
+                if (startG == endG)
+                    parts.Add($"at {startG}");
+                else
+                    parts.Add($"{startG}-{endG}");
+            }
+
+            if (parts.Count == 0) return "No Span";
+            
+            // Join multiple spans (if discontinuous)
+            return "Span " + string.Join(" & ", parts);
+        }
+
+        /// <summary>
+        /// Find the nearest grid line to a coordinate.
+        /// </summary>
+        private string FindNearestGrid(double coord, List<SapUtils.GridLineRecord> grids)
+        {
+            if (grids == null || grids.Count == 0) return "?";
+            var nearest = grids.OrderBy(g => Math.Abs(g.Coordinate - coord)).First();
+            // If close enough (<200mm), return grid name
+            if (Math.Abs(nearest.Coordinate - coord) < 200) 
+                return nearest.Name;
+            // Otherwise include offset indicator
+            return nearest.Name;
+        }
+
+        /// <summary>
+        /// Check if the group of frames is oriented along Y axis (vertical in plan)
+        /// </summary>
+        private bool IsGridVertical(List<FrameAuditItem> items)
+        {
+            if (items.Count == 0) return false;
+            var f = items[0].Frame;
+            // Vertical in Plan = Parallel to Y axis
+            return Math.Abs(f.EndPt.Y - f.StartPt.Y) > Math.Abs(f.EndPt.X - f.StartPt.X);
+        }
+
+        #endregion
 
         // --- XỬ LÝ TẢI ĐIỂM (POINT) - IMPROVED GROUPING ---
         private void ProcessPointLoads(List<RawSapLoad> loads, double loadVal, string dir, List<AuditEntry> targetList)
