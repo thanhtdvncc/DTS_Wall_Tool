@@ -115,6 +115,12 @@ namespace DTS_Engine.Core.Utils
                     return new LintelData();
                 case "REBAR":
                     return new RebarData();
+                case "REBAR_DATA":
+                    return new BeamResultData();
+                case "REBAR_SOLUTION":
+#pragma warning disable CS0618 // Kept for backward compatibility
+                    return new BeamRebarSolution();
+#pragma warning restore CS0618
                 // Thêm các loại mới ở đây...
                 default:
                     return null;

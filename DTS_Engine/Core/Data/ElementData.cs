@@ -74,10 +74,21 @@ namespace DTS_Engine.Core.Data
         public List<MappingRecord> Mappings { get; set; } = new List<MappingRecord>();
 
         /// <summary>
+        /// Tên phần tử SAP2000 (Label) - được ghi khi vẽ từ DTS_PLOT_FROM_SAP
+        /// VD: "580", "B12", "C5"
+        /// </summary>
+        public string SapFrameName { get; set; }
+
+        /// <summary>
         /// Kiểm tra đã được mapping với SAP2000 chưa
         /// </summary>
         public bool HasMapping => Mappings != null && Mappings.Count > 0 &&
                                    Mappings.Exists(m => m.TargetFrame != "New");
+
+        /// <summary>
+        /// Kiểm tra có SapFrameName trực tiếp không
+        /// </summary>
+        public bool HasSapFrame => !string.IsNullOrEmpty(SapFrameName);
 
         #endregion
 
@@ -164,6 +175,10 @@ namespace DTS_Engine.Core.Data
 
             if (dict.TryGetValue("xMappings", out var mappings))
                 Mappings = ConvertToMappingList(mappings);
+
+            // SAP Frame Name (direct label from DTS_PLOT_FROM_SAP)
+            if (dict.TryGetValue("xSapFrameName", out var sapFrame))
+                SapFrameName = sapFrame?.ToString();
         }
 
         /// <summary>
@@ -197,6 +212,10 @@ namespace DTS_Engine.Core.Data
 
             if (Mappings != null && Mappings.Count > 0)
                 dict["xMappings"] = ConvertMappingsToSerializable(Mappings);
+
+            // SAP Frame Name (direct label from DTS_PLOT_FROM_SAP)
+            if (!string.IsNullOrEmpty(SapFrameName))
+                dict["xSapFrameName"] = SapFrameName;
         }
 
         /// <summary>
@@ -219,6 +238,8 @@ namespace DTS_Engine.Core.Data
             }
             // [MỚI] Clone References
             target.ReferenceHandles = new List<string>(ReferenceHandles ?? new List<string>());
+            // SAP Frame Name
+            target.SapFrameName = SapFrameName;
         }
 
         /// <summary>

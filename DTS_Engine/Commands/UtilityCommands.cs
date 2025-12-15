@@ -257,7 +257,8 @@ namespace DTS_Engine.Commands
                 "dts_labels",
                 "dts_temp",
                 "dts_frame_label",
-                "dts_scan_link"
+                "dts_scan_link",
+                "dts_rebar_text" // Rebar labels
             };
 
             int totalCleared = 0;

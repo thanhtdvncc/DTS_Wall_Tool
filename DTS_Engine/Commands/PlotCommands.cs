@@ -505,9 +505,30 @@ namespace DTS_Engine.Commands
 
                 // Vẽ Line cho Dầm (hoặc Cột3D)
                 // Logic màu: Beam =2 (Yellow), Column =3 (Green)
-                var line = new Line(p1, p2) { Layer = FRAME_LAYER, ColorIndex = f.IsBeam ? 2 : 3 };
+                // User Request: Beam "None" -> Color 8
+                int colorIndex = f.IsBeam ? 2 : 3;
+                string secName = f.Section?.Trim() ?? "";
+                
+                bool isNone = false;
+                if (f.IsBeam && string.Equals(secName, "None", StringComparison.OrdinalIgnoreCase))
+                {
+                    colorIndex = 8;
+                    isNone = true;
+                    // WriteMessage($"\nFound None beam ID {f.Name} - Setting Color 8");
+                }
+
+                var line = new Line(p1, p2);
+                line.Layer = FRAME_LAYER;
+                line.ColorIndex = colorIndex; // Force set explicit color
+
                 ObjectId id = btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
+                
+                if (isNone)
+                {
+                    // Double check to prevent ByLayer override logic from elsewhere
+                    line.ColorIndex = 8; 
+                }
 
                 // FIX4: Phân loại Data
                 ElementData elemData;
@@ -525,6 +546,9 @@ namespace DTS_Engine.Commands
 
                 // Link Origin
                 if (!string.IsNullOrEmpty(originHandle)) elemData.OriginHandle = originHandle;
+
+                // Store SAP Frame Name for direct lookup in DTS_REBAR_SAP_RESULT
+                elemData.SapFrameName = f.Name;
 
                 XDataUtils.WriteElementData(line, elemData, tr);
 

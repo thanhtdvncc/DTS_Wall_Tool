@@ -2,6 +2,7 @@
 using Autodesk.AutoCAD.Geometry;
 using DTS_Engine.Core.Primitives;
 using System;
+using System.Collections.Generic;
 
 namespace DTS_Engine.Core.Utils
 {
@@ -270,6 +271,9 @@ namespace DTS_Engine.Core.Utils
             mtext.Contents = content;
             mtext.Location = insertPoint;
             mtext.TextHeight = textHeight;
+            
+            // Ensure layer exists before assigning (fixes eKeyNotFound)
+            AcadUtils.CreateLayer(layer, DEFAULT_COLOR);
             mtext.Layer = layer;
             mtext.ColorIndex = DEFAULT_COLOR;
 
@@ -298,6 +302,9 @@ namespace DTS_Engine.Core.Utils
             m.Contents = content;
             m.Location = new Point3d(center.X, center.Y + TEXT_GAP, 0);
             m.TextHeight = textHeight;
+            
+            // Ensure layer exists before assigning (fixes eKeyNotFound)
+            AcadUtils.CreateLayer(layer, DEFAULT_COLOR);
             m.Layer = layer;
             m.ColorIndex = DEFAULT_COLOR;
             m.Attachment = AttachmentPoint.BottomCenter;
@@ -386,9 +393,11 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>
         /// Vẽ Label thép tại vị trí cụ thể (Start/Mid/End) và phía (Top/Bot).
+        /// - Start: căn lề trái, offset 5% từ điểm đầu
+        /// - Mid: căn giữa
+        /// - End: căn lề phải, offset 5% từ điểm cuối
         /// </summary>
-        /// <param name="posIndex">0=Start, 1=Mid, 2=End</param>
-        /// <param name="isTop">True=Vẽ mặt trên, False=Vẽ mặt dưới</param>
+        /// <param name="ownerHandle">Handle của frame sở hữu label (để cleanup)</param>
         public static void PlotRebarLabel(
             BlockTableRecord btr,
             Transaction tr,
@@ -397,31 +406,58 @@ namespace DTS_Engine.Core.Utils
             string content,
             int posIndex,
             bool isTop,
+            string ownerHandle = null,
             double textHeight = 200.0)
         {
-            // Xác định vị trí Base Point trên đường thẳng
+            Vector3d dir = (endPt - startPt);
+            double length = dir.Length;
+            if (length < 1e-6) return;
+            
+            Vector3d unitDir = dir.GetNormal();
+            const double NODE_OFFSET_RATIO = 0.10; // 10% offset from nodes
+            
+            // Xác định vị trí Base Point và Alignment
             Point3d basePt;
             LabelPosition labelPos;
+            
+            // Calculate adjusted start/end points with 5% offset from nodes
+            Point3d adjStartPt = startPt + unitDir * (length * NODE_OFFSET_RATIO);
+            Point3d adjEndPt = endPt - unitDir * (length * NODE_OFFSET_RATIO);
 
-            // Logic mapping Index + Side -> Enum Position
-            if (posIndex == 0) // Start
+            if (posIndex == 0) // Start - căn lề trái
             {
-                basePt = startPt;
+                basePt = adjStartPt;
                 labelPos = isTop ? LabelPosition.StartTop : LabelPosition.StartBottom;
             }
-            else if (posIndex == 2) // End
+            else if (posIndex == 2) // End - căn lề phải
             {
-                basePt = endPt;
+                basePt = adjEndPt;
                 labelPos = isTop ? LabelPosition.EndTop : LabelPosition.EndBottom;
             }
-            else // Mid
+            else // Mid - căn giữa
             {
-                basePt = startPt + (endPt - startPt) * 0.5;
+                basePt = startPt + dir * 0.5;
                 labelPos = isTop ? LabelPosition.MiddleTop : LabelPosition.MiddleBottom;
             }
 
-            // Gọi hàm vẽ PlotLabel cơ bản
-            PlotLabel(btr, tr, startPt, endPt, content, labelPos, textHeight, "dts_rebar_text");
+            // Gọi hàm vẽ PlotLabel với điểm đã điều chỉnh
+            ObjectId labelId = PlotLabel(btr, tr, adjStartPt, adjEndPt, content, labelPos, textHeight, "dts_rebar_text");
+
+            // Ghi XData "xOwnerHandle" để sau này xóa chính xác
+            if (labelId != ObjectId.Null && !string.IsNullOrEmpty(ownerHandle))
+            {
+                try
+                {
+                    DBObject obj = tr.GetObject(labelId, OpenMode.ForWrite);
+                    var dict = new Dictionary<string, object>
+                    {
+                        { "xOwnerHandle", ownerHandle },
+                        { "xType", "RebarLabel" }
+                    };
+                    XDataUtils.SetRawData(obj, dict, tr);
+                }
+                catch { }
+            }
         }
 
     }

@@ -31,6 +31,7 @@ namespace DTS_Engine.Core.Data
             clone.BotArea = (double[])BotArea?.Clone();
             clone.TorsionArea = (double[])TorsionArea?.Clone();
             clone.ShearArea = (double[])ShearArea?.Clone();
+            clone.TTArea = (double[])TTArea?.Clone();
             clone.DesignCombo = DesignCombo;
             clone.SectionName = SectionName;
             clone.Width = Width;
@@ -43,6 +44,9 @@ namespace DTS_Engine.Core.Data
             clone.StirrupString = (string[])StirrupString?.Clone();
             clone.WebBarString = (string[])WebBarString?.Clone();
             clone.BeamName = BeamName;
+            // SAP Mapping
+            clone.SapElementName = SapElementName;
+            clone.MappingSource = MappingSource;
             return clone;
         }
 
@@ -50,10 +54,22 @@ namespace DTS_Engine.Core.Data
         // Array[3]: 0=Start, 1=Mid, 2=End
         public double[] TopArea { get; set; } = new double[3];
         public double[] BotArea { get; set; } = new double[3];
-        public double[] TorsionArea { get; set; } = new double[3];
-        public double[] ShearArea { get; set; } = new double[3]; // VMajor Shear Area
+        public double[] TorsionArea { get; set; } = new double[3]; // TLArea (Al) - Longitudinal Torsion
+        public double[] ShearArea { get; set; } = new double[3]; // VMajor Shear Area (Av/s)
+        public double[] TTArea { get; set; } = new double[3]; // Transverse Torsion (At/s) cm2/cm
 
         public string DesignCombo { get; set; }
+
+        // ===== SAP Mapping (NEW - Origin/Link Integration) =====
+        /// <summary>
+        /// Tên phần tử SAP đã mapping (VD: "580", "B12")
+        /// </summary>
+        public string SapElementName { get; set; }
+
+        /// <summary>
+        /// Nguồn gốc mapping: "XData" | "Coordinate" | "Manual"
+        /// </summary>
+        public string MappingSource { get; set; } = "Coordinate";
 
         // ===== Section Info =====
         public string SectionName { get; set; }
@@ -85,6 +101,7 @@ namespace DTS_Engine.Core.Data
             dict["BotArea"] = BotArea;
             dict["TorsionArea"] = TorsionArea;
             dict["ShearArea"] = ShearArea;
+            dict["TTArea"] = TTArea;
             dict["DesignCombo"] = DesignCombo;
             // Section
             dict["SectionName"] = SectionName;
@@ -100,6 +117,9 @@ namespace DTS_Engine.Core.Data
             dict["StirrupString"] = StirrupString;
             dict["WebBarString"] = WebBarString;
             dict["BeamName"] = BeamName;
+            // SAP Mapping
+            if (!string.IsNullOrEmpty(SapElementName)) dict["SapElementName"] = SapElementName;
+            if (!string.IsNullOrEmpty(MappingSource)) dict["MappingSource"] = MappingSource;
             return dict;
         }
 
@@ -111,6 +131,7 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("BotArea", out var b)) BotArea = ConvertToDoubleArray(b);
             if (dict.TryGetValue("TorsionArea", out var tor)) TorsionArea = ConvertToDoubleArray(tor);
             if (dict.TryGetValue("ShearArea", out var shear)) ShearArea = ConvertToDoubleArray(shear);
+            if (dict.TryGetValue("TTArea", out var tt)) TTArea = ConvertToDoubleArray(tt);
             if (dict.TryGetValue("DesignCombo", out var dc)) DesignCombo = dc?.ToString();
             // Section
             if (dict.TryGetValue("SectionName", out var sn)) SectionName = sn?.ToString();
@@ -127,6 +148,9 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("StirrupString", out var ss)) StirrupString = ConvertToStringArray(ss);
             if (dict.TryGetValue("WebBarString", out var ws)) WebBarString = ConvertToStringArray(ws);
             if (dict.TryGetValue("BeamName", out var bn)) BeamName = bn?.ToString();
+            // SAP Mapping
+            if (dict.TryGetValue("SapElementName", out var sapN)) SapElementName = sapN?.ToString();
+            if (dict.TryGetValue("MappingSource", out var mapS)) MappingSource = mapS?.ToString();
         }
 
         private double[] ConvertToDoubleArray(object obj)

@@ -124,14 +124,20 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
-        /// Tính toán bước đai từ diện tích cắt yêu cầu.
-        /// Input: shearArea (cm2/cm) - Diện tích thép đai trên 1 đơn vị dài
+        /// Tính toán bước đai từ diện tích cắt và xoắn yêu cầu.
+        /// Input: 
+        ///   - shearArea (cm2/cm) = Av/s - Diện tích thép đai cắt trên 1 đơn vị dài
+        ///   - ttArea (cm2/cm) = At/s - Diện tích thép đai xoắn trên 1 đơn vị dài
+        /// Công thức ACI 318-19: Atotal/s = Av/s + 2×At/s
         /// Output: String dạng "2-d8a150" (số nhánh - phi - bước)
         /// Logic: Tự động tăng số nhánh (2→3→4) nếu bước đai quá nhỏ
         /// </summary>
-        public static string CalculateStirrup(double shearArea, RebarSettings settings)
+        public static string CalculateStirrup(double shearArea, double ttArea, RebarSettings settings)
         {
-            if (shearArea <= 0.01) return "-"; // Không cần đai
+            // ACI 318-19: Atotal/s = Av/s + 2*At/s
+            double totalArea = shearArea + 2 * ttArea;
+            
+            if (totalArea <= 0.01) return "-"; // Không cần đai
 
             int d = settings.StirrupDiameter;
             var spacings = settings.StirrupSpacings;
@@ -149,8 +155,8 @@ namespace DTS_Engine.Core.Algorithms
                 double asTotal = as1 * nLegs;
 
                 // Tính bước đai tối đa cho phép
-                // Công thức: Asw/s >= shearArea => s <= Asw / shearArea
-                double maxSpacing = (asTotal / shearArea) * 10; // cm → mm
+                // Công thức: Asw/s >= totalArea => s <= Asw / totalArea
+                double maxSpacing = (asTotal / totalArea) * 10; // cm → mm
 
                 // Chọn bước đai chuẩn lớn nhất thỏa mãn
                 int selectedSpacing = -1;
@@ -214,6 +220,56 @@ namespace DTS_Engine.Core.Algorithms
             if (nFinal == 0) return "-";
 
             return $"{nFinal}d{d}";
+        }
+
+        /// <summary>
+        /// Parse diện tích thép từ chuỗi bố trí dọc (VD: "4d20", "2d16+3d18").
+        /// Trả về tổng diện tích cm2.
+        /// </summary>
+        public static double ParseRebarArea(string rebarStr)
+        {
+            if (string.IsNullOrEmpty(rebarStr) || rebarStr == "-") return 0;
+
+            double total = 0;
+            // Split by '+' for multi-layer arrangements
+            var parts = rebarStr.Split(new[] { '+' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                var s = part.Trim();
+                // Expected format: NdD (e.g., "4d20")
+                var match = System.Text.RegularExpressions.Regex.Match(s, @"(\d+)[dD](\d+)");
+                if (match.Success)
+                {
+                    int n = int.Parse(match.Groups[1].Value);
+                    int d = int.Parse(match.Groups[2].Value);
+                    double as1 = Math.PI * d * d / 400.0; // cm2 per bar
+                    total += n * as1;
+                }
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// Parse diện tích đai trên đơn vị dài từ chuỗi bố trí (VD: "d10a150").
+        /// Trả về A/s (cm2/cm), giả sử đai 2 nhánh.
+        /// </summary>
+        public static double ParseStirrupAreaPerLen(string stirrupStr, int nLegs = 2)
+        {
+            if (string.IsNullOrEmpty(stirrupStr) || stirrupStr == "-") return 0;
+
+            // Expected format: dDaS (e.g., "d10a150", "d8a100")
+            var match = System.Text.RegularExpressions.Regex.Match(stirrupStr, @"[dD](\d+)[aA](\d+)");
+            if (match.Success)
+            {
+                int d = int.Parse(match.Groups[1].Value);
+                int spacing = int.Parse(match.Groups[2].Value); // mm
+                if (spacing <= 0) return 0;
+
+                double as1 = Math.PI * d * d / 400.0; // cm2 per bar
+                double areaPerLen = (nLegs * as1) / (spacing / 10.0); // cm2/cm
+                return areaPerLen;
+            }
+            return 0;
         }
     }
 }

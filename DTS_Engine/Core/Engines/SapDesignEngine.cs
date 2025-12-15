@@ -125,6 +125,11 @@ namespace DTS_Engine.Core.Engines
                         data.ShearArea[1] = GetMaxInZone(vMajorArea, limitStart, limitEnd);
                         data.ShearArea[2] = GetMaxInZone(vMajorArea, limitEnd, L);
 
+                        // 7. Assign Data - Torsion Transverse (At/s) Max trong từng vùng
+                        data.TTArea[0] = GetMaxInZone(ttArea, 0, limitStart);
+                        data.TTArea[1] = GetMaxInZone(ttArea, limitStart, limitEnd);
+                        data.TTArea[2] = GetMaxInZone(ttArea, limitEnd, L);
+
                         data.DesignCombo = topCombo[0]; // Lấy combo đầu làm mẫu
 
                         // --- Get Section Props ---
