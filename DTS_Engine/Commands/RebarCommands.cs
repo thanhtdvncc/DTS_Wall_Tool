@@ -273,15 +273,16 @@ namespace DTS_Engine.Commands
 
                         for (int i = 0; i < 3; i++)
                         {
-                            // Top line: "3d20 | d8a150"
-                            string topText = data.TopRebarString[i];
+                            // Top: Thép dọc Top (dòng 1) + Thép đai (dòng 2)
+                            // Dùng \P cho xuống dòng trong MText
+                            string topText = data.TopRebarString[i] ?? "-";
                             if (!string.IsNullOrEmpty(data.StirrupString[i]) && data.StirrupString[i] != "-")
-                                topText += " | " + data.StirrupString[i];
+                                topText += "\\P" + data.StirrupString[i];
 
-                            // Bot line: "3d20 | 2d12"
-                            string botText = data.BotRebarString[i];
+                            // Bot: Thép dọc Bot (dòng 1) + Thép sườn (dòng 2)
+                            string botText = data.BotRebarString[i] ?? "-";
                             if (!string.IsNullOrEmpty(data.WebBarString[i]) && data.WebBarString[i] != "-")
-                                botText += " | " + data.WebBarString[i];
+                                botText += "\\P" + data.WebBarString[i];
 
                             LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, topText, i, true);
                             LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, botText, i, false);
@@ -672,23 +673,23 @@ namespace DTS_Engine.Commands
                                 botText = $"{asBot:F1}";
                                 break;
 
-                            case 1: // Rebar (Bố trí)
+                            case 1: // Rebar (Bố trí) - Dùng \P xuống dòng
                                 topText = data.TopRebarString[i] ?? "-";
                                 if (!string.IsNullOrEmpty(data.StirrupString[i]) && data.StirrupString[i] != "-")
-                                    topText += " | " + data.StirrupString[i];
+                                    topText += "\\P" + data.StirrupString[i];
 
                                 botText = data.BotRebarString[i] ?? "-";
                                 if (!string.IsNullOrEmpty(data.WebBarString[i]) && data.WebBarString[i] != "-")
-                                    botText += " | " + data.WebBarString[i];
+                                    botText += "\\P" + data.WebBarString[i];
                                 break;
 
-                            case 2: // Both (Cả hai)
+                            case 2: // Both (Cả hai) - Dùng \P xuống dòng
                                 double asTopB = data.TopArea[i] + data.TorsionArea[i] * torFactor;
                                 double asBotB = data.BotArea[i] + data.TorsionArea[i] * torFactor;
                                 string topRebar = data.TopRebarString[i] ?? "-";
                                 string botRebar = data.BotRebarString[i] ?? "-";
-                                topText = $"{asTopB:F1} | {topRebar}";
-                                botText = $"{asBotB:F1} | {botRebar}";
+                                topText = $"{asTopB:F1}\\P{topRebar}";
+                                botText = $"{asBotB:F1}\\P{botRebar}";
                                 break;
                         }
 

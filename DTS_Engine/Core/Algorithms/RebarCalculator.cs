@@ -125,42 +125,56 @@ namespace DTS_Engine.Core.Algorithms
 
         /// <summary>
         /// Tính toán bước đai từ diện tích cắt yêu cầu.
-        /// Input: shearArea (cm2) - Diện tích thép đai trên 1 đơn vị dài (thường SAP trả về cm2/cm)
-        /// Output: String dạng "d8a150"
+        /// Input: shearArea (cm2/cm) - Diện tích thép đai trên 1 đơn vị dài
+        /// Output: String dạng "2-d8a150" (số nhánh - phi - bước)
+        /// Logic: Tự động tăng số nhánh (2→3→4) nếu bước đai quá nhỏ
         /// </summary>
         public static string CalculateStirrup(double shearArea, RebarSettings settings)
         {
-            if (shearArea <= 0.01) return "-"; // Không cần đai cấu tạo
+            if (shearArea <= 0.01) return "-"; // Không cần đai
 
             int d = settings.StirrupDiameter;
-            int legs = settings.StirrupLegs;
             var spacings = settings.StirrupSpacings;
+            int minSpacing = 100; // Bước đai tối thiểu thi công được (mm)
 
             if (spacings == null || spacings.Count == 0)
                 spacings = new List<int> { 100, 150, 200, 250 };
 
             // Diện tích 1 nhánh đai (cm2)
             double as1 = Math.PI * d * d / 400.0;
-            
-            // Tổng diện tích các nhánh đai
-            double asTotal = as1 * legs;
 
-            // Tính bước đai tối đa cho phép
-            // shearArea = asTotal / s  =>  s = asTotal / shearArea
-            double maxSpacing = (asTotal / shearArea) * 10; // Chuyển từ cm về mm
-
-            // Chọn bước đai chuẩn nhỏ hơn hoặc bằng max
-            int selectedSpacing = spacings.Min(); // Default nhỏ nhất
-            foreach (var s in spacings.OrderByDescending(x => x))
+            // Thử từ 2 nhánh đến 4 nhánh
+            for (int nLegs = 2; nLegs <= 4; nLegs++)
             {
-                if (s <= maxSpacing)
+                double asTotal = as1 * nLegs;
+
+                // Tính bước đai tối đa cho phép
+                // Công thức: Asw/s >= shearArea => s <= Asw / shearArea
+                double maxSpacing = (asTotal / shearArea) * 10; // cm → mm
+
+                // Chọn bước đai chuẩn lớn nhất thỏa mãn
+                int selectedSpacing = -1;
+                foreach (var s in spacings.OrderByDescending(x => x))
                 {
-                    selectedSpacing = s;
-                    break;
+                    if (s <= maxSpacing)
+                    {
+                        selectedSpacing = s;
+                        break;
+                    }
                 }
+
+                // Nếu tìm được bước đai >= minSpacing
+                if (selectedSpacing >= minSpacing)
+                {
+                    return $"{nLegs}-d{d}a{selectedSpacing}";
+                }
+                
+                // Nếu bước đai nhỏ nhất trong spacings vẫn <= maxSpacing nhưng < minSpacing
+                // thì tăng nhánh và thử lại
             }
 
-            return $"d{d}a{selectedSpacing}";
+            // Fallback: Dùng 4 nhánh với bước nhỏ nhất
+            return $"4-d{d}a{spacings.Min()}*";
         }
 
         /// <summary>
