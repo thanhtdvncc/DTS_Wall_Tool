@@ -176,31 +176,44 @@ namespace DTS_Engine.Core.Algorithms
             // Fallback: Dùng 4 nhánh với bước nhỏ nhất
             return $"4-d{d}a{spacings.Min()}*";
         }
-
         /// <summary>
-        /// Tính toán thép sườn (thép giá, web bars) từ diện tích xoắn phần dư.
-        /// Logic: Chiều cao > 700mm mới cần thép sườn, số thanh luôn chẵn (đối xứng).
+        /// Tính toán cốt giá/sườn (Web bars).
+        /// Logic: Max(Diện tích chịu xoắn phân bổ, Diện tích cấu tạo theo chiều cao).
+        /// Input:
+        /// - torsionTotal: Tổng diện tích xoắn Al (cm2) lấy từ SAP.
+        /// - torsionRatioSide: Tỷ lệ phân bổ vào sườn (VD: 0.5).
+        /// - heightMm: Chiều cao dầm (mm).
         /// </summary>
-        public static string CalculateWebBars(double torsionAreaSide, double heightMm, RebarSettings settings)
+        public static string CalculateWebBars(double torsionTotal, double torsionRatioSide, double heightMm, RebarSettings settings)
         {
-            // Kiểm tra chiều cao tối thiểu
-            if (heightMm < settings.WebBarMinHeight)
-                return "-";
-
-            if (torsionAreaSide <= 0.01)
-                return "-";
-
             int d = settings.WebBarDiameter;
-            double as1 = Math.PI * d * d / 400.0; // cm2
+            double as1 = Math.PI * d * d / 400.0; // cm2 per bar
 
-            // Số thanh cần thiết (1 bên)
-            int nOneSide = (int)Math.Ceiling(torsionAreaSide / as1);
-            if (nOneSide < 1) nOneSide = 1;
+            // 1. Tính toán theo Chịu lực (Torsion)
+            // Diện tích cần cho 2 mặt bên = Al * RatioSide
+            double reqAreaSide = torsionTotal * torsionRatioSide;
+            int nTorsion = 0;
+            if (reqAreaSide > 0.01)
+            {
+                nTorsion = (int)Math.Ceiling(reqAreaSide / as1);
+                if (nTorsion % 2 != 0) nTorsion++; // Luôn chẵn (đối xứng)
+            }
 
-            // Nhân đôi cho đối xứng 2 bên
-            int nTotal = nOneSide * 2;
+            // 2. Tính toán theo Cấu tạo (Constructive)
+            int nConstructive = 0;
+            if (heightMm >= settings.WebBarMinHeight)
+            {
+                // Rule: H>=700 -> 2 cây; H>=1000 -> 4 cây
+                nConstructive = 2;
+                if (heightMm >= 1000) nConstructive = 4;
+            }
 
-            return $"{nTotal}d{d}";
+            // 3. Lấy Max (Envelope)
+            int nFinal = Math.Max(nTorsion, nConstructive);
+
+            if (nFinal == 0) return "-";
+
+            return $"{nFinal}d{d}";
         }
     }
 }

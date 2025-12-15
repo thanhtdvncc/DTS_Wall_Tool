@@ -114,7 +114,6 @@ namespace DTS_Engine.Commands
 
             // 7. Update XData and Plot Labels based on displayMode
             int successCount = 0;
-            double torFactor = RebarSettings.Instance.TorsionDistributionFactor;
 
             UsingTransaction(tr =>
             {
@@ -143,8 +142,8 @@ namespace DTS_Engine.Commands
                             switch (displayMode)
                             {
                                 case 0: // Combined (Flex + Torsion)
-                                    displayTop[i] = designData.TopArea[i] + designData.TorsionArea[i] * torFactor;
-                                    displayBot[i] = designData.BotArea[i] + designData.TorsionArea[i] * torFactor;
+                                    displayTop[i] = designData.TopArea[i] + designData.TorsionArea[i] * settings.TorsionRatioTop;
+                                    displayBot[i] = designData.BotArea[i] + designData.TorsionArea[i] * settings.TorsionRatioBot;
                                     displayTopStr[i] = $"{displayTop[i]:F1}";
                                     displayBotStr[i] = $"{displayBot[i]:F1}";
                                     break;
@@ -159,9 +158,8 @@ namespace DTS_Engine.Commands
                                 case 3: // Stirrup/Web (Thép đai/Sườn) - Tính tạm từ Raw data
                                     // Top: Thép đai
                                     displayTopStr[i] = RebarCalculator.CalculateStirrup(designData.ShearArea[i], settings);
-                                    // Bot: Thép sườn
-                                    double sideTor = designData.TorsionArea[i] * (1 - 2 * torFactor) / 2.0;
-                                    displayBotStr[i] = RebarCalculator.CalculateWebBars(sideTor, designData.Height * 10, settings);
+                                    // Bot: Thép sườn (dùng TorsionTotal và RatioSide)
+                                    displayBotStr[i] = RebarCalculator.CalculateWebBars(designData.TorsionArea[i], settings.TorsionRatioSide, designData.Height * 10, settings);
                                     break;
                             }
                         }
@@ -240,13 +238,11 @@ namespace DTS_Engine.Commands
                     }
 
                     // Calculate Rebar and update directly into data object
-                    double torFactor = settings.TorsionDistributionFactor;
-
                     for (int i = 0; i < 3; i++)
                     {
                         // === Longitudinal Rebar ===
-                        double asTop = data.TopArea[i] + data.TorsionArea[i] * torFactor;
-                        double asBot = data.BotArea[i] + data.TorsionArea[i] * torFactor;
+                        double asTop = data.TopArea[i] + data.TorsionArea[i] * settings.TorsionRatioTop;
+                        double asBot = data.BotArea[i] + data.TorsionArea[i] * settings.TorsionRatioBot;
 
                         string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.Height * 10, settings);
                         string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.Height * 10, settings);
@@ -261,9 +257,8 @@ namespace DTS_Engine.Commands
                         data.StirrupString[i] = sStirrup;
 
                         // === Web Bars (Thép sườn) ===
-                        // Torsion phần dư sau khi đã phân bổ cho Top/Bot = (1 - 2*torFactor) * TorsionArea
-                        double torsionSide = data.TorsionArea[i] * (1 - 2 * torFactor) / 2.0; // Chia 2 bên
-                        string sWeb = RebarCalculator.CalculateWebBars(torsionSide, data.Height * 10, settings);
+                        // Dùng TorsionTotal và RatioSide từ settings
+                        string sWeb = RebarCalculator.CalculateWebBars(data.TorsionArea[i], settings.TorsionRatioSide, data.Height * 10, settings);
                         data.WebBarString[i] = sWeb;
                     }
 
@@ -310,11 +305,45 @@ namespace DTS_Engine.Commands
             var settings = RebarSettings.Instance;
 
             // Simple Prompt UI
-            // 1. Torsion Factor
-            var pOpt = new PromptDoubleOptions($"\nNhập hệ số phân bổ xoắn (Hiện tại: {settings.TorsionDistributionFactor}): ");
+            // 1. Torsion Distribution (3-part ratio: Top Side Bot)
+            string currentRatio = $"{settings.TorsionRatioTop} {settings.TorsionRatioSide} {settings.TorsionRatioBot}";
+            var pOpt = new PromptStringOptions($"\nNhập tỷ lệ phân bổ xoắn [Top Side Bot] (Hiện tại: {currentRatio}): ");
             pOpt.AllowNone = true;
-            var res = ed.GetDouble(pOpt);
-            if (res.Status == PromptStatus.OK) settings.TorsionDistributionFactor = res.Value;
+            var res = ed.GetString(pOpt);
+            
+            if (res.Status == PromptStatus.OK && !string.IsNullOrWhiteSpace(res.StringResult))
+            {
+                var parts = res.StringResult.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 3)
+                {
+                    if (double.TryParse(parts[0], out double t) && 
+                        double.TryParse(parts[1], out double s) && 
+                        double.TryParse(parts[2], out double b))
+                    {
+                        // Cảnh báo nếu tổng != 1.0
+                        if (Math.Abs(t + s + b - 1.0) > 0.01)
+                            ed.WriteMessage("\nCảnh báo: Tổng tỷ lệ không bằng 1.0.");
+
+                        settings.TorsionRatioTop = t;
+                        settings.TorsionRatioSide = s;
+                        settings.TorsionRatioBot = b;
+                    }
+                }
+                else if (parts.Length == 1)
+                {
+                    // Backward compatible: nhập 1 số = factor cũ
+                    if (double.TryParse(parts[0], out double factor))
+                    {
+                        settings.TorsionRatioTop = factor;
+                        settings.TorsionRatioBot = factor;
+                        settings.TorsionRatioSide = 1 - 2 * factor;
+                    }
+                }
+                else
+                {
+                    ed.WriteMessage("\nLỗi: Vui lòng nhập 3 số (Top Side Bot) hoặc 1 số (factor).");
+                }
+            }
 
             // 2. Cover
             var pCov = new PromptDoubleOptions($"\nNhập lớp bảo vệ (mm) (Hiện tại: {settings.CoverTop}): ");
@@ -555,11 +584,10 @@ namespace DTS_Engine.Commands
                     if (data.TopAreaProv == null || data.TopAreaProv[0] <= 0)
                     {
                         // Re-calculate if needed
-                        double torFactor = settings.TorsionDistributionFactor;
                         for (int i = 0; i < 3; i++)
                         {
-                            double asTop = data.TopArea[i] + data.TorsionArea[i] * torFactor;
-                            double asBot = data.BotArea[i] + data.TorsionArea[i] * torFactor;
+                            double asTop = data.TopArea[i] + data.TorsionArea[i] * settings.TorsionRatioTop;
+                            double asBot = data.BotArea[i] + data.TorsionArea[i] * settings.TorsionRatioBot;
 
                             string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.Height * 10, settings);
                             string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.Height * 10, settings);
@@ -636,7 +664,6 @@ namespace DTS_Engine.Commands
 
             int count = 0;
             var settings = RebarSettings.Instance;
-            double torFactor = settings.TorsionDistributionFactor;
 
             UsingTransaction(tr =>
             {
@@ -662,8 +689,8 @@ namespace DTS_Engine.Commands
                         switch (mode)
                         {
                             case 0: // Area (Diện tích tổng hợp)
-                                double asTop = data.TopArea[i] + data.TorsionArea[i] * torFactor;
-                                double asBot = data.BotArea[i] + data.TorsionArea[i] * torFactor;
+                                double asTop = data.TopArea[i] + data.TorsionArea[i] * settings.TorsionRatioTop;
+                                double asBot = data.BotArea[i] + data.TorsionArea[i] * settings.TorsionRatioBot;
                                 topText = $"{asTop:F1}";
                                 botText = $"{asBot:F1}";
                                 break;
@@ -679,8 +706,8 @@ namespace DTS_Engine.Commands
                                 break;
 
                             case 2: // Both (Cả hai) - Dùng \P xuống dòng
-                                double asTopB = data.TopArea[i] + data.TorsionArea[i] * torFactor;
-                                double asBotB = data.BotArea[i] + data.TorsionArea[i] * torFactor;
+                                double asTopB = data.TopArea[i] + data.TorsionArea[i] * settings.TorsionRatioTop;
+                                double asBotB = data.BotArea[i] + data.TorsionArea[i] * settings.TorsionRatioBot;
                                 string topRebar = data.TopRebarString[i] ?? "-";
                                 string botRebar = data.BotRebarString[i] ?? "-";
                                 topText = $"{asTopB:F1}\\P{topRebar}";
@@ -699,8 +726,7 @@ namespace DTS_Engine.Commands
                                     botText = data.WebBarString[i];
                                 else
                                 {
-                                    double sideTor = data.TorsionArea[i] * (1 - 2 * torFactor) / 2.0;
-                                    botText = RebarCalculator.CalculateWebBars(sideTor, data.Height * 10, settings);
+                                    botText = RebarCalculator.CalculateWebBars(data.TorsionArea[i], settings.TorsionRatioSide, data.Height * 10, settings);
                                 }
                                 break;
                         }

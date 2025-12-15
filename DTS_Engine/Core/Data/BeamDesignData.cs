@@ -211,8 +211,19 @@ namespace DTS_Engine.Core.Data
         private static RebarSettings _instance;
         public static RebarSettings Instance => _instance ?? (_instance = new RebarSettings());
 
-        // --- Torsion ---
-        public double TorsionDistributionFactor { get; set; } = 0.25; 
+        // --- Torsion Distribution (3-part ratio) ---
+        // Mặc định: 0.25 (Top) + 0.5 (Side/Web) + 0.25 (Bot) = 1.0
+        public double TorsionRatioTop { get; set; } = 0.25;
+        public double TorsionRatioSide { get; set; } = 0.50;
+        public double TorsionRatioBot { get; set; } = 0.25;
+
+        // Backward compatibility (để code cũ không bị lỗi)
+        [Obsolete("Use TorsionRatioTop/Bot instead")]
+        public double TorsionDistributionFactor 
+        { 
+            get => TorsionRatioTop; 
+            set { TorsionRatioTop = value; TorsionRatioBot = value; TorsionRatioSide = 1 - 2 * value; }
+        }
 
         // --- Cover ---
         public double CoverTop { get; set; } = 35.0; // mm
@@ -226,10 +237,10 @@ namespace DTS_Engine.Core.Data
         // --- Stirrup (Thép đai) ---
         public int StirrupDiameter { get; set; } = 8;  // mm
         public int StirrupLegs { get; set; } = 2;       // Số nhánh
-        public List<int> StirrupSpacings { get; set; } = new List<int> { 100, 150, 200, 250 }; // Bước đai chuẩn
+        public List<int> StirrupSpacings { get; set; } = new List<int> { 100, 150, 200, 250 };
 
         // --- Web Bars (Thép sườn/giá) ---
         public int WebBarDiameter { get; set; } = 12;   // mm
-        public double WebBarMinHeight { get; set; } = 700; // mm - Chiều cao tối thiểu cần thép sườn
+        public double WebBarMinHeight { get; set; } = 700; // mm
     }
 }
