@@ -384,39 +384,54 @@ namespace DTS_Engine.Core.Utils
         }
         #endregion
 
-        #region Utility Methods
-
         /// <summary>
-        /// Tạo chuỗi MText với màu chỉ định
-        /// Ví dụ: FormatWithColor("Hello", 1) => "{\C1;text}"
+        /// Vẽ Label thép tại 3 vị trí (posIndex: 0=Start, 1=Mid, 2=End).
+        /// Label hiển thị dạng Stack (Trên/Dưới) hoặc Inline tùy yêu cầu.
+        /// Hiện tại vẽ Inline "Top/Bot" tại vị trí tương ứng.
         /// </summary>
-        public static string FormatWithColor(string text, int colorIndex)
+        public static void PlotRebarLabel(
+            BlockTableRecord btr,
+            Transaction tr,
+            Point3d startPt,
+            Point3d endPt,
+            string content,
+            int posIndex,
+            double textHeight = 200.0) // Text rebar nên to hơn chút (DEFAULT 80 -> 200)
         {
-            if (string.IsNullOrEmpty(text)) return "";
-            return $"{{\\C{colorIndex};{text}}}";
-        }
+            // Xác định vị trí Base Point trên đường thẳng
+            Point3d basePt;
+            LabelPosition labelPos;
 
-        /// <summary>
-        /// Tạo chuỗi MText xuống dòng
-        /// </summary>
-        public static string CombineLines(params string[] lines)
-        {
-            return string.Join("\\P", lines);
-        }
+            if (posIndex == 0) // Start
+            {
+                basePt = startPt;
+                labelPos = LabelPosition.StartTop; // Default Top, but we can tweak offset
+            }
+            else if (posIndex == 2) // End
+            {
+                basePt = endPt;
+                labelPos = LabelPosition.EndTop;
+            }
+            else // Mid
+            {
+                basePt = startPt + (endPt - startPt) * 0.5;
+                labelPos = LabelPosition.MiddleTop;
+            }
 
-        /// <summary>
-        /// Format nội dung mapping cho hiển thị
-        /// </summary>
-        public static string FormatMappingLabel(string frameName, string matchType, int colorIndex)
-        {
-            string coloredName = FormatWithColor(frameName, colorIndex);
-
-            if (matchType == "FULL")
-                return $"to {coloredName} (full)";
-            else if (matchType == "NEW")
-                return FormatWithColor("NEW", 1); // Đỏ
-            else
-                return $"to {coloredName}";
+            // Gọi hàm vẽ PlotLabel cơ bản nhưng nội dung đã format
+            // Để hiển thị đẹp, ta có thể dùng MText với Alignment phù hợp.
+            // Hàm PlotLabel hiện tại đã xử lý vector hướng.
+            // Tuy nhiên, ta cần chỉnh LabelPosition để text không bị đè lên dầm.
+            // Với Rebar label, thường vẽ đè lên dầm hoặc ngay sát cạnh?
+            // User request: "Start, Mid, End x Bot, Top".
+            // Implementation: Vẽ 1 MText chứa cả Top/Bot (dạng "15.2 / 10.5") tại vị trí đó.
+            
+            // Adjust Offset Gap slightly larger to avoid clash with Frame Label (usually at Mid)
+            // If Mid, we might clash with Name. 
+            // Solution: Rebar Label at Top side, Name at Bot side? Or vice versa.
+            // Current PlotLabel uses `TEXT_GAP`.
+            
+            PlotLabel(btr, tr, startPt, endPt, content, labelPos, textHeight, "dts_rebar_text");
         }
 
         #endregion
