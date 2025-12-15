@@ -176,24 +176,22 @@ namespace DTS_Engine.Commands
                              displayBot[i] = designData.BotArea[i] + designData.TorsionArea[i] * torFactor;
                         }
 
-                        // Format Text: "{Top} / {Bot}"
-                        // Use Curve geometry to determine positions
+                        // Plot Labels - 6 positions (Start/Mid/End x Top/Bot)
                         var curve = obj as Curve;
                         Point3d pStart = curve.StartPoint;
                         Point3d pEnd = curve.EndPoint;
-                        Point3d pMid = curve.GetPointAtParameter((curve.EndParam - curve.StartParam)/2);
 
-                        // Start
-                        string txtStart = $"{displayTop[0]:F1}/{displayBot[0]:F1}";
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, txtStart, 0); 
+                        // Start (Index 0)
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, $"{displayTop[0]:F1}", 0, true);  // Top
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, $"{displayBot[0]:F1}", 0, false); // Bot
 
-                        // Mid
-                        string txtMid = $"{displayTop[1]:F1}/{displayBot[1]:F1}";
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, txtMid, 1);
+                        // Mid (Index 1)
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, $"{displayTop[1]:F1}", 1, true);
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, $"{displayBot[1]:F1}", 1, false);
 
-                        // End
-                        string txtEnd = $"{displayTop[2]:F1}/{displayBot[2]:F1}";
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, txtEnd, 2);
+                        // End (Index 2)
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, $"{displayTop[2]:F1}", 2, true);
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, $"{displayBot[2]:F1}", 2, false);
 
                         successCount++;
                     }
@@ -235,94 +233,45 @@ namespace DTS_Engine.Commands
                         data.Height = 30;
                     }
 
-                    // Calculate Rebar
-                    // Apply Torsion Factor from Settings (User might change settings between fetching and calculating)
-                    // Or stick to what was fetched?
-                    // Usually Calc command uses CURRENT Settings.
+                    // Calculate Rebar and update directly into data object
                     double torFactor = settings.TorsionDistributionFactor;
-                    
-                    BeamRebarSolution sol = new BeamRebarSolution();
 
                     for (int i = 0; i < 3; i++)
                     {
                         double asTop = data.TopArea[i] + data.TorsionArea[i] * torFactor;
                         double asBot = data.BotArea[i] + data.TorsionArea[i] * torFactor;
 
-                        // Calculate
-                        // Unit check: Width/Height in cm? RebarCalculator expects what?
-                        // RebarCalculator: areaReq (cm2), b (mm), h (mm) usually?
-                        // Let's check RebarCalculator internal logic.
-                        // "double workingWidth = b - 2*cover..."
-                        // "double as1 = ... d*d/400" (cm2).
-                        // If d is mm (e.g. 20), d*d/400 gives cm2. Correct.
-                        // Width should be mm for Cover/Spacing check?
-                        // "workingWidth = b - 2 * cover". Cover is mm.
-                        // So 'b' must be mm.
-                        // data.Width is from SAP (cm) -> Need Convert to mm.
-                        
                         string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.Height * 10, settings);
                         string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.Height * 10, settings);
 
-                        sol.TopRebarString[i] = sTop;
-                        sol.BotRebarString[i] = sBot;
-
-                        // Calculate Solved Area (Optional, for check)
-                        // TODO: Parser to get exact area
-                        
-                        // Update Label
-                        // Format: "3d20"
-                        // Or "3d20 (15.4)" showing area?
-                        // Let's show "3d20"
+                        // Update directly into data object (NOT creating new BeamRebarSolution)
+                        data.TopRebarString[i] = sTop;
+                        data.BotRebarString[i] = sBot;
+                        data.TopAreaProv[i] = RebarStringParser.Parse(sTop);
+                        data.BotAreaProv[i] = RebarStringParser.Parse(sBot);
                     }
 
-                    // Save Solution to XData (Extend BeamResultData or Side-car?)
-                    // If we overwrite BeamResultData with BeamRebarSolution, we lose raw areas!
-                    // XDataUtils.UpdateElementData merges properties? No, it serializes the object.
-                    // Solution: BeamResultData should HOLD Solution or we define a Combined Type.
-                    // Or we just store `BeamRebarSolution` separately?
-                    // `XDataUtils` reads based on what? `ReadElementData` tries to parse JSON.
-                    // ElementData has `xType`.
-                    // If we write `BeamRebarSolution`, xType becomes "REBAR_SOLUTION".
-                    // Later if we try to read, XDataUtils might return `BeamRebarSolution`.
-                    // But we still need Raw Data for re-calc!
-                    // So we must NOT destroy `BeamResultData`.
-                    // We should merge them.
-                    
-                    // Temporary: Update using BeamResultData's RebarString fields?
-                    // BeamResultData definition (I need to update it again or make it hold solution).
-                    // Actually, let's keep it simple: Add RebarString fields to `BeamResultData`.
-                    // It's cleaner than maintaining two objects.
-                    
-                    // Since I cannot change BeamResultData structure easily in this tool call without overwrite,
-                    // I will check if I can just write `BeamRebarSolution`.
-                    // RISK: If I write Solution, `ReadElementData` next time returns Solution.
-                    // Then `data.TopArea` is lost (null/default).
-                    // Logic break: Next time I select logic, `data = Read() as BeamResultData`. It will be null.
-                    
-                    // FIX: `BeamResultData` should have `Solution` property or fields.
-                    // I'll stick to updating Labels for now and assume Data structure holds solution later.
-                    // Wait, this is Agentic. I CAN Modify BeamResultData.
-                    // I will modify BeamResultData to include Solution strings.
-                    
+                    // Save updated data back to XData (preserves raw areas)
+                    XDataUtils.UpdateElementData(obj, data, tr);
+
                     // Update Labels on screen
-                    string[] formatted = new string[3];
-                    for(int k=0; k<3; k++)
-                    {
-                        formatted[k] = $"{sol.TopRebarString[k]} / {sol.BotRebarString[k]}";
-                    }
-                    
-                    // Display
-                     var curve = obj as Curve;
+                    var curve = obj as Curve;
                     if(curve != null)
                     {
-                         Point3d pStart = curve.StartPoint;
+                        Point3d pStart = curve.StartPoint;
                         Point3d pEnd = curve.EndPoint;
-                         // Start
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, formatted[0], 0); 
-                         // Mid
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, formatted[1], 1);
-                         // End
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, formatted[2], 2);
+
+                        // Start (Index 0)
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, data.TopRebarString[0], 0, true);
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, data.BotRebarString[0], 0, false);
+
+                        // Mid (Index 1)
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, data.TopRebarString[1], 1, true);
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, data.BotRebarString[1], 1, false);
+
+                        // End (Index 2)
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, data.TopRebarString[2], 2, true);
+                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, data.BotRebarString[2], 2, false);
                     }
                     
                     count++;
@@ -410,7 +359,8 @@ namespace DTS_Engine.Commands
                     for(int j=i+1; j<gridLines.Count; j++)
                     {
                         var pts = new Point3dCollection();
-                        gridLines[i].IntersectWith(gridLines[j], Intersect.OnBothOperands, pts, IntPtr.Zero, IntPtr.Zero);
+                        // Dùng ExtendBoth để phòng đường Grid vẽ chưa chạm nhau
+                        gridLines[i].IntersectWith(gridLines[j], Intersect.ExtendBoth, pts, IntPtr.Zero, IntPtr.Zero);
                         foreach(Point3d p in pts)
                         {
                             if(!gridIntersections.Any(x => x.DistanceTo(p) < 100))
@@ -561,26 +511,27 @@ namespace DTS_Engine.Commands
                         continue;
                     }
 
-                    // Read Calculated Rebar from Label or XData
-                    // Since we haven't stored Solution in XData yet, we need to re-calculate
-                    // OR try to parse from MText labels on the entity?
-                    // For simplicity, re-calculate using stored raw areas.
-                    
-                    double torFactor = settings.TorsionDistributionFactor;
-                    double[] topProv = new double[3];
-                    double[] botProv = new double[3];
-
-                    for (int i = 0; i < 3; i++)
+                    // Check if calculation was done (TopAreaProv should be populated)
+                    if (data.TopAreaProv == null || data.TopAreaProv[0] <= 0)
                     {
-                        double asTop = data.TopArea[i] + data.TorsionArea[i] * torFactor;
-                        double asBot = data.BotArea[i] + data.TorsionArea[i] * torFactor;
+                        // Re-calculate if needed
+                        double torFactor = settings.TorsionDistributionFactor;
+                        for (int i = 0; i < 3; i++)
+                        {
+                            double asTop = data.TopArea[i] + data.TorsionArea[i] * torFactor;
+                            double asBot = data.BotArea[i] + data.TorsionArea[i] * torFactor;
 
-                        string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.Height * 10, settings);
-                        string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.Height * 10, settings);
+                            string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.Height * 10, settings);
+                            string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.Height * 10, settings);
 
-                        topProv[i] = RebarStringParser.Parse(sTop);
-                        botProv[i] = RebarStringParser.Parse(sBot);
+                            data.TopAreaProv[i] = RebarStringParser.Parse(sTop);
+                            data.BotAreaProv[i] = RebarStringParser.Parse(sBot);
+                        }
                     }
+
+                    // Use calculated values from data
+                    double[] topProv = data.TopAreaProv;
+                    double[] botProv = data.BotAreaProv;
 
                     // Create Section Name based on convention
                     // Format: [SapName]_[WxH]_[Top0]_[Top2]_[Bot0]_[Bot2]

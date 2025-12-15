@@ -385,10 +385,10 @@ namespace DTS_Engine.Core.Utils
         #endregion
 
         /// <summary>
-        /// Vẽ Label thép tại 3 vị trí (posIndex: 0=Start, 1=Mid, 2=End).
-        /// Label hiển thị dạng Stack (Trên/Dưới) hoặc Inline tùy yêu cầu.
-        /// Hiện tại vẽ Inline "Top/Bot" tại vị trí tương ứng.
+        /// Vẽ Label thép tại vị trí cụ thể (Start/Mid/End) và phía (Top/Bot).
         /// </summary>
+        /// <param name="posIndex">0=Start, 1=Mid, 2=End</param>
+        /// <param name="isTop">True=Vẽ mặt trên, False=Vẽ mặt dưới</param>
         public static void PlotRebarLabel(
             BlockTableRecord btr,
             Transaction tr,
@@ -396,41 +396,31 @@ namespace DTS_Engine.Core.Utils
             Point3d endPt,
             string content,
             int posIndex,
-            double textHeight = 200.0) // Text rebar nên to hơn chút (DEFAULT 80 -> 200)
+            bool isTop,
+            double textHeight = 200.0)
         {
             // Xác định vị trí Base Point trên đường thẳng
             Point3d basePt;
             LabelPosition labelPos;
 
+            // Logic mapping Index + Side -> Enum Position
             if (posIndex == 0) // Start
             {
                 basePt = startPt;
-                labelPos = LabelPosition.StartTop; // Default Top, but we can tweak offset
+                labelPos = isTop ? LabelPosition.StartTop : LabelPosition.StartBottom;
             }
             else if (posIndex == 2) // End
             {
                 basePt = endPt;
-                labelPos = LabelPosition.EndTop;
+                labelPos = isTop ? LabelPosition.EndTop : LabelPosition.EndBottom;
             }
             else // Mid
             {
                 basePt = startPt + (endPt - startPt) * 0.5;
-                labelPos = LabelPosition.MiddleTop;
+                labelPos = isTop ? LabelPosition.MiddleTop : LabelPosition.MiddleBottom;
             }
 
-            // Gọi hàm vẽ PlotLabel cơ bản nhưng nội dung đã format
-            // Để hiển thị đẹp, ta có thể dùng MText với Alignment phù hợp.
-            // Hàm PlotLabel hiện tại đã xử lý vector hướng.
-            // Tuy nhiên, ta cần chỉnh LabelPosition để text không bị đè lên dầm.
-            // Với Rebar label, thường vẽ đè lên dầm hoặc ngay sát cạnh?
-            // User request: "Start, Mid, End x Bot, Top".
-            // Implementation: Vẽ 1 MText chứa cả Top/Bot (dạng "15.2 / 10.5") tại vị trí đó.
-            
-            // Adjust Offset Gap slightly larger to avoid clash with Frame Label (usually at Mid)
-            // If Mid, we might clash with Name. 
-            // Solution: Rebar Label at Top side, Name at Bot side? Or vice versa.
-            // Current PlotLabel uses `TEXT_GAP`.
-            
+            // Gọi hàm vẽ PlotLabel cơ bản
             PlotLabel(btr, tr, startPt, endPt, content, labelPos, textHeight, "dts_rebar_text");
         }
 

@@ -297,8 +297,8 @@ namespace DTS_Engine.Core.Engines
                 return _model.PropFrame.SetRectangle(destName, matProp, t3, t2, -1, notes, "") == 0;
             }
             
-            // If not rectangular, we might fail or need more handlers.
-            // For now, assume Rectangular beams.
+            // WARNING: Non-rectangular sections not supported yet
+            System.Diagnostics.Debug.WriteLine($"[SapDesignEngine] WARNING: Cannot clone section '{sourceName}' - not a rectangular section (T, I, etc. not supported).");
             return false;
         }
     }

@@ -5,7 +5,8 @@ namespace DTS_Engine.Core.Data
 {
     /// <summary>
     /// Chứa dữ liệu kết quả thiết kế từ SAP2000 cho một Dầm.
-    /// Lưu trữ diện tích thép yêu cầu (Required Area) tại các vị trí quan trọng.
+    /// Lưu trữ cả Raw Area (từ SAP) VÀ Phương án bố trí thép (từ Calculate).
+    /// QUAN TRỌNG: Dùng chung 1 class để tránh ghi đè XData.
     /// </summary>
     public class BeamResultData : ElementData
     {
@@ -14,54 +15,77 @@ namespace DTS_Engine.Core.Data
             // Default xType
         }
 
-        public override string xType => "REBAR_RESULT";
+        public override string xType => "REBAR_DATA"; // Thống nhất 1 type
 
-        // --- Required Area from SAP (cm2) ---
+        // ===== Raw Data từ SAP (cm2) =====
         // Array[3]: 0=Start, 1=Mid, 2=End
-
         public double[] TopArea { get; set; } = new double[3];
         public double[] BotArea { get; set; } = new double[3];
-        
-        // Torsion Longitudinal Area (cm2) - Total for the section
         public double[] TorsionArea { get; set; } = new double[3];
 
         public string DesignCombo { get; set; }
         
-        // Section Info (Snapshot at time of result fetch)
+        // ===== Section Info =====
         public string SectionName { get; set; }
         public double Width { get; set; } // cm
-        public double Height { get; set; } // cm // Depth (t3)
+        public double Height { get; set; } // cm (Depth t3)
 
-        // Cấu hình tính toán đã áp dụng (để trace lại)
-        public double TorsionFactorUsed { get; set; } = 0.5; // Default 0.5
+        // ===== Cấu hình tính toán =====
+        public double TorsionFactorUsed { get; set; } = 0.25;
+
+        // ===== Phương án bố trí thép (Merged from BeamRebarSolution) =====
+        // Chuỗi thép hiển thị (VD: "3d20 + 2d25")
+        public string[] TopRebarString { get; set; } = new string[3];
+        public string[] BotRebarString { get; set; } = new string[3];
+        
+        // Diện tích thực tế đã bố trí (cm2)
+        public double[] TopAreaProv { get; set; } = new double[3];
+        public double[] BotAreaProv { get; set; } = new double[3];
+
+        // ===== Beam Name (from Naming command) =====
+        public string BeamName { get; set; }
 
         public override Dictionary<string, object> ToDictionary()
         {
             var dict = base.ToDictionary();
+            // Raw Data
             dict["TopArea"] = TopArea;
             dict["BotArea"] = BotArea;
             dict["TorsionArea"] = TorsionArea;
             dict["DesignCombo"] = DesignCombo;
+            // Section
             dict["SectionName"] = SectionName;
             dict["Width"] = Width;
             dict["Height"] = Height;
             dict["TorsionFactorUsed"] = TorsionFactorUsed;
+            // Solution
+            dict["TopRebarString"] = TopRebarString;
+            dict["BotRebarString"] = BotRebarString;
+            dict["TopAreaProv"] = TopAreaProv;
+            dict["BotAreaProv"] = BotAreaProv;
+            dict["BeamName"] = BeamName;
             return dict;
         }
 
         public override void FromDictionary(Dictionary<string, object> dict)
         {
             base.FromDictionary(dict);
+            // Raw
             if (dict.TryGetValue("TopArea", out var t)) TopArea = ConvertToDoubleArray(t);
             if (dict.TryGetValue("BotArea", out var b)) BotArea = ConvertToDoubleArray(b);
             if (dict.TryGetValue("TorsionArea", out var tor)) TorsionArea = ConvertToDoubleArray(tor);
             if (dict.TryGetValue("DesignCombo", out var dc)) DesignCombo = dc?.ToString();
-            
+            // Section
             if (dict.TryGetValue("SectionName", out var sn)) SectionName = sn?.ToString();
             if (dict.TryGetValue("Width", out var w)) Width = Convert.ToDouble(w);
             if (dict.TryGetValue("Height", out var h)) Height = Convert.ToDouble(h);
-            
             if (dict.TryGetValue("TorsionFactorUsed", out var tf)) TorsionFactorUsed = Convert.ToDouble(tf);
+            // Solution
+            if (dict.TryGetValue("TopRebarString", out var trs)) TopRebarString = ConvertToStringArray(trs);
+            if (dict.TryGetValue("BotRebarString", out var brs)) BotRebarString = ConvertToStringArray(brs);
+            if (dict.TryGetValue("TopAreaProv", out var tap)) TopAreaProv = ConvertToDoubleArray(tap);
+            if (dict.TryGetValue("BotAreaProv", out var bap)) BotAreaProv = ConvertToDoubleArray(bap);
+            if (dict.TryGetValue("BeamName", out var bn)) BeamName = bn?.ToString();
         }
 
         private double[] ConvertToDoubleArray(object obj)
@@ -72,21 +96,37 @@ namespace DTS_Engine.Core.Data
                 for(int i=0; i<arr.Length; i++) res[i] = Convert.ToDouble(arr[i]);
                 return res;
             }
-            // Handle array serialized as ArrayList or similar if needed
-            // For now assume standard object[] from serializer
-             if (obj is System.Collections.ArrayList list)
+            if (obj is System.Collections.ArrayList list)
             {
-                 double[] res = new double[list.Count];
-                 for (int i = 0; i < list.Count; i++) res[i] = Convert.ToDouble(list[i]);
-                 return res;
+                double[] res = new double[list.Count];
+                for (int i = 0; i < list.Count; i++) res[i] = Convert.ToDouble(list[i]);
+                return res;
             }
             return new double[3];
+        }
+
+        private string[] ConvertToStringArray(object obj)
+        {
+            if (obj is object[] arr)
+            {
+                string[] res = new string[arr.Length];
+                for(int i=0; i<arr.Length; i++) res[i] = arr[i]?.ToString();
+                return res;
+            }
+            if (obj is System.Collections.ArrayList list)
+            {
+                string[] res = new string[list.Count];
+                for (int i = 0; i < list.Count; i++) res[i] = list[i]?.ToString();
+                return res;
+            }
+            return new string[3];
         }
     }
 
     /// <summary>
-    /// Lưu trữ giải pháp bố trí thép (User chọn hoặc Auto tính).
+    /// [DEPRECATED] Dùng BeamResultData thay thế để tránh ghi đè XData.
     /// </summary>
+    [Obsolete("Use BeamResultData instead. This class is kept for backward compatibility.")]
     public class BeamRebarSolution : ElementData
     {
         public override string xType => "REBAR_SOLUTION";
