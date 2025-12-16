@@ -65,6 +65,72 @@ namespace DTS_Engine.Core.Utils
             _cancelCount = 0;
         }
 
+        /// <summary>
+        /// Đổi ColorIndex THẬT của Entity (persistent - không biến mất khi Regen/Pan/Zoom).
+        /// Dùng khi cần highlight lâu dài (VD: các dầm thiếu thép).
+        /// Gọi ResetToByLayer() để trả về màu gốc.
+        /// </summary>
+        /// <param name="id">ObjectId của entity</param>
+        /// <param name="colorIndex">Mã màu AutoCAD (1=Red, 2=Yellow, 3=Green...)</param>
+        /// <returns>True nếu thành công</returns>
+        public static bool SetPersistentColor(ObjectId id, int colorIndex)
+        {
+            if (id == ObjectId.Null || id.IsErased) return false;
+
+            try
+            {
+                bool success = false;
+                AcadUtils.UsingTransaction(tr =>
+                {
+                    var ent = tr.GetObject(id, OpenMode.ForWrite) as Entity;
+                    if (ent != null && !ent.IsErased)
+                    {
+                        ent.ColorIndex = colorIndex;
+                        success = true;
+                    }
+                });
+                return success;
+            }
+            catch (System.Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[VisualUtils] SetPersistentColor error: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Đổi ColorIndex THẬT cho danh sách đối tượng.
+        /// </summary>
+        public static int SetPersistentColors(List<ObjectId> ids, int colorIndex)
+        {
+            if (ids == null || ids.Count == 0) return 0;
+
+            int count = 0;
+            foreach (var id in ids)
+            {
+                if (SetPersistentColor(id, colorIndex))
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>
+        /// Reset màu về ByLayer (256) cho Entity.
+        /// Gọi sau khi user đã xử lý xong các dầm lỗi.
+        /// </summary>
+        public static bool ResetToByLayer(ObjectId id)
+        {
+            return SetPersistentColor(id, 256); // 256 = ByLayer
+        }
+
+        /// <summary>
+        /// Reset màu về ByLayer cho danh sách đối tượng.
+        /// </summary>
+        public static int ResetToByLayer(List<ObjectId> ids)
+        {
+            return SetPersistentColors(ids, 256);
+        }
+
         #endregion
 
         #region Highlight Objects

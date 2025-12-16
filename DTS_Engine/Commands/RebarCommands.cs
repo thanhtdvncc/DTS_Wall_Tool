@@ -319,10 +319,12 @@ namespace DTS_Engine.Commands
             if (insufficientCount > 0)
             {
                 WriteMessage($"\n⚠️ CẢNH BÁO: Phát hiện {insufficientCount} dầm thiếu khả năng chịu lực sau khi cập nhật từ SAP!");
-                WriteMessage("   Các dầm này đã được highlight MÀU ĐỎ trên bản vẽ.");
+                WriteMessage("   Các dầm này đã được đổi sang MÀU ĐỎ trên bản vẽ (persistent).");
+                WriteMessage("   Sau khi sửa, chạy DTS_REBAR_UPDATE để trả về màu ByLayer.");
 
-                // Highlight all insufficient beams
-                VisualUtils.HighlightObjects(insufficientBeamIds, 1); // 1 = Red
+                // Set PERSISTENT color (survives Regen/Pan/Zoom)
+                int changed = VisualUtils.SetPersistentColors(insufficientBeamIds, 1); // 1 = Red
+                WriteMessage($"   Đã đổi màu {changed}/{insufficientCount} dầm.");
             }
             // === END Sync Highlight ===
         }
@@ -869,7 +871,13 @@ namespace DTS_Engine.Commands
                     );
 
                     if (success)
+                    {
                         successCount++;
+
+                        // FIX DATA DESYNC: Save calculated data back to XData
+                        // This ensures Sync Highlight works correctly next time
+                        XDataUtils.UpdateElementData(obj, data, tr);
+                    }
                     else
                         failCount++;
                 }
@@ -877,6 +885,16 @@ namespace DTS_Engine.Commands
 
             if (failCount > 0)
                 WriteMessage($"Cảnh báo: {failCount} dầm không thể cập nhật.");
+
+            // Reset color to ByLayer for successfully updated beams
+            // (they were marked RED by DTS_REBAR_SAP_RESULT if insufficient)
+            if (successCount > 0)
+            {
+                var successIds = cadToSap.Keys.ToList();
+                int resetCount = VisualUtils.ResetToByLayer(successIds);
+                if (resetCount > 0)
+                    WriteMessage($"   Đã reset màu {resetCount} dầm về ByLayer.");
+            }
 
             WriteSuccess($"Đã cập nhật {successCount} dầm về SAP2000.");
         }
@@ -1263,6 +1281,12 @@ namespace DTS_Engine.Commands
                 double totalLengthMm = group.TotalLength * 1000;
                 string groupType = group.GroupType?.ToUpperInvariant() ?? "BEAM";
 
+                // Get actual bar diameter from settings (NOT hardcode 20!)
+                var availableDiameters = settings.General?.AvailableDiameters;
+                int barDiameter = (availableDiameters != null && availableDiameters.Count > 0)
+                    ? availableDiameters.Max()  // Use largest available diameter
+                    : 20;  // Fallback only if no settings
+
                 // Calculate TOP bar segments
                 var topResult = algorithm.AutoCutBars(totalLengthMm, spanInfos, true, groupType);
 
@@ -1272,9 +1296,9 @@ namespace DTS_Engine.Commands
                 string startSupportType = SupportTypeToString(firstSupport?.Type ?? SupportType.FreeEnd);
                 string endSupportType = SupportTypeToString(lastSupport?.Type ?? SupportType.FreeEnd);
 
-                // Apply staggering and end anchorage
-                algorithm.ApplyStaggering(topResult, 20, 2); // D20, 2 bars per layer
-                algorithm.ApplyEndAnchorage(topResult, startSupportType, endSupportType, 20);
+                // Apply staggering and end anchorage WITH ACTUAL DIAMETER
+                algorithm.ApplyStaggering(topResult, barDiameter, 2);
+                algorithm.ApplyEndAnchorage(topResult, startSupportType, endSupportType, barDiameter);
 
                 // Convert to DTO for JSON
                 group.TopBarSegments = topResult.Segments.Select(s => new BarSegmentDto
@@ -1292,10 +1316,10 @@ namespace DTS_Engine.Commands
                     HookLength = s.HookLength / 1000.0
                 }).ToList();
 
-                // Calculate BOT bar segments
+                // Calculate BOT bar segments WITH ACTUAL DIAMETER
                 var botResult = algorithm.AutoCutBars(totalLengthMm, spanInfos, false, groupType);
-                algorithm.ApplyStaggering(botResult, 20, 2);
-                algorithm.ApplyEndAnchorage(botResult, startSupportType, endSupportType, 20);
+                algorithm.ApplyStaggering(botResult, barDiameter, 2);
+                algorithm.ApplyEndAnchorage(botResult, startSupportType, endSupportType, barDiameter);
 
                 group.BotBarSegments = botResult.Segments.Select(s => new BarSegmentDto
                 {
@@ -1611,6 +1635,175 @@ namespace DTS_Engine.Commands
             catch { }
 
             return supports;
+        }
+
+        /// <summary>
+        /// Tự động gom nhóm TẤT CẢ dầm trong bản vẽ theo trục.
+        /// Tính toán bar segments và lưu vào NOD để Viewer có thể mở ngay.
+        /// Giải quyết bottleneck phải chọn từng dầm.
+        /// </summary>
+        [CommandMethod("DTS_AUTO_GROUP")]
+        public void DTS_AUTO_GROUP()
+        {
+            WriteMessage("=== AUTO GROUP: GOM NHÓM TỰ ĐỘNG TẤT CẢ DẦM ===");
+
+            var settings = DtsSettings.Instance;
+            var rebarSettings = RebarSettings.Instance;
+
+            // 1. Lấy thông tin lưới trục
+            List<Point3d> gridIntersections = new List<Point3d>();
+            List<Curve> gridLines = new List<Curve>();
+
+            UsingTransaction(tr =>
+            {
+                var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForRead) as BlockTableRecord;
+                foreach (ObjectId id in btr)
+                {
+                    var obj = tr.GetObject(id, OpenMode.ForRead);
+                    if (obj is Curve crv)
+                    {
+                        string layer = (obj as Entity)?.Layer ?? "";
+                        if (layer.ToUpper().Contains("GRID") || layer.ToUpper().Contains("AXIS"))
+                            gridLines.Add(crv);
+                    }
+                }
+
+                for (int i = 0; i < gridLines.Count; i++)
+                {
+                    for (int j = i + 1; j < gridLines.Count; j++)
+                    {
+                        var pts = new Point3dCollection();
+                        gridLines[i].IntersectWith(gridLines[j], Intersect.ExtendBoth, pts, IntPtr.Zero, IntPtr.Zero);
+                        foreach (Point3d p in pts)
+                        {
+                            if (!gridIntersections.Any(x => x.DistanceTo(p) < 100))
+                                gridIntersections.Add(p);
+                        }
+                    }
+                }
+            });
+
+            WriteMessage($"Tìm thấy {gridIntersections.Count} giao điểm lưới trục.");
+
+            // 2. Thu thập TẤT CẢ dầm trong bản vẽ (dựa vào XData DTS có SapElementName)
+            var allBeamIds = new List<ObjectId>();
+            var beamsDataMap = new Dictionary<ObjectId, (Point3d Mid, bool IsGirder, bool IsXDir, string AxisKey)>();
+
+            UsingTransaction(tr =>
+            {
+                var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForRead) as BlockTableRecord;
+                foreach (ObjectId id in btr)
+                {
+                    if (id.IsErased) continue;
+                    var obj = tr.GetObject(id, OpenMode.ForRead);
+                    if (obj is Curve curve)
+                    {
+                        // Check if this is a beam (has SAP data)
+                        var xdata = XDataUtils.ReadElementData(curve) as BeamResultData;
+                        if (xdata != null && !string.IsNullOrEmpty(xdata.SapElementName))
+                        {
+                            allBeamIds.Add(id);
+
+                            Point3d mid = curve.StartPoint + (curve.EndPoint - curve.StartPoint) * 0.5;
+                            Vector3d dir = curve.EndPoint - curve.StartPoint;
+                            bool isXDir = Math.Abs(dir.X) > Math.Abs(dir.Y);
+
+                            bool onGridStart = gridIntersections.Any(g => g.DistanceTo(curve.StartPoint) < 200);
+                            bool onGridEnd = gridIntersections.Any(g => g.DistanceTo(curve.EndPoint) < 200);
+                            bool isGirder = onGridStart && onGridEnd;
+
+                            // AxisKey để nhóm dầm cùng trục
+                            // Với dầm hướng X: Y position làm key
+                            // Với dầm hướng Y: X position làm key
+                            double axisCoord = isXDir ? Math.Round(mid.Y / 100) * 100 : Math.Round(mid.X / 100) * 100;
+                            string axisKey = $"{(isGirder ? "G" : "B")}_{(isXDir ? "X" : "Y")}_{axisCoord:F0}";
+
+                            beamsDataMap[id] = (mid, isGirder, isXDir, axisKey);
+                        }
+                    }
+                }
+            });
+
+            if (allBeamIds.Count == 0)
+            {
+                WriteError("Không tìm thấy dầm nào có dữ liệu SAP. Hãy chạy DTS_REBAR_SAP_RESULT trước.");
+                return;
+            }
+
+            WriteMessage($"Tìm thấy {allBeamIds.Count} dầm có dữ liệu SAP.");
+
+            // 3. Nhóm dầm theo AxisKey
+            var groups = beamsDataMap.GroupBy(b => b.Value.AxisKey)
+                                     .OrderBy(g => g.First().Value.IsGirder ? 0 : 1)
+                                     .ThenBy(g => g.Key)
+                                     .ToList();
+
+            WriteMessage($"Đã gom thành {groups.Count} nhóm dầm.");
+
+            // 4. Tạo BeamGroup cho mỗi nhóm
+            var beamGroups = new List<BeamGroup>();
+            int groupIndex = 1;
+
+            foreach (var group in groups)
+            {
+                // Sort members within group by position
+                var sortedIds = group.OrderBy(m => m.Value.IsXDir ? m.Value.Mid.X : m.Value.Mid.Y)
+                                     .Select(m => m.Key)
+                                     .ToList();
+
+                // Collect BeamData for CreateManualBeamGroup
+                var beamDataList = new List<Core.Algorithms.BeamData>();
+
+                UsingTransaction(tr =>
+                {
+                    foreach (var id in sortedIds)
+                    {
+                        var curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
+                        if (curve == null) continue;
+
+                        var xdata = XDataUtils.ReadElementData(curve) as BeamResultData;
+
+                        beamDataList.Add(new Core.Algorithms.BeamData
+                        {
+                            Handle = curve.Handle.ToString(),
+                            Name = xdata?.SapElementName ?? curve.Handle.ToString(),
+                            StartX = curve.StartPoint.X,
+                            StartY = curve.StartPoint.Y,
+                            EndX = curve.EndPoint.X,
+                            EndY = curve.EndPoint.Y,
+                            // Length is computed property, no need to set
+                            Width = xdata?.Width ?? 0,
+                            Height = xdata?.SectionHeight ?? 0
+                        });
+                    }
+                });
+
+                if (beamDataList.Count == 0) continue;
+
+                // Use first item's info for group name
+                var first = beamsDataMap[sortedIds.First()];
+                string prefix = first.IsGirder ? "G" : "B";
+                string direction = first.IsXDir ? "X" : "Y";
+                string groupName = $"{prefix}{groupIndex}_{direction}";
+
+                // Create BeamGroup (this also calls CalculateBarSegmentsForGroup)
+                var beamGroup = CreateManualBeamGroup(groupName, beamDataList);
+                beamGroups.Add(beamGroup);
+
+                groupIndex++;
+            }
+
+            // 5. Lưu vào NOD
+            if (beamGroups.Count > 0)
+            {
+                SaveBeamGroupsToNOD(beamGroups);
+                WriteSuccess($"Đã tạo và lưu {beamGroups.Count} nhóm dầm vào NOD.");
+                WriteMessage("Giờ bạn có thể mở DTS_BEAM_VIEWER để xem tất cả các nhóm!");
+            }
+            else
+            {
+                WriteError("Không tạo được nhóm dầm nào.");
+            }
         }
     }
 }
