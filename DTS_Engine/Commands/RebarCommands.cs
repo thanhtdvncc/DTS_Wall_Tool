@@ -1019,7 +1019,7 @@ namespace DTS_Engine.Commands
         /// <summary>
         /// Mở BeamGroupViewer để xem/chỉnh sửa nhóm dầm liên tục
         /// </summary>
-        [CommandMethod("DTS_BEAM_VIEWER")]
+        [CommandMethod("DTS_REBAR_VIEWER")]
         public void DTS_BEAM_VIEWER()
         {
             WriteMessage("Loading Beam Group Viewer...");
@@ -1044,7 +1044,7 @@ namespace DTS_Engine.Commands
         /// <summary>
         /// Command cho phép User chọn dầm và tạo nhóm thủ công
         /// </summary>
-        [CommandMethod("DTS_SET_BEAM")]
+        [CommandMethod("DTS_REBAR_GROUP_MANUAL")]
         public void DTS_SET_BEAM()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
@@ -1792,7 +1792,7 @@ namespace DTS_Engine.Commands
         /// Tính toán bar segments và lưu vào NOD để Viewer có thể mở ngay.
         /// Giải quyết bottleneck phải chọn từng dầm.
         /// </summary>
-        [CommandMethod("DTS_AUTO_GROUP")]
+        [CommandMethod("DTS_REBAR_GROUP_AUTO")]
         public void DTS_AUTO_GROUP()
         {
             WriteMessage("=== AUTO GROUP: GOM NHÓM TỰ ĐỘNG TẤT CẢ DẦM ===");
@@ -1982,7 +1982,7 @@ namespace DTS_Engine.Commands
         /// Tách dầm ra khỏi nhóm hiện tại.
         /// User có thể tạo nhóm riêng hoặc để dầm đứng độc lập.
         /// </summary>
-        [CommandMethod("DTS_UNGROUP")]
+        [CommandMethod("DTS_REBAR_UNGROUP")]
         public void DTS_UNGROUP()
         {
             WriteMessage("=== UNGROUP: TÁCH DẦM RA KHỎI NHÓM ===");
