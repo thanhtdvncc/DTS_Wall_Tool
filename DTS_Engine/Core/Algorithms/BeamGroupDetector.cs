@@ -377,11 +377,101 @@ namespace DTS_Engine.Core.Algorithms
             }
         }
 
-        private static List<BeamData> FindSegmentsInSpan(List<BeamData> chain, double start, double end)
+        /// <summary>
+        /// Tìm các đoạn dầm vật lý thuộc nhịp logic (dựa theo vị trí tọa độ).
+        /// Đoạn dầm thuộc nhịp nếu phần lớn chiều dài nằm giữa startPos và endPos.
+        /// </summary>
+        private static List<BeamData> FindSegmentsInSpan(
+            List<BeamData> chain,
+            double startPos,
+            double endPos)
         {
-            // Simplified: return all beams (full logic would check position)
-            return chain.ToList();
+            if (chain == null || chain.Count == 0)
+                return new List<BeamData>();
+
+            // Xác định hướng chính của chain (X hay Y)
+            var first = chain.First();
+            var last = chain.Last();
+
+            // Tính điểm gốc của chain (điểm đầu tiên)
+            double originX = first.StartX;
+            double originY = first.StartY;
+
+            // Vector hướng chạy dầm
+            double chainDX = last.EndX - first.StartX;
+            double chainDY = last.EndY - first.StartY;
+            double chainLength = Math.Sqrt(chainDX * chainDX + chainDY * chainDY);
+
+            if (chainLength < 1) // Tránh chia cho 0
+                return chain.ToList();
+
+            // Normalize direction vector
+            double dirX = chainDX / chainLength;
+            double dirY = chainDY / chainLength;
+
+            var result = new List<BeamData>();
+
+            foreach (var beam in chain)
+            {
+                // Project điểm đầu và cuối của beam lên trục chain
+                double beamStartProj = ProjectPointOntoLine(
+                    beam.StartX, beam.StartY,
+                    originX, originY,
+                    dirX, dirY);
+
+                double beamEndProj = ProjectPointOntoLine(
+                    beam.EndX, beam.EndY,
+                    originX, originY,
+                    dirX, dirY);
+
+                // Đảm bảo beamStartProj < beamEndProj
+                double segStart = Math.Min(beamStartProj, beamEndProj);
+                double segEnd = Max(beamStartProj, beamEndProj);
+
+                // Convert từ mm sang m để so sánh với startPos/endPos (đơn vị m)
+                segStart /= 1000.0;
+                segEnd /= 1000.0;
+
+                // Kiểm tra overlap với [startPos, endPos]
+                // Đoạn dầm thuộc nhịp nếu có phần chung > 50% chiều dài đoạn
+                double overlapStart = Math.Max(segStart, startPos);
+                double overlapEnd = Math.Min(segEnd, endPos);
+                double overlap = Math.Max(0, overlapEnd - overlapStart);
+
+                double segLength = segEnd - segStart;
+                if (segLength > 0.001) // Tránh chia cho 0
+                {
+                    double overlapRatio = overlap / segLength;
+
+                    // Nếu > 50% đoạn dầm nằm trong nhịp -> thuộc nhịp này
+                    if (overlapRatio > 0.5)
+                    {
+                        result.Add(beam);
+                    }
+                }
+            }
+
+            return result;
         }
+
+        /// <summary>
+        /// Project điểm P lên đường thẳng đi qua Origin theo hướng Dir.
+        /// Trả về khoảng cách từ Origin đến điểm chiếu (có dấu).
+        /// </summary>
+        private static double ProjectPointOntoLine(
+            double px, double py,
+            double originX, double originY,
+            double dirX, double dirY)
+        {
+            // Vector từ origin đến point
+            double dx = px - originX;
+            double dy = py - originY;
+
+            // Dot product
+            return dx * dirX + dy * dirY;
+        }
+
+        private static double Max(double a, double b) => a > b ? a : b;
 
         /// <summary>
         /// Nhóm các dầm còn lại không nằm trên trục

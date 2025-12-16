@@ -179,6 +179,63 @@ namespace DTS_Engine.Core.Utils
             ClearData(obj, tr);
         }
 
+        /// <summary>
+        /// Ghi thông tin thép vào XData của entity
+        /// </summary>
+        /// <param name="obj">Entity (LINE/POLYLINE)</param>
+        /// <param name="tr">Transaction</param>
+        /// <param name="topRebar">Thép trên (VD: "3D20")</param>
+        /// <param name="botRebar">Thép dưới (VD: "3D22")</param>
+        /// <param name="stirrup">Đai (VD: "D8@150")</param>
+        /// <param name="sideBar">Thép hông (VD: "2D14")</param>
+        /// <param name="groupName">Tên nhóm dầm liên tục</param>
+        public static void WriteRebarXData(
+            DBObject obj, Transaction tr,
+            string topRebar, string botRebar,
+            string stirrup, string sideBar,
+            string groupName = null)
+        {
+            if (obj == null || tr == null) return;
+
+            // Read existing data
+            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
+
+            // Update rebar fields
+            if (!string.IsNullOrEmpty(topRebar))
+                dict["TopRebar"] = topRebar;
+            if (!string.IsNullOrEmpty(botRebar))
+                dict["BotRebar"] = botRebar;
+            if (!string.IsNullOrEmpty(stirrup))
+                dict["Stirrup"] = stirrup;
+            if (!string.IsNullOrEmpty(sideBar))
+                dict["SideBar"] = sideBar;
+            if (!string.IsNullOrEmpty(groupName))
+                dict["BeamGroupName"] = groupName;
+
+            // Update timestamp
+            dict["LastModified"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            SetRawData(obj, dict, tr);
+        }
+
+        /// <summary>
+        /// Đọc thông tin thép từ XData
+        /// </summary>
+        public static RebarXDataInfo ReadRebarXData(DBObject obj)
+        {
+            var dict = GetRawData(obj);
+            if (dict == null || dict.Count == 0) return null;
+
+            return new RebarXDataInfo
+            {
+                TopRebar = dict.ContainsKey("TopRebar") ? dict["TopRebar"]?.ToString() : null,
+                BotRebar = dict.ContainsKey("BotRebar") ? dict["BotRebar"]?.ToString() : null,
+                Stirrup = dict.ContainsKey("Stirrup") ? dict["Stirrup"]?.ToString() : null,
+                SideBar = dict.ContainsKey("SideBar") ? dict["SideBar"]?.ToString() : null,
+                BeamGroupName = dict.ContainsKey("BeamGroupName") ? dict["BeamGroupName"]?.ToString() : null
+            };
+        }
+
         #endregion
 
         #region StoryData (Trường hợp đặc biệt)
@@ -697,5 +754,17 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>Dang ky that bai (loi khong xac dinh)</summary>
         Failed
+    }
+
+    /// <summary>
+    /// Thông tin thép từ XData
+    /// </summary>
+    public class RebarXDataInfo
+    {
+        public string TopRebar { get; set; }
+        public string BotRebar { get; set; }
+        public string Stirrup { get; set; }
+        public string SideBar { get; set; }
+        public string BeamGroupName { get; set; }
     }
 }

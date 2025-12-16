@@ -340,6 +340,20 @@
             </div>
 
             <div class="section">
+                <div class="section-header">Cài đặt Text Label</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col"><label>Chiều cao Text</label><input type="number" id="TextHeight" value="1"
+                                step="0.1" min="0.1" max="10"></div>
+                        <div class="col"></div>
+                        <div class="col"></div>
+                    </div>
+                    <div class="hint">Chiều cao text khi vẽ label thép (mặc định = 1). Điều chỉnh theo tỷ lệ bản vẽ.
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
                 <div class="section-header">Import / Export Settings</div>
                 <div class="section-body">
                     <div class="row">
@@ -613,6 +627,7 @@
             setId('ZoneL1_Ratio', data.General?.ZoneL1_Ratio);
             setId('ZoneL2_Ratio', data.General?.ZoneL2_Ratio);
             if (data.General?.Unit) document.getElementById('Unit').value = data.General.Unit;
+            setId('TextHeight', data.General?.TextHeight ?? 1);
 
             // Tab 1: Beam
             setId('MainBarRange', data.Beam?.MainBarRange);
@@ -707,7 +722,8 @@
                     ZoneL1_Ratio: getVal('ZoneL1_Ratio'),
                     ZoneL2_Ratio: getVal('ZoneL2_Ratio'),
                     Unit: document.getElementById('Unit').value,
-                    DecimalPlaces: data.General?.DecimalPlaces || 2
+                    DecimalPlaces: data.General?.DecimalPlaces || 2,
+                    TextHeight: getVal('TextHeight') || 1
                 },
                 Beam: {
                     MainBarRange: getVal('MainBarRange') || '16-25',

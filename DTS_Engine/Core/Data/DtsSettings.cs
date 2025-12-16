@@ -132,6 +132,11 @@ namespace DTS_Engine.Core.Data
         /// Số chữ số thập phân khi làm tròn
         /// </summary>
         public int DecimalPlaces { get; set; } = 2;
+
+        /// <summary>
+        /// Chiều cao text label khi plot thép (mặc định = 1)
+        /// </summary>
+        public double TextHeight { get; set; } = 1;
     }
 
     /// <summary>

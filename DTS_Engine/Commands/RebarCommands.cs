@@ -8,6 +8,7 @@ using DTS_Engine.Core.Engines;
 using DTS_Engine.Core.Utils;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace DTS_Engine.Commands
@@ -968,41 +969,77 @@ namespace DTS_Engine.Commands
             }
 
             string groupName = nameResult.StringResult;
-            var handles = new List<string>();
+            // Use full namespace to avoid ambiguity with Core.Algorithms.BeamData
+            var beamDataList = new List<Core.Algorithms.BeamData>();
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 foreach (ObjectId id in result.Value.GetObjectIds())
                 {
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent != null)
+                    if (ent == null) continue;
+
+                    // Extract geometry from LINE or POLYLINE
+                    double sx = 0, sy = 0, ex = 0, ey = 0;
+                    double w = 300, h = 500; // Default dimensions
+
+                    if (ent is Line line)
                     {
-                        handles.Add(ent.Handle.ToString());
+                        sx = line.StartPoint.X; sy = line.StartPoint.Y;
+                        ex = line.EndPoint.X; ey = line.EndPoint.Y;
                     }
+                    else if (ent is Polyline poly && poly.NumberOfVertices >= 2)
+                    {
+                        var p0 = poly.GetPoint2dAt(0);
+                        var p1 = poly.GetPoint2dAt(poly.NumberOfVertices - 1);
+                        sx = p0.X; sy = p0.Y;
+                        ex = p1.X; ey = p1.Y;
+                    }
+                    else
+                    {
+                        continue; // Skip unsupported entities
+                    }
+
+                    // Try to read dimensions from XData if available
+                    var beamXData = XDataUtils.ReadBeamData(ent);
+                    if (beamXData != null)
+                    {
+                        w = beamXData.Width ?? w;
+                        h = beamXData.Height ?? h;
+                    }
+
+                    beamDataList.Add(new Core.Algorithms.BeamData
+                    {
+                        Handle = ent.Handle.ToString(),
+                        Name = ent.Handle.ToString(),
+                        StartX = sx,
+                        StartY = sy,
+                        EndX = ex,
+                        EndY = ey,
+                        Width = w,
+                        Height = h
+                    });
                 }
                 tr.Commit();
             }
 
-            if (handles.Count == 0)
+            if (beamDataList.Count == 0)
             {
                 WriteMessage("Không có đối tượng hợp lệ.");
                 return;
             }
 
-            // Create manual beam group
-            var group = new BeamGroup
-            {
-                GroupName = groupName,
-                GroupType = "Beam",
-                Source = "Manual",
-                EntityHandles = handles
-            };
+            // Tạo nhóm thủ công và chạy detection
+            var group = CreateManualBeamGroup(groupName, beamDataList);
 
             // Add to cache
             var groups = GetOrCreateBeamGroups();
             groups.Add(group);
 
-            WriteMessage($"Đã tạo nhóm '{groupName}' với {handles.Count} dầm.");
+            // Save to cache
+            SaveBeamGroupsToCache(groups);
+
+            WriteMessage($"Đã tạo nhóm '{groupName}' với {beamDataList.Count} dầm, {group.Spans.Count} nhịp.");
 
             // Show viewer
             using (var dialog = new UI.Forms.BeamGroupViewerDialog(groups, ApplyBeamGroupResults))
@@ -1012,13 +1049,151 @@ namespace DTS_Engine.Commands
         }
 
         /// <summary>
-        /// Lấy hoặc tạo danh sách BeamGroup từ cache/memory
+        /// Tạo BeamGroup thủ công từ danh sách BeamData, bao gồm detection logic
+        /// Sorting theo NamingConfig.SortCorner và SortDirection
+        /// </summary>
+        private BeamGroup CreateManualBeamGroup(string name, List<Core.Algorithms.BeamData> beamDataList)
+        {
+            var settings = DtsSettings.Instance;
+            var namingCfg = settings.Naming ?? new NamingConfig();
+
+            // Sort beams theo NamingConfig.SortCorner và SortDirection
+            // SortCorner: 0=TopLeft, 1=TopRight, 2=BottomLeft, 3=BottomRight
+            // SortDirection: 0=Horizontal(X first), 1=Vertical(Y first)
+            var sortedBeams = SortBeamsByNamingConfig(beamDataList, namingCfg);
+
+            var group = new BeamGroup
+            {
+                GroupName = name,
+                GroupType = "Beam",
+                Source = "Manual",
+                EntityHandles = sortedBeams.Select(b => b.Handle).ToList(),
+                Width = sortedBeams.Average(b => b.Width),
+                Height = sortedBeams.Average(b => b.Height),
+                TotalLength = sortedBeams.Sum(b => b.Length) / 1000.0
+            };
+
+            // Xác định hướng
+            var first = sortedBeams.First();
+            var last = sortedBeams.Last();
+            double dx = Math.Abs(last.EndX - first.StartX);
+            double dy = Math.Abs(last.EndY - first.StartY);
+            group.Direction = dy > dx ? "Y" : "X";
+
+            // Check splice requirement
+            double standardLength = settings.Beam?.StandardBarLength ?? 11700;
+            group.RequiresSplice = group.TotalLength * 1000 > standardLength;
+
+            // For manual groups, create spans based on beam segments
+            // (No column detection - user manually selected the beams)
+            double pos = 0;
+            group.Supports.Add(new SupportData
+            {
+                SupportId = "Start",
+                SupportIndex = 0,
+                Type = SupportType.FreeEnd,
+                Position = 0,
+                Width = 0
+            });
+
+            foreach (var beam in sortedBeams)
+            {
+                pos += beam.Length / 1000.0;
+                group.Supports.Add(new SupportData
+                {
+                    SupportId = $"J{group.Supports.Count}",
+                    SupportIndex = group.Supports.Count,
+                    Type = SupportType.Column, // Assume joint at each beam end
+                    Position = pos,
+                    Width = 300
+                });
+            }
+
+            // Create spans between supports
+            double prevHeight = group.Height;
+            for (int i = 0; i < group.Supports.Count - 1; i++)
+            {
+                var left = group.Supports[i];
+                var right = group.Supports[i + 1];
+
+                // Find beam(s) in this span
+                var spanBeams = sortedBeams.Skip(i).Take(1).ToList();
+                double spanHeight = spanBeams.Count > 0 ? spanBeams.Average(b => b.Height) : group.Height;
+                bool isStep = Math.Abs(spanHeight - prevHeight) > 50;
+
+                var span = new SpanData
+                {
+                    SpanId = $"S{i + 1}",
+                    SpanIndex = i,
+                    Length = right.Position - left.Position,
+                    ClearLength = right.Position - left.Position - (left.Width + right.Width) / 2000.0,
+                    Width = spanBeams.Count > 0 ? spanBeams.Average(b => b.Width) : group.Width,
+                    Height = spanHeight,
+                    LeftSupportId = left.SupportId,
+                    RightSupportId = right.SupportId,
+                    IsStepChange = isStep,
+                    HeightDifference = spanHeight - prevHeight,
+                    IsConsole = left.IsFreeEnd || right.IsFreeEnd
+                };
+
+                // Add physical segments
+                foreach (var b in spanBeams)
+                {
+                    span.Segments.Add(new PhysicalSegment
+                    {
+                        EntityHandle = b.Handle,
+                        Length = b.Length / 1000.0,
+                        StartPoint = new[] { b.StartX, b.StartY },
+                        EndPoint = new[] { b.EndX, b.EndY }
+                    });
+                }
+
+                group.Spans.Add(span);
+                if (isStep) group.HasStepChange = true;
+                prevHeight = spanHeight;
+            }
+
+            return group;
+        }
+
+        // Cache file path
+        private static string BeamGroupsCachePath => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DTS_Engine", "BeamGroupsCache.json");
+
+        /// <summary>
+        /// Lấy hoặc tạo danh sách BeamGroup từ file cache
         /// </summary>
         private List<BeamGroup> GetOrCreateBeamGroups()
         {
-            // TODO: Load từ XData hoặc file cache
-            // Tạm thời return empty list
+            try
+            {
+                if (File.Exists(BeamGroupsCachePath))
+                {
+                    string json = File.ReadAllText(BeamGroupsCachePath);
+                    var groups = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BeamGroup>>(json);
+                    if (groups != null) return groups;
+                }
+            }
+            catch { }
+
             return new List<BeamGroup>();
+        }
+
+        /// <summary>
+        /// Lưu danh sách BeamGroup vào file cache
+        /// </summary>
+        private void SaveBeamGroupsToCache(List<BeamGroup> groups)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(BeamGroupsCachePath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(groups, Newtonsoft.Json.Formatting.Indented);
+                File.WriteAllText(BeamGroupsCachePath, json);
+            }
+            catch { }
         }
 
         /// <summary>
@@ -1030,9 +1205,11 @@ namespace DTS_Engine.Commands
 
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             var db = doc.Database;
-            var ed = doc.Editor;
 
             int count = 0;
+
+            // Lưu groups vào cache
+            SaveBeamGroupsToCache(groups);
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -1040,31 +1217,101 @@ namespace DTS_Engine.Commands
                 {
                     foreach (var span in group.Spans)
                     {
-                        // Convert handle to ObjectId
-                        if (!string.IsNullOrEmpty(span.Segments?.FirstOrDefault()?.EntityHandle))
+                        // Apply rebar data to each segment
+                        foreach (var seg in span.Segments)
                         {
-                            // Get handle
-                            string handleStr = span.Segments.First().EntityHandle;
-                            Handle handle = new Handle(Convert.ToInt64(handleStr, 16));
-                            ObjectId objId;
+                            if (string.IsNullOrEmpty(seg.EntityHandle)) continue;
 
-                            if (db.TryGetObjectId(handle, out objId) && objId != ObjectId.Null)
+                            try
                             {
-                                var ent = tr.GetObject(objId, OpenMode.ForWrite) as Entity;
-                                if (ent != null)
+                                Handle handle = new Handle(Convert.ToInt64(seg.EntityHandle, 16));
+                                ObjectId objId;
+
+                                if (db.TryGetObjectId(handle, out objId) && objId != ObjectId.Null)
                                 {
-                                    // Write rebar data to XData
-                                    // TODO: Implement XData write
-                                    count++;
+                                    var ent = tr.GetObject(objId, OpenMode.ForWrite) as Entity;
+                                    if (ent != null)
+                                    {
+                                        // Build rebar strings from Span data
+                                        string topRebar = BuildRebarString(span.TopRebar, 0);
+                                        string botRebar = BuildRebarString(span.BotRebar, 0);
+                                        string stirrup = span.Stirrup != null && span.Stirrup.Length > 1
+                                            ? span.Stirrup[1] ?? "" : "";
+                                        string sideBar = span.SideBar ?? "";
+
+                                        // Write XData to entity
+                                        XDataUtils.WriteRebarXData(ent, tr,
+                                            topRebar, botRebar, stirrup, sideBar,
+                                            group.GroupName);
+
+                                        count++;
+                                    }
                                 }
                             }
+                            catch { }
                         }
                     }
                 }
                 tr.Commit();
             }
 
-            WriteMessage($"Đã apply thép cho {count} đoạn dầm.");
+            WriteMessage($"Đã apply thép cho {count} đoạn dầm và lưu cache.");
+        }
+
+        /// <summary>
+        /// Build rebar string từ mảng 2D [layer, position]
+        /// </summary>
+        private string BuildRebarString(string[,] rebarArray, int position)
+        {
+            if (rebarArray == null) return "";
+
+            var parts = new List<string>();
+            for (int layer = 0; layer < 3; layer++)
+            {
+                if (position < rebarArray.GetLength(1))
+                {
+                    var val = rebarArray[layer, position];
+                    if (!string.IsNullOrEmpty(val))
+                        parts.Add(val);
+                }
+            }
+            return string.Join("+", parts);
+        }
+
+        /// <summary>
+        /// Sort beams theo NamingConfig.SortCorner và SortDirection
+        /// SortCorner: 0=TopLeft, 1=TopRight, 2=BottomLeft, 3=BottomRight
+        /// SortDirection: 0=Horizontal(X first), 1=Vertical(Y first)
+        /// </summary>
+        private List<Core.Algorithms.BeamData> SortBeamsByNamingConfig(
+            List<Core.Algorithms.BeamData> beams, NamingConfig cfg)
+        {
+            if (beams == null || beams.Count == 0)
+                return new List<Core.Algorithms.BeamData>();
+
+            int corner = cfg?.SortCorner ?? 0;
+            int direction = cfg?.SortDirection ?? 0;
+
+            // Xác định hệ số nhân để đảo chiều sort
+            // Corner: 0=TL(-X, +Y), 1=TR(+X, +Y), 2=BL(-X, -Y), 3=BR(+X, -Y)
+            double xMultiplier = (corner == 0 || corner == 2) ? 1 : -1;  // TL/BL: X tăng, TR/BR: X giảm
+            double yMultiplier = (corner == 0 || corner == 1) ? -1 : 1;  // TL/TR: Y giảm (top=max), BL/BR: Y tăng
+
+            // SortDirection: 0=Horizontal(X ưu tiên), 1=Vertical(Y ưu tiên)
+            if (direction == 0) // Horizontal: sort X first, then Y
+            {
+                return beams
+                    .OrderBy(b => (b.StartX + b.EndX) / 2 * xMultiplier)
+                    .ThenBy(b => (b.StartY + b.EndY) / 2 * yMultiplier)
+                    .ToList();
+            }
+            else // Vertical: sort Y first, then X
+            {
+                return beams
+                    .OrderBy(b => (b.StartY + b.EndY) / 2 * yMultiplier)
+                    .ThenBy(b => (b.StartX + b.EndX) / 2 * xMultiplier)
+                    .ToList();
+            }
         }
     }
 }

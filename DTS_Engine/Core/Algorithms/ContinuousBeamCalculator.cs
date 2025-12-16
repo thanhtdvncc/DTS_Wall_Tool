@@ -84,7 +84,8 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
-        /// Sinh các phương án Backbone tiềm năng
+        /// Sinh các phương án Backbone tiềm năng.
+        /// Dynamic: Số thanh tính theo bề rộng dầm, cho phép Top ≠ Bot.
         /// </summary>
         private static List<BackboneSpec> GenerateBackboneOptions(EnvelopeData env, DtsSettings settings)
         {
@@ -98,43 +99,74 @@ namespace DTS_Engine.Core.Algorithms
             // Sắp xếp giảm dần (ưu tiên đường kính lớn)
             var diameters = mainRange.OrderByDescending(d => d).ToList();
 
-            // Tính As_min cấu tạo (thường 0.1-0.2% bxh)
+            // Tính số thanh tối đa dựa theo bề rộng dầm
+            // Công thức: (BeamWidth - 2*Cover - 2*StirrupDia) / (BarDia + ClearSpacing)
+            double beamWidth = env.MinWidth; // mm
+            double cover = settings.Beam?.CoverSide ?? 40;
+            double stirrupDia = 10;
+            double clearSpacing = settings.Beam?.MinClearSpacing ?? 30;
+
+            // Tính As_min cấu tạo (thường 0.15% bxh cho dầm thường)
             double minRatio = settings.Beam?.MinReinforcementRatio ?? 0.002;
             double asConstruct = minRatio * env.MinWidth * 100; // Ước tính
 
             foreach (int d in diameters)
             {
+                // Tính số thanh tối đa có thể chứa trong 1 lớp
+                double availableWidth = beamWidth - 2 * cover - 2 * stirrupDia;
+                int maxBars = (int)Math.Floor((availableWidth + clearSpacing) / (d + clearSpacing));
+                maxBars = Math.Max(2, Math.Min(maxBars, 10)); // Giới hạn 2-10 thanh
+
+                // Số thanh tối thiểu
+                int minBars = settings.Beam?.MinBarsPerLayer ?? 2;
+
                 double as1 = Math.PI * d * d / 400.0;
 
-                // Thử 2, 3, 4 thanh cho mỗi đường kính
-                for (int n = 2; n <= 4; n++)
+                // Sinh các tổ hợp (nTop, nBot) khác nhau
+                for (int nTop = minBars; nTop <= maxBars; nTop++)
                 {
-                    double asProvided = n * as1;
-
-                    // Backbone phải đủ cho As cấu tạo
-                    if (asProvided < asConstruct * 0.5) continue;
-
-                    // Không quá thừa so với As_min thực tế
-                    double wasteRatio = env.As_Min_Bot > 0
-                        ? (asProvided - env.As_Min_Bot) / env.As_Min_Bot
-                        : 0;
-
-                    options.Add(new BackboneSpec
+                    for (int nBot = minBars; nBot <= maxBars; nBot++)
                     {
-                        Diameter = d,
-                        CountTop = n,
-                        CountBot = n,
-                        As_Top = asProvided,
-                        As_Bot = asProvided,
-                        WasteEstimate = Math.Max(0, wasteRatio)
-                    });
+                        double asTop = nTop * as1;
+                        double asBot = nBot * as1;
+
+                        // Backbone phải đủ cho As cấu tạo
+                        if (asTop < asConstruct * 0.5 || asBot < asConstruct * 0.5)
+                            continue;
+
+                        // Tính waste dựa trên so sánh với As_min thực tế
+                        double wasteTop = env.As_Min_Top > 0
+                            ? Math.Max(0, (asTop - env.As_Min_Top) / env.As_Min_Top)
+                            : 0;
+                        double wasteBot = env.As_Min_Bot > 0
+                            ? Math.Max(0, (asBot - env.As_Min_Bot) / env.As_Min_Bot)
+                            : 0;
+                        double avgWaste = (wasteTop + wasteBot) / 2;
+
+                        // Penalty cho bất đối xứng (nếu user muốn symmetric)
+                        double asymmetryPenalty = 0;
+                        if (settings.Beam?.PreferSymmetric == true && nTop != nBot)
+                            asymmetryPenalty = 0.1 * Math.Abs(nTop - nBot);
+
+                        options.Add(new BackboneSpec
+                        {
+                            Diameter = d,
+                            CountTop = nTop,
+                            CountBot = nBot,
+                            As_Top = asTop,
+                            As_Bot = asBot,
+                            WasteEstimate = avgWaste + asymmetryPenalty
+                        });
+                    }
                 }
             }
 
+            // Giới hạn số lượng options để tránh explosion
             // Sắp xếp: ưu tiên ít thừa, sau đó ưu tiên đường kính lớn
             return options
                 .OrderBy(o => o.WasteEstimate)
                 .ThenByDescending(o => o.Diameter)
+                .Take(50) // Chỉ lấy 50 options tốt nhất
                 .ToList();
         }
 
