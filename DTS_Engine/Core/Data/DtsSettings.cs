@@ -23,6 +23,16 @@ namespace DTS_Engine.Core.Data
         public NamingConfig Naming { get; set; } = new NamingConfig();
 
         /// <summary>
+        /// Cấu hình Neo & Nối thép (Anchorage & Splicing)
+        /// </summary>
+        public AnchorageConfig Anchorage { get; set; } = new AnchorageConfig();
+
+        /// <summary>
+        /// Cấu hình quy tắc Bố trí chi tiết (Detailing Rules)
+        /// </summary>
+        public DetailingConfig Detailing { get; set; } = new DetailingConfig();
+
+        /// <summary>
         /// Singleton Instance - Auto-load từ file nếu có
         /// </summary>
         public static DtsSettings Instance
@@ -376,4 +386,183 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public int SortDirection { get; set; } = 0;
     }
+
+    #region Anchorage & Detailing Config
+
+    /// <summary>
+    /// Cấu hình Neo & Nối thép (Anchorage & Splicing)
+    /// Tách biệt quy tắc tính toán và quy tắc bố trí
+    /// </summary>
+    public class AnchorageConfig
+    {
+        // --- Vật liệu ---
+        /// <summary>Mác bê tông (B20, B25, B30...)</summary>
+        public string ConcreteGrade { get; set; } = "B25";
+
+        /// <summary>Mác thép (CB300V, CB400V, CB500V)</summary>
+        public string SteelGrade { get; set; } = "CB400V";
+
+        // --- Chế độ tính toán ---
+        /// <summary>True: Dùng hệ số nhân nhanh. False: Dùng bảng tra chi tiết</summary>
+        public bool UseSimplifiedRules { get; set; } = true;
+
+        // --- Quick Settings (Simplified Mode) ---
+        /// <summary>Hệ số nối thép vùng kéo (mặc định 40d)</summary>
+        public double TensileSpliceFactor { get; set; } = 40;
+
+        /// <summary>Hệ số nối thép vùng nén (mặc định 30d)</summary>
+        public double CompressiveSpliceFactor { get; set; } = 30;
+
+        /// <summary>Hệ số neo thép (mặc định 35d)</summary>
+        public double AnchorageFactor { get; set; } = 35;
+
+        // --- Standard Hooks ---
+        /// <summary>Hệ số móc 90° (12d)</summary>
+        public double Hook90Factor { get; set; } = 12;
+
+        /// <summary>Hệ số móc 135° cho đai (6d)</summary>
+        public double Hook135Factor { get; set; } = 6;
+
+        /// <summary>Hệ số móc 180° (4d)</summary>
+        public double Hook180Factor { get; set; } = 4;
+
+        /// <summary>Chiều dài móc tối thiểu (mm)</summary>
+        public double MinHookLength { get; set; } = 75;
+
+        // --- Manual Table (Advanced Mode) ---
+        /// <summary>Bảng tra chiều dài neo theo đường kính (Key: diameter, Value: mm)</summary>
+        public Dictionary<int, double> ManualDevelopmentLengths { get; set; } = new Dictionary<int, double>();
+
+        /// <summary>Bảng tra chiều dài nối theo đường kính (Key: diameter, Value: mm)</summary>
+        public Dictionary<int, double> ManualSpliceLengths { get; set; } = new Dictionary<int, double>();
+
+        /// <summary>
+        /// Tính chiều dài nối thép (Lap Splice Length) theo đường kính
+        /// </summary>
+        public double GetSpliceLength(int diameter, bool isTensionZone = true)
+        {
+            if (!UseSimplifiedRules && ManualSpliceLengths.ContainsKey(diameter))
+                return ManualSpliceLengths[diameter];
+
+            double factor = isTensionZone ? TensileSpliceFactor : CompressiveSpliceFactor;
+            return diameter * factor;
+        }
+
+        /// <summary>
+        /// Tính chiều dài neo thép (Anchorage Length) theo đường kính
+        /// </summary>
+        public double GetAnchorageLength(int diameter)
+        {
+            if (!UseSimplifiedRules && ManualDevelopmentLengths.ContainsKey(diameter))
+                return ManualDevelopmentLengths[diameter];
+
+            return diameter * AnchorageFactor;
+        }
+    }
+
+    /// <summary>
+    /// Cấu hình quy tắc Bố trí chi tiết (Detailing Rules)
+    /// Phân biệt Dầm phụ (Beam) và Dầm chính (Girder)
+    /// </summary>
+    public class DetailingConfig
+    {
+        // --- General Constraints ---
+        /// <summary>Chiều dài thanh thép tối đa (mm)</summary>
+        public double MaxBarLength { get; set; } = 11700;
+
+        /// <summary>Chiều dài thanh thép tối thiểu (mm) - tránh thép vụn</summary>
+        public double MinBarLength { get; set; } = 2000;
+
+        /// <summary>Khoảng cách so le mối nối tối thiểu (mm)</summary>
+        public double MinStaggerDistance { get; set; } = 600;
+
+        /// <summary>Hệ số StaggerDistance theo Ld (nếu > MinStagger thì dùng)</summary>
+        public double StaggerFactorLd { get; set; } = 1.3;
+
+        /// <summary>
+        /// Bỏ qua nối thép (cho nhà cung cấp có dịch vụ cắt thép theo yêu cầu).
+        /// Khi true: Vẽ thanh dài suốt, không vẽ điểm nối.
+        /// </summary>
+        public bool SkipSplice { get; set; } = false;
+
+        // --- Beam Rules (Dầm phụ) ---
+        public ArrangementRule BeamRule { get; set; } = new ArrangementRule
+        {
+            TopSpliceZone = SpliceZone.MidSpan,      // Thép trên nối giữa nhịp
+            BotSpliceZone = SpliceZone.Support,      // Thép dưới nối tại gối
+            AllowLapSpliceInJoint = false,           // Không cho nối trong cột
+            SupportZoneRatio = 0.25                  // Vùng gối = L/4
+        };
+
+        // --- Girder Rules (Dầm chính) ---
+        public ArrangementRule GirderRule { get; set; } = new ArrangementRule
+        {
+            TopSpliceZone = SpliceZone.QuarterSpan,  // Dầm chính nối L/4
+            BotSpliceZone = SpliceZone.Support,
+            AllowLapSpliceInJoint = true,            // Cho phép neo xuyên cột
+            SupportZoneRatio = 0.25
+        };
+
+        /// <summary>
+        /// Lấy rule phù hợp theo loại cấu kiện
+        /// </summary>
+        public ArrangementRule GetRule(string groupType)
+        {
+            return groupType?.ToUpperInvariant() == "GIRDER" ? GirderRule : BeamRule;
+        }
+    }
+
+    /// <summary>
+    /// Quy tắc bố trí cho một loại cấu kiện
+    /// </summary>
+    public class ArrangementRule
+    {
+        /// <summary>Vùng nối thép lớp trên</summary>
+        public SpliceZone TopSpliceZone { get; set; } = SpliceZone.MidSpan;
+
+        /// <summary>Vùng nối thép lớp dưới</summary>
+        public SpliceZone BotSpliceZone { get; set; } = SpliceZone.Support;
+
+        /// <summary>Cho phép nối thép trong nút khung</summary>
+        public bool AllowLapSpliceInJoint { get; set; } = false;
+
+        /// <summary>Tỷ lệ vùng gối so với nhịp (L/4 = 0.25)</summary>
+        public double SupportZoneRatio { get; set; } = 0.25;
+
+        /// <summary>
+        /// Tính vùng cho phép nối theo SpliceZone
+        /// Returns (startRatio, endRatio) relative to span length
+        /// </summary>
+        public (double Start, double End) GetAllowedZone(SpliceZone zone)
+        {
+            switch (zone)
+            {
+                case SpliceZone.Support:
+                    return (0, SupportZoneRatio);
+                case SpliceZone.QuarterSpan:
+                    return (SupportZoneRatio, 1 - SupportZoneRatio);
+                case SpliceZone.MidSpan:
+                    return (0.35, 0.65);
+                default:
+                    return (0, 1);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Vùng cho phép nối thép
+    /// </summary>
+    public enum SpliceZone
+    {
+        /// <summary>Tại gối (đầu nhịp)</summary>
+        Support = 0,
+
+        /// <summary>Vùng L/4 (1/4 nhịp)</summary>
+        QuarterSpan = 1,
+
+        /// <summary>Giữa nhịp</summary>
+        MidSpan = 2
+    }
+
+    #endregion
 }

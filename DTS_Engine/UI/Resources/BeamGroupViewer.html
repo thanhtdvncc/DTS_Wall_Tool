@@ -285,6 +285,62 @@
             padding: 6px 10px;
             border-radius: 4px;
         }
+
+        /* Highlight states for bidirectional sync */
+        .span-table tr.highlighted {
+            background: rgba(233, 69, 96, 0.3) !important;
+        }
+
+        .span-table tr:hover {
+            background: rgba(233, 69, 96, 0.15);
+        }
+
+        /* Quick Picker Popup */
+        .quick-picker {
+            position: fixed;
+            background: var(--card);
+            border: 1px solid var(--accent);
+            border-radius: 6px;
+            padding: 8px;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+
+        .quick-picker.show {
+            display: block;
+        }
+
+        .quick-picker-title {
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 5px;
+        }
+
+        .quick-picker-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+        }
+
+        .quick-picker-btn {
+            background: var(--primary);
+            border: none;
+            color: var(--text);
+            padding: 6px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .quick-picker-btn:hover {
+            background: var(--accent);
+        }
+
+        /* Bulk Edit Mode */
+        .bulk-mode .span-table tr.selected {
+            background: rgba(74, 222, 128, 0.2);
+        }
     </style>
 </head>
 
@@ -394,6 +450,33 @@
             <button class="btn btn-primary" onclick="applyToDrawing()">Apply to Drawing</button>
         </div>
     </footer>
+
+    <!-- Quick Picker Popups -->
+    <div class="quick-picker" id="diameterPicker">
+        <div class="quick-picker-title">Đường kính thép chủ:</div>
+        <div class="quick-picker-grid">
+            <button class="quick-picker-btn" onclick="pickDiameter('2D14')">2D14</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('2D16')">2D16</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('2D18')">2D18</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('2D20')">2D20</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('2D22')">2D22</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('2D25')">2D25</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('3D20')">3D20</button>
+            <button class="quick-picker-btn" onclick="pickDiameter('3D22')">3D22</button>
+        </div>
+    </div>
+
+    <div class="quick-picker" id="stirrupPicker">
+        <div class="quick-picker-title">Bước đai:</div>
+        <div class="quick-picker-grid">
+            <button class="quick-picker-btn" onclick="pickStirrup('d8a100')">d8a100</button>
+            <button class="quick-picker-btn" onclick="pickStirrup('d8a150')">d8a150</button>
+            <button class="quick-picker-btn" onclick="pickStirrup('d8a200')">d8a200</button>
+            <button class="quick-picker-btn" onclick="pickStirrup('d10a100')">d10a100</button>
+            <button class="quick-picker-btn" onclick="pickStirrup('d10a150')">d10a150</button>
+            <button class="quick-picker-btn" onclick="pickStirrup('d10a200')">d10a200</button>
+        </div>
+    </div>
 
     <script>
         // Data from C#
@@ -589,6 +672,36 @@
             });
         }
 
+        /// <summary>
+        /// Vẽ điểm đánh dấu mối nối thép - ellipse nghiêng 45°
+        /// </summary>
+        function drawSpliceMarker(ctx, x, y, color) {
+            ctx.save();
+
+            // Di chuyển đến vị trí marker
+            ctx.translate(x, y);
+
+            // Xoay 45 độ (PI/4 radians)
+            ctx.rotate(Math.PI / 4);
+
+            // Vẽ ellipse
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 8, 4, 0, 0, Math.PI * 2);
+
+            // Style: nét mảnh, không fill
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Optional: vẽ đường chéo nhỏ trong ellipse
+            ctx.beginPath();
+            ctx.moveTo(-4, 0);
+            ctx.lineTo(4, 0);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
         function renderTable() {
             const tbody = document.getElementById('spanTableBody');
             tbody.innerHTML = '';
@@ -746,6 +859,563 @@
         function applyToDrawing() {
             window.chrome.webview.postMessage('APPLY|' + JSON.stringify(data));
         }
+
+        // ============ ENHANCED: Copy Format Mode ============
+        let copyFormatMode = false;
+        let copySourceSpan = null;
+
+        function copyFormat() {
+            copyFormatMode = true;
+            copySourceSpan = null;
+            document.body.style.cursor = 'crosshair';
+            showToast('Click nhịp nguồn để copy format...');
+        }
+
+        function handleCopyFormatClick(spanIndex) {
+            if (copySourceSpan === null) {
+                copySourceSpan = currentGroup.Spans[spanIndex];
+                showToast('Chọn nhịp nguồn: ' + copySourceSpan.SpanId + '. Click nhịp đích...');
+            } else {
+                // Copy format to destination
+                const dest = currentGroup.Spans[spanIndex];
+                dest.TopRebar = JSON.parse(JSON.stringify(copySourceSpan.TopRebar || []));
+                dest.BotRebar = JSON.parse(JSON.stringify(copySourceSpan.BotRebar || []));
+                dest.Stirrup = [...(copySourceSpan.Stirrup || [])];
+                dest.SideBar = copySourceSpan.SideBar;
+
+                copyFormatMode = false;
+                copySourceSpan = null;
+                document.body.style.cursor = 'default';
+                renderTable();
+                showToast('\u2705 Đã copy format sang ' + dest.SpanId);
+            }
+        }
+
+        // ============ ENHANCED: Bulk Edit Mode ============
+        let bulkEditMode = false;
+        let selectedSpanIndices = [];
+
+        function bulkEdit() {
+            bulkEditMode = !bulkEditMode;
+            selectedSpanIndices = [];
+            document.body.classList.toggle('bulk-mode', bulkEditMode);
+
+            if (bulkEditMode) {
+                showToast('Bulk Edit ON: Ctrl+Click chọn nhiều nhịp, sửa 1 ô để đồng bộ');
+            } else {
+                showToast('Bulk Edit OFF');
+            }
+            renderTable();
+        }
+
+        function toggleSpanSelection(index, event) {
+            if (!bulkEditMode) return;
+
+            if (event.ctrlKey || event.metaKey) {
+                const idx = selectedSpanIndices.indexOf(index);
+                if (idx >= 0) {
+                    selectedSpanIndices.splice(idx, 1);
+                } else {
+                    selectedSpanIndices.push(index);
+                }
+                renderTable();
+            }
+        }
+
+        // ============ ENHANCED: Bidirectional Sync (Table <-> Canvas) ============
+        let highlightedSpanIndex = -1;
+        let spanBounds = []; // Store span bounds for canvas click detection
+
+        function highlightSpan(index) {
+            highlightedSpanIndex = index;
+
+            // Highlight table row
+            document.querySelectorAll('#spanTableBody tr').forEach((tr, i) => {
+                tr.classList.toggle('highlighted', i === index);
+            });
+
+            // Redraw canvas with highlight
+            renderCanvas();
+        }
+
+        function clearHighlight() {
+            highlightedSpanIndex = -1;
+            document.querySelectorAll('#spanTableBody tr').forEach(tr => {
+                tr.classList.remove('highlighted');
+            });
+            renderCanvas();
+        }
+
+        // ============ ENHANCED: Quick Picker ============
+        let activeInput = null;
+        let activeInputType = null; // 'diameter' or 'stirrup'
+
+        function showQuickPicker(input, type) {
+            activeInput = input;
+            activeInputType = type;
+
+            const picker = document.getElementById(type === 'stirrup' ? 'stirrupPicker' : 'diameterPicker');
+            const rect = input.getBoundingClientRect();
+
+            picker.style.left = rect.left + 'px';
+            picker.style.top = (rect.bottom + 5) + 'px';
+            picker.classList.add('show');
+        }
+
+        function hideQuickPickers() {
+            document.querySelectorAll('.quick-picker').forEach(p => p.classList.remove('show'));
+        }
+
+        function pickDiameter(val) {
+            if (activeInput) {
+                activeInput.value = val;
+                activeInput.dispatchEvent(new Event('change'));
+            }
+            hideQuickPickers();
+        }
+
+        function pickStirrup(val) {
+            if (activeInput) {
+                activeInput.value = val;
+                activeInput.dispatchEvent(new Event('change'));
+            }
+            hideQuickPickers();
+        }
+
+        // ============ ENHANCED: Keyboard Navigation ============
+        function handleKeyDown(event, input) {
+            const td = input.closest('td');
+            const tr = input.closest('tr');
+            const tbody = document.getElementById('spanTableBody');
+            const tds = Array.from(tr.querySelectorAll('td'));
+            const colIndex = tds.indexOf(td);
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const rowIndex = rows.indexOf(tr);
+
+            switch (event.key) {
+                case 'Enter':
+                    // Move to same column, next row
+                    event.preventDefault();
+                    if (rowIndex < rows.length - 1) {
+                        const nextRow = rows[rowIndex + 1];
+                        const nextInput = nextRow.querySelectorAll('td')[colIndex]?.querySelector('input');
+                        if (nextInput) nextInput.focus();
+                    }
+                    break;
+                case 'Tab':
+                    // Default Tab behavior is fine
+                    break;
+                case 'ArrowDown':
+                    event.preventDefault();
+                    if (rowIndex < rows.length - 1) {
+                        const nextRow = rows[rowIndex + 1];
+                        const nextInput = nextRow.querySelectorAll('td')[colIndex]?.querySelector('input');
+                        if (nextInput) nextInput.focus();
+                    }
+                    break;
+                case 'ArrowUp':
+                    event.preventDefault();
+                    if (rowIndex > 0) {
+                        const prevRow = rows[rowIndex - 1];
+                        const prevInput = prevRow.querySelectorAll('td')[colIndex]?.querySelector('input');
+                        if (prevInput) prevInput.focus();
+                    }
+                    break;
+            }
+        }
+
+        // ============ Toast notification ============
+        function showToast(msg) {
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = msg;
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: var(--accent);
+                color: white;
+                padding: 10px 20px;
+                border-radius: 6px;
+                font-size: 13px;
+                z-index: 2000;
+                animation: fadeOut 3s forwards;
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // ============ UPDATED: renderTable with enhanced features ============
+        function renderTable() {
+            const tbody = document.getElementById('spanTableBody');
+            tbody.innerHTML = '';
+
+            if (!currentGroup || !currentGroup.Spans) return;
+
+            currentGroup.Spans.forEach((span, i) => {
+                const tr = document.createElement('tr');
+                tr.className = span.IsActive === false ? 'inactive' : '';
+                if (bulkEditMode && selectedSpanIndices.includes(i)) {
+                    tr.classList.add('selected');
+                }
+                if (i === highlightedSpanIndex) {
+                    tr.classList.add('highlighted');
+                }
+                tr.dataset.spanIndex = i;
+
+                // Mouse events for bidirectional sync
+                tr.addEventListener('mouseenter', () => highlightSpan(i));
+                tr.addEventListener('mouseleave', clearHighlight);
+                tr.addEventListener('click', (e) => {
+                    if (copyFormatMode) {
+                        handleCopyFormatClick(i);
+                    } else {
+                        toggleSpanSelection(i, e);
+                    }
+                });
+
+                // Span ID
+                tr.innerHTML = `<td>${span.SpanId}</td>`;
+
+                // Active checkbox
+                tr.innerHTML += `<td><input type="checkbox" ${span.IsActive !== false ? 'checked' : ''} 
+                    onchange="toggleSpanActive(${i}, this.checked)"></td>`;
+
+                // Top rebar (5 positions) with quick picker
+                for (let p = 0; p < 5; p++) {
+                    const val = span.TopRebar && span.TopRebar[0] ? span.TopRebar[0][p] || '' : '';
+                    tr.innerHTML += `<td><input type="text" value="${val}" 
+                        onchange="updateRebarBulk(${i}, 'Top', ${p}, this.value)"
+                        ondblclick="showQuickPicker(this, 'diameter')"
+                        onkeydown="handleKeyDown(event, this)"></td>`;
+                }
+
+                // Bot rebar (5 positions)
+                for (let p = 0; p < 5; p++) {
+                    const val = span.BotRebar && span.BotRebar[0] ? span.BotRebar[0][p] || '' : '';
+                    tr.innerHTML += `<td><input type="text" value="${val}" 
+                        onchange="updateRebarBulk(${i}, 'Bot', ${p}, this.value)"
+                        ondblclick="showQuickPicker(this, 'diameter')"
+                        onkeydown="handleKeyDown(event, this)"></td>`;
+                }
+
+                // Stirrup (3 positions) with quick picker
+                for (let p = 0; p < 3; p++) {
+                    const val = span.Stirrup ? span.Stirrup[p] || '' : '';
+                    tr.innerHTML += `<td><input type="text" value="${val}" 
+                        onchange="updateStirrupBulk(${i}, ${p}, this.value)"
+                        ondblclick="showQuickPicker(this, 'stirrup')"
+                        onkeydown="handleKeyDown(event, this)"></td>`;
+                }
+
+                // Side bar
+                tr.innerHTML += `<td><input type="text" value="${span.SideBar || ''}" 
+                    onchange="updateSideBar(${i}, this.value)"
+                    onkeydown="handleKeyDown(event, this)"></td>`;
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Bulk-aware update functions
+        function updateRebarBulk(spanIndex, type, pos, value) {
+            const indicesToUpdate = bulkEditMode && selectedSpanIndices.length > 0
+                ? selectedSpanIndices
+                : [spanIndex];
+
+            indicesToUpdate.forEach(idx => {
+                const span = currentGroup.Spans[idx];
+                const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
+                if (!span[arr]) span[arr] = [[], [], []];
+                if (!span[arr][0]) span[arr][0] = [];
+                span[arr][0][pos] = value;
+            });
+
+            // Auto apply if enabled
+            if (document.getElementById('autoApply').checked && !bulkEditMode) {
+                updateRebar(spanIndex, type, pos, value);
+            }
+
+            if (bulkEditMode && selectedSpanIndices.length > 0) {
+                renderTable();
+            }
+        }
+
+        function updateStirrupBulk(spanIndex, pos, value) {
+            const indicesToUpdate = bulkEditMode && selectedSpanIndices.length > 0
+                ? selectedSpanIndices
+                : [spanIndex];
+
+            indicesToUpdate.forEach(idx => {
+                const span = currentGroup.Spans[idx];
+                if (!span.Stirrup) span.Stirrup = [];
+                span.Stirrup[pos] = value;
+            });
+
+            if (bulkEditMode && selectedSpanIndices.length > 0) {
+                renderTable();
+            }
+        }
+
+        // ============ UPDATED: Canvas with click detection and highlighting ============
+        function renderCanvas() {
+            const canvas = document.getElementById('beamCanvas');
+            const ctx = canvas.getContext('2d');
+
+            if (!currentGroup || !currentGroup.Spans) return;
+
+            spanBounds = []; // Reset bounds
+
+            // Calculate total width
+            let totalWidth = CANVAS_PADDING * 2;
+            currentGroup.Spans.forEach(span => {
+                totalWidth += Math.max(span.Length * PIXELS_PER_METER, MIN_SPAN_WIDTH);
+            });
+            totalWidth += currentGroup.Supports ? currentGroup.Supports.length * 30 : 0;
+
+            canvas.width = Math.max(totalWidth, 800);
+            const height = canvas.height;
+
+            // Clear
+            ctx.fillStyle = '#16213e';
+            ctx.fillRect(0, 0, canvas.width, height);
+
+            let x = CANVAS_PADDING;
+            const beamY = 80;
+
+            // Draw supports and spans
+            currentGroup.Spans.forEach((span, i) => {
+                const spanWidth = Math.max(span.Length * PIXELS_PER_METER, MIN_SPAN_WIDTH);
+
+                // Left support
+                if (i === 0 && currentGroup.Supports && currentGroup.Supports[0]) {
+                    drawSupport(ctx, x, beamY, currentGroup.Supports[0]);
+                    x += 15;
+                }
+
+                // Store span bounds for click detection
+                spanBounds.push({ x: x, y: beamY, width: spanWidth, height: BEAM_HEIGHT, index: i });
+
+                // Beam span (with highlight if selected)
+                drawSpan(ctx, x, beamY, spanWidth, span, i === highlightedSpanIndex);
+                x += spanWidth;
+
+                // Right support
+                if (currentGroup.Supports && currentGroup.Supports[i + 1]) {
+                    drawSupport(ctx, x, beamY, currentGroup.Supports[i + 1]);
+                    x += 15;
+                }
+            });
+
+            // Dimension line
+            drawDimensions(ctx, beamY + BEAM_HEIGHT + 40);
+        }
+
+        function drawSpan(ctx, x, y, width, span, isHighlighted) {
+            // Beam rect with highlight
+            ctx.fillStyle = isHighlighted ? '#2a5a8a' : '#1f4068';
+            ctx.strokeStyle = isHighlighted ? '#ff6b8a' : '#e94560';
+            ctx.lineWidth = isHighlighted ? 3 : 2;
+            ctx.fillRect(x, y, width, BEAM_HEIGHT);
+            ctx.strokeRect(x, y, width, BEAM_HEIGHT);
+
+            // ============ REBAR VISUALIZATION ============
+            const REBAR_OFFSET_TOP = 15;       // Distance from top edge
+            const REBAR_OFFSET_BOT = 12;       // Distance from bottom edge
+            const BACKBONE_Y_TOP = y + REBAR_OFFSET_TOP;
+            const BACKBONE_Y_BOT = y + BEAM_HEIGHT - REBAR_OFFSET_BOT;
+
+            // Get backbone from selected option
+            const backbone = currentGroup.BackboneOptions?.[currentGroup.SelectedBackboneIndex || 0];
+
+            // Draw Backbone bars (continuous - pink/red)
+            if (backbone) {
+                ctx.strokeStyle = '#ff6b8a'; // Pink for backbone
+                ctx.lineWidth = 3;
+                ctx.setLineDash([]);
+
+                // Top backbone
+                ctx.beginPath();
+                ctx.moveTo(x + 5, BACKBONE_Y_TOP);
+                ctx.lineTo(x + width - 5, BACKBONE_Y_TOP);
+                ctx.stroke();
+
+                // Bottom backbone
+                ctx.beginPath();
+                ctx.moveTo(x + 5, BACKBONE_Y_BOT);
+                ctx.lineTo(x + width - 5, BACKBONE_Y_BOT);
+                ctx.stroke();
+
+                // Backbone label
+                ctx.fillStyle = '#ff6b8a';
+                ctx.font = '9px sans-serif';
+                ctx.textAlign = 'left';
+                if (backbone.OptionName) {
+                    ctx.fillText(backbone.OptionName.replace('Top: ', ''), x + 8, BACKBONE_Y_TOP - 3);
+                }
+            }
+
+            // Draw Addon bars (span-specific - blue) if defined
+            const topRebar = span.TopRebar?.[0];
+            const botRebar = span.BotRebar?.[0];
+
+            ctx.strokeStyle = '#4db8ff'; // Blue for addon
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]); // Dashed for addon
+
+            // Top addon - draw at positions 0 (left), 2 (mid), 4 (right)
+            if (topRebar) {
+                const hasLeft = topRebar[0] && topRebar[0] !== backbone?.OptionName?.split(',')[0];
+                const hasMid = topRebar[2];
+                const hasRight = topRebar[4] && topRebar[4] !== backbone?.OptionName?.split(',')[0];
+
+                if (hasLeft) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + 3, BACKBONE_Y_TOP + 5);
+                    ctx.lineTo(x + width * 0.3, BACKBONE_Y_TOP + 5);
+                    ctx.stroke();
+                }
+                if (hasMid) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + width * 0.35, BACKBONE_Y_TOP + 5);
+                    ctx.lineTo(x + width * 0.65, BACKBONE_Y_TOP + 5);
+                    ctx.stroke();
+                }
+                if (hasRight) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + width * 0.7, BACKBONE_Y_TOP + 5);
+                    ctx.lineTo(x + width - 3, BACKBONE_Y_TOP + 5);
+                    ctx.stroke();
+                }
+            }
+
+            // Bottom addon
+            if (botRebar) {
+                const hasLeft = botRebar[0];
+                const hasMid = botRebar[2];
+                const hasRight = botRebar[4];
+
+                if (hasLeft) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + 3, BACKBONE_Y_BOT - 5);
+                    ctx.lineTo(x + width * 0.3, BACKBONE_Y_BOT - 5);
+                    ctx.stroke();
+                }
+                if (hasMid) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + width * 0.35, BACKBONE_Y_BOT - 5);
+                    ctx.lineTo(x + width * 0.65, BACKBONE_Y_BOT - 5);
+                    ctx.stroke();
+                }
+                if (hasRight) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + width * 0.7, BACKBONE_Y_BOT - 5);
+                    ctx.lineTo(x + width - 3, BACKBONE_Y_BOT - 5);
+                    ctx.stroke();
+                }
+            }
+
+            ctx.setLineDash([]); // Reset dash
+
+            // ============ SPLICE MARKERS (Ellipse 45°) ============
+            // Check if splice visualization is enabled (not SkipSplice mode)
+            const skipSplice = data.settings?.Detailing?.SkipSplice || false;
+
+            if (!skipSplice) {
+                // Draw splice markers at bar ends (where bars would connect)
+                // Position: at ~30% and ~70% of span for illustration
+
+                // Top bar splice markers
+                if (currentGroup.RequiresSplice) {
+                    drawSpliceMarker(ctx, x + width * 0.35, BACKBONE_Y_TOP, '#ff6b8a');
+                    drawSpliceMarker(ctx, x + width * 0.65, BACKBONE_Y_TOP, '#ff6b8a');
+                }
+
+                // Bottom bar splice markers  
+                if (currentGroup.RequiresSplice) {
+                    drawSpliceMarker(ctx, x + width * 0.25, BACKBONE_Y_BOT, '#ff6b8a');
+                    drawSpliceMarker(ctx, x + width * 0.75, BACKBONE_Y_BOT, '#ff6b8a');
+                }
+            }
+
+            // ============ END REBAR VISUALIZATION ============
+
+            // Span label
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(span.SpanId, x + width / 2, y + BEAM_HEIGHT / 2 + 5);
+
+            // Dimensions text (below beam)
+            ctx.fillStyle = '#8892a0';
+            ctx.font = '11px sans-serif';
+            ctx.fillText(`${span.Width}x${span.Height}`, x + width / 2, y + BEAM_HEIGHT + 15);
+            ctx.fillText(`L=${span.Length.toFixed(2)}m`, x + width / 2, y + BEAM_HEIGHT + 28);
+
+            // Step change indicator
+            if (span.IsStepChange) {
+                ctx.fillStyle = '#fbbf24';
+                ctx.fillText('⚠️', x + width - 15, y + 15);
+            }
+        }
+
+        // Canvas mouse events
+        document.getElementById('beamCanvas').addEventListener('mousemove', function (e) {
+            const rect = this.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            let found = -1;
+            for (const bound of spanBounds) {
+                if (x >= bound.x && x <= bound.x + bound.width &&
+                    y >= bound.y && y <= bound.y + bound.height) {
+                    found = bound.index;
+                    break;
+                }
+            }
+
+            if (found !== highlightedSpanIndex) {
+                if (found >= 0) {
+                    highlightSpan(found);
+                } else {
+                    clearHighlight();
+                }
+            }
+        });
+
+        document.getElementById('beamCanvas').addEventListener('click', function (e) {
+            const rect = this.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            for (const bound of spanBounds) {
+                if (x >= bound.x && x <= bound.x + bound.width &&
+                    y >= bound.y && y <= bound.y + bound.height) {
+                    if (copyFormatMode) {
+                        handleCopyFormatClick(bound.index);
+                    } else {
+                        // Scroll to and focus the row
+                        const row = document.querySelector(`tr[data-span-index="${bound.index}"]`);
+                        if (row) {
+                            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            row.querySelector('input')?.focus();
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+
+        // Hide pickers on click outside
+        document.addEventListener('click', function (e) {
+            if (!e.target.closest('.quick-picker') && !e.target.matches('input[type="text"]')) {
+                hideQuickPickers();
+            }
+        });
 
         // Initialize
         init();

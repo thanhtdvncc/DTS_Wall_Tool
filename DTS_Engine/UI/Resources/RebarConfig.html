@@ -304,6 +304,8 @@
         <div class="tab" onclick="showTab(1)">Beam</div>
         <div class="tab" onclick="showTab(2)">Column</div>
         <div class="tab" onclick="showTab(3)">Naming</div>
+        <div class="tab" onclick="showTab(4)">Neo & Nối</div>
+        <div class="tab" onclick="showTab(5)">Bố trí</div>
     </div>
 
     <div class="content">
@@ -576,6 +578,147 @@
                 </div>
             </div>
         </div>
+
+        <!-- TAB 4: ANCHORAGE (Neo & Nối) -->
+        <div class="tab-panel" id="tab4">
+            <div class="section">
+                <div class="section-header">Vật liệu</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col"><label>Mác bê tông</label>
+                            <select id="ConcreteGrade">
+                                <option value="B20">B20</option>
+                                <option value="B25" selected>B25</option>
+                                <option value="B30">B30</option>
+                                <option value="B35">B35</option>
+                            </select>
+                        </div>
+                        <div class="col"><label>Mác thép</label>
+                            <select id="SteelGrade">
+                                <option value="CB300V">CB300V</option>
+                                <option value="CB400V" selected>CB400V</option>
+                                <option value="CB500V">CB500V</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">Hệ số nối thép (Lap Splice)</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col"><label>Vùng kéo (×d)</label><input type="number" id="TensileSpliceFactor"
+                                value="40"></div>
+                        <div class="col"><label>Vùng nén (×d)</label><input type="number" id="CompressiveSpliceFactor"
+                                value="30"></div>
+                        <div class="col"><label>Chiều dài neo (×d)</label><input type="number" id="AnchorageFactor"
+                                value="35"></div>
+                    </div>
+                    <div class="hint">VD: 40d = 40 x đường kính thep. Với D20: L = 40 x 20 = 800mm</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">Hệ số móc (Hooks)</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col"><label>Móc 90° (×d)</label><input type="number" id="Hook90Factor" value="12">
+                        </div>
+                        <div class="col"><label>Móc 135° (×d)</label><input type="number" id="Hook135Factor" value="6">
+                        </div>
+                        <div class="col"><label>Móc 180° (×d)</label><input type="number" id="Hook180Factor" value="4">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col"><label>Chiều dài móc tối thiểu (mm)</label><input type="number"
+                                id="MinHookLength" value="75"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 5: DETAILING (Bố trí) -->
+        <div class="tab-panel" id="tab5">
+            <div class="section">
+                <div class="section-header">Giới hạn thanh thép</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col"><label>Chiều dài max (mm)</label><input type="number" id="MaxBarLength"
+                                value="11700"></div>
+                        <div class="col"><label>Chiều dài min (mm)</label><input type="number" id="MinBarLength"
+                                value="2000"></div>
+                    </div>
+                    <div class="row">
+                        <div class="col"><label>Khoảng so le nối (mm)</label><input type="number"
+                                id="MinStaggerDistance" value="600"></div>
+                        <div class="col"><label>Hệ số so le (×Ld)</label><input type="number" id="StaggerFactorLd"
+                                value="1.3" step="0.1"></div>
+                    </div>
+                    <div class="check-row">
+                        <input type="checkbox" id="SkipSplice">
+                        <label for="SkipSplice"><strong>Bỏ qua nối thép</strong> (nhà cung cấp cắt theo yêu cầu)</label>
+                    </div>
+                    <div class="hint">Khi bật: thép được vẽ liền mạch, không hiển thị điểm nối.</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">Vùng nối thép - Dầm phụ (Beam)</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col">
+                            <label>Thép trên nối tại</label>
+                            <select id="BeamTopSpliceZone">
+                                <option value="0">Tại gối (Support)</option>
+                                <option value="1">L/4</option>
+                                <option value="2" selected>Giữa nhịp (Mid)</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label>Thép dưới nối tại</label>
+                            <select id="BeamBotSpliceZone">
+                                <option value="0" selected>Tại gối (Support)</option>
+                                <option value="1">L/4</option>
+                                <option value="2">Giữa nhịp (Mid)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="check-row">
+                        <input type="checkbox" id="BeamAllowLapInJoint">
+                        <label for="BeamAllowLapInJoint">Cho phép nối trong nút khung</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-header">Vùng nối thép - Dầm chính (Girder)</div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col">
+                            <label>Thép trên nối tại</label>
+                            <select id="GirderTopSpliceZone">
+                                <option value="0">Tại gối (Support)</option>
+                                <option value="1" selected>L/4</option>
+                                <option value="2">Giữa nhịp (Mid)</option>
+                            </select>
+                        </div>
+                        <div class="col">
+                            <label>Thép dưới nối tại</label>
+                            <select id="GirderBotSpliceZone">
+                                <option value="0" selected>Tại gối (Support)</option>
+                                <option value="1">L/4</option>
+                                <option value="2">Giữa nhịp (Mid)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="check-row">
+                        <input type="checkbox" id="GirderAllowLapInJoint" checked>
+                        <label for="GirderAllowLapInJoint">Cho phép nối trong nút khung (Neo xuyên cột)</label>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="footer">
@@ -702,6 +845,38 @@
                 radio.checked = parseInt(radio.value) === dir;
                 radio.onchange = () => document.getElementById('SortDirection').value = radio.value;
             });
+
+            // Tab 4: Anchorage
+            if (document.getElementById('ConcreteGrade')) {
+                document.getElementById('ConcreteGrade').value = data.Anchorage?.ConcreteGrade || 'B25';
+                document.getElementById('SteelGrade').value = data.Anchorage?.SteelGrade || 'CB400V';
+                setId('TensileSpliceFactor', data.Anchorage?.TensileSpliceFactor ?? 40);
+                setId('CompressiveSpliceFactor', data.Anchorage?.CompressiveSpliceFactor ?? 30);
+                setId('AnchorageFactor', data.Anchorage?.AnchorageFactor ?? 35);
+                setId('Hook90Factor', data.Anchorage?.Hook90Factor ?? 12);
+                setId('Hook135Factor', data.Anchorage?.Hook135Factor ?? 6);
+                setId('Hook180Factor', data.Anchorage?.Hook180Factor ?? 4);
+                setId('MinHookLength', data.Anchorage?.MinHookLength ?? 75);
+            }
+
+            // Tab 5: Detailing
+            if (document.getElementById('MaxBarLength')) {
+                setId('MaxBarLength', data.Detailing?.MaxBarLength ?? 11700);
+                setId('MinBarLength', data.Detailing?.MinBarLength ?? 2000);
+                setId('MinStaggerDistance', data.Detailing?.MinStaggerDistance ?? 600);
+                setId('StaggerFactorLd', data.Detailing?.StaggerFactorLd ?? 1.3);
+                setChk('SkipSplice', data.Detailing?.SkipSplice ?? false);
+
+                // Beam Rule
+                document.getElementById('BeamTopSpliceZone').value = data.Detailing?.BeamRule?.TopSpliceZone ?? 2;
+                document.getElementById('BeamBotSpliceZone').value = data.Detailing?.BeamRule?.BotSpliceZone ?? 0;
+                setChk('BeamAllowLapInJoint', data.Detailing?.BeamRule?.AllowLapSpliceInJoint ?? false);
+
+                // Girder Rule
+                document.getElementById('GirderTopSpliceZone').value = data.Detailing?.GirderRule?.TopSpliceZone ?? 1;
+                document.getElementById('GirderBotSpliceZone').value = data.Detailing?.GirderRule?.BotSpliceZone ?? 0;
+                setChk('GirderAllowLapInJoint', data.Detailing?.GirderRule?.AllowLapSpliceInJoint ?? true);
+            }
         }
 
         function doSave() {
@@ -780,6 +955,37 @@
                     AutoRenameOnSectionChange: getChk('AutoRenameOnSectionChange'),
                     SortCorner: parseInt(getVal('SortCorner')) || 0,
                     SortDirection: parseInt(getVal('SortDirection')) || 0
+                },
+                Anchorage: {
+                    ConcreteGrade: document.getElementById('ConcreteGrade')?.value || 'B25',
+                    SteelGrade: document.getElementById('SteelGrade')?.value || 'CB400V',
+                    UseSimplifiedRules: true,
+                    TensileSpliceFactor: getVal('TensileSpliceFactor') || 40,
+                    CompressiveSpliceFactor: getVal('CompressiveSpliceFactor') || 30,
+                    AnchorageFactor: getVal('AnchorageFactor') || 35,
+                    Hook90Factor: getVal('Hook90Factor') || 12,
+                    Hook135Factor: getVal('Hook135Factor') || 6,
+                    Hook180Factor: getVal('Hook180Factor') || 4,
+                    MinHookLength: getVal('MinHookLength') || 75
+                },
+                Detailing: {
+                    MaxBarLength: getVal('MaxBarLength') || 11700,
+                    MinBarLength: getVal('MinBarLength') || 2000,
+                    MinStaggerDistance: getVal('MinStaggerDistance') || 600,
+                    StaggerFactorLd: getVal('StaggerFactorLd') || 1.3,
+                    SkipSplice: getChk('SkipSplice'),
+                    BeamRule: {
+                        TopSpliceZone: parseInt(document.getElementById('BeamTopSpliceZone')?.value) || 2,
+                        BotSpliceZone: parseInt(document.getElementById('BeamBotSpliceZone')?.value) || 0,
+                        AllowLapSpliceInJoint: getChk('BeamAllowLapInJoint'),
+                        SupportZoneRatio: 0.25
+                    },
+                    GirderRule: {
+                        TopSpliceZone: parseInt(document.getElementById('GirderTopSpliceZone')?.value) || 1,
+                        BotSpliceZone: parseInt(document.getElementById('GirderBotSpliceZone')?.value) || 0,
+                        AllowLapSpliceInJoint: getChk('GirderAllowLapInJoint'),
+                        SupportZoneRatio: 0.25
+                    }
                 }
             };
 
