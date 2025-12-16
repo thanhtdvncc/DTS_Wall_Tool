@@ -155,18 +155,42 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
-        /// Kiểm tra 2 dầm có nối tiếp nhau không
+        /// Kiểm tra 2 dầm có nối tiếp VÀ thẳng hàng không.
+        /// Dầm gấp khúc (góc > 5°) sẽ bị từ chối để tránh lỗi Vector Projection.
         /// </summary>
         private static bool AreBeamsConnected(BeamData b1, BeamData b2)
         {
-            // Điểm cuối b1 gần điểm đầu b2
+            // 1. Kiểm tra khoảng cách - điểm cuối b1 gần điểm đầu b2
             double dist1 = Distance(b1.EndX, b1.EndY, b2.StartX, b2.StartY);
             double dist2 = Distance(b1.EndX, b1.EndY, b2.EndX, b2.EndY);
             double dist3 = Distance(b1.StartX, b1.StartY, b2.StartX, b2.StartY);
             double dist4 = Distance(b1.StartX, b1.StartY, b2.EndX, b2.EndY);
 
             double minDist = Math.Min(Math.Min(dist1, dist2), Math.Min(dist3, dist4));
-            return minDist < COLLINEAR_TOLERANCE;
+            if (minDist >= COLLINEAR_TOLERANCE)
+                return false; // Không nối tiếp
+
+            // 2. Kiểm tra thẳng hàng (Collinear check)
+            // Tính góc của từng dầm
+            double angle1 = Math.Atan2(b1.EndY - b1.StartY, b1.EndX - b1.StartX);
+            double angle2 = Math.Atan2(b2.EndY - b2.StartY, b2.EndX - b2.StartX);
+
+            // Normalize góc về [0, PI) để so sánh
+            angle1 = NormalizeAngle(angle1);
+            angle2 = NormalizeAngle(angle2);
+
+            // Cho phép sai số 5° = 0.087 rad
+            const double MAX_ANGLE_DIFF = 5.0 * Math.PI / 180.0;
+            double angleDiff = Math.Abs(angle1 - angle2);
+
+            // Xử lý trường hợp gần 0 và gần PI
+            if (angleDiff > Math.PI / 2)
+                angleDiff = Math.PI - angleDiff;
+
+            if (angleDiff > MAX_ANGLE_DIFF)
+                return false; // Gấp khúc > 5° -> Không cho phép gộp
+
+            return true;
         }
 
         private static double Distance(double x1, double y1, double x2, double y2)
@@ -218,9 +242,10 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
-        /// Nhận diện gối đỡ (Column, Wall, Beam) cho nhóm
+        /// Nhận diện gối đỡ (Column, Wall, Beam) cho nhóm.
+        /// Public để có thể gọi từ RebarCommands cho manual groups.
         /// </summary>
-        private static void DetectSupports(BeamGroup group, List<BeamData> chain, List<SupportEntity> allSupports)
+        public static void DetectSupports(BeamGroup group, List<BeamData> chain, List<SupportEntity> allSupports)
         {
             // Sử dụng SpatialHash để query nhanh
             var spatialHash = new SpatialHash<SupportEntity>(500);

@@ -1037,7 +1037,7 @@ namespace DTS_Engine.Commands
             groups.Add(group);
 
             // Save to cache
-            SaveBeamGroupsToCache(groups);
+            SaveBeamGroupsToNOD(groups);
 
             WriteMessage($"Đã tạo nhóm '{groupName}' với {beamDataList.Count} dầm, {group.Spans.Count} nhịp.");
 
@@ -1084,30 +1084,13 @@ namespace DTS_Engine.Commands
             double standardLength = settings.Beam?.StandardBarLength ?? 11700;
             group.RequiresSplice = group.TotalLength * 1000 > standardLength;
 
-            // For manual groups, create spans based on beam segments
-            // (No column detection - user manually selected the beams)
-            double pos = 0;
-            group.Supports.Add(new SupportData
-            {
-                SupportId = "Start",
-                SupportIndex = 0,
-                Type = SupportType.FreeEnd,
-                Position = 0,
-                Width = 0
-            });
+            // Query supports from drawing database (Columns, Walls on designated layers)
+            var supports = QuerySupportsFromDrawing(sortedBeams);
 
-            foreach (var beam in sortedBeams)
-            {
-                pos += beam.Length / 1000.0;
-                group.Supports.Add(new SupportData
-                {
-                    SupportId = $"J{group.Supports.Count}",
-                    SupportIndex = group.Supports.Count,
-                    Type = SupportType.Column, // Assume joint at each beam end
-                    Position = pos,
-                    Width = 300
-                });
-            }
+            // Use proper support detection instead of hardcoded Column/300mm
+            BeamGroupDetector.DetectSupports(group, sortedBeams, supports);
+
+            // If no supports found, DetectSupports already adds FreeEnd at start/end
 
             // Create spans between supports
             double prevHeight = group.Height;
@@ -1156,23 +1139,27 @@ namespace DTS_Engine.Commands
             return group;
         }
 
-        // Cache file path
-        private static string BeamGroupsCachePath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DTS_Engine", "BeamGroupsCache.json");
-
         /// <summary>
-        /// Lấy hoặc tạo danh sách BeamGroup từ file cache
+        /// Lấy danh sách BeamGroup từ NOD của bản vẽ hiện tại.
+        /// Data đi theo file DWG, không dùng file cache bên ngoài.
         /// </summary>
         private List<BeamGroup> GetOrCreateBeamGroups()
         {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return new List<BeamGroup>();
+
+            var db = doc.Database;
+
             try
             {
-                if (File.Exists(BeamGroupsCachePath))
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
                 {
-                    string json = File.ReadAllText(BeamGroupsCachePath);
-                    var groups = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BeamGroup>>(json);
-                    if (groups != null) return groups;
+                    string json = XDataUtils.LoadBeamGroupsFromNOD(db, tr);
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        var groups = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BeamGroup>>(json);
+                        if (groups != null) return groups;
+                    }
                 }
             }
             catch { }
@@ -1181,17 +1168,23 @@ namespace DTS_Engine.Commands
         }
 
         /// <summary>
-        /// Lưu danh sách BeamGroup vào file cache
+        /// Lưu danh sách BeamGroup vào NOD của bản vẽ hiện tại.
         /// </summary>
-        private void SaveBeamGroupsToCache(List<BeamGroup> groups)
+        private void SaveBeamGroupsToNOD(List<BeamGroup> groups)
         {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null || groups == null) return;
+
+            var db = doc.Database;
+
             try
             {
-                string dir = Path.GetDirectoryName(BeamGroupsCachePath);
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-
-                string json = Newtonsoft.Json.JsonConvert.SerializeObject(groups, Newtonsoft.Json.Formatting.Indented);
-                File.WriteAllText(BeamGroupsCachePath, json);
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    string json = Newtonsoft.Json.JsonConvert.SerializeObject(groups);
+                    XDataUtils.SaveBeamGroupsToNOD(db, tr, json);
+                    tr.Commit();
+                }
             }
             catch { }
         }
@@ -1209,7 +1202,7 @@ namespace DTS_Engine.Commands
             int count = 0;
 
             // Lưu groups vào cache
-            SaveBeamGroupsToCache(groups);
+            SaveBeamGroupsToNOD(groups);
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -1312,6 +1305,112 @@ namespace DTS_Engine.Commands
                     .ThenBy(b => (b.StartX + b.EndX) / 2 * xMultiplier)
                     .ToList();
             }
+        }
+
+        /// <summary>
+        /// Query hỗ trợ (Column, Wall) từ database dựa trên khu vực dầm.
+        /// Tìm các entity có XData type = COLUMN hoặc WALL gần dải dầm.
+        /// </summary>
+        private List<SupportEntity> QuerySupportsFromDrawing(List<Core.Algorithms.BeamData> beams)
+        {
+            var supports = new List<SupportEntity>();
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null || beams == null || beams.Count == 0) return supports;
+
+            var db = doc.Database;
+
+            // Tính bounding box của chain để giới hạn tìm kiếm
+            double minX = beams.Min(b => Math.Min(b.StartX, b.EndX)) - 1000;
+            double maxX = beams.Max(b => Math.Max(b.StartX, b.EndX)) + 1000;
+            double minY = beams.Min(b => Math.Min(b.StartY, b.EndY)) - 1000;
+            double maxY = beams.Max(b => Math.Max(b.StartY, b.EndY)) + 1000;
+
+            try
+            {
+                using (var tr = db.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
+                    var btr = tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead) as BlockTableRecord;
+
+                    foreach (ObjectId id in btr)
+                    {
+                        try
+                        {
+                            var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                            if (ent == null) continue;
+
+                            // Đọc XData để xác định type
+                            var elemData = XDataUtils.ReadElementData(ent);
+                            if (elemData == null) continue;
+
+                            string xType = elemData.XType?.ToUpperInvariant();
+                            bool isColumn = xType == "COLUMN";
+                            bool isWall = xType == "WALL";
+
+                            if (!isColumn && !isWall) continue;
+
+                            // Lấy center point
+                            double cx = 0, cy = 0, w = 300, d = 300;
+
+                            if (ent is Line line)
+                            {
+                                cx = (line.StartPoint.X + line.EndPoint.X) / 2;
+                                cy = (line.StartPoint.Y + line.EndPoint.Y) / 2;
+                            }
+                            else if (ent is Polyline poly && poly.NumberOfVertices >= 2)
+                            {
+                                var p0 = poly.GetPoint2dAt(0);
+                                var p1 = poly.GetPoint2dAt(poly.NumberOfVertices > 1 ? 1 : 0);
+                                cx = (p0.X + p1.X) / 2;
+                                cy = (p0.Y + p1.Y) / 2;
+                            }
+                            else if (ent.Bounds.HasValue)
+                            {
+                                var bounds = ent.Bounds.Value;
+                                cx = (bounds.MinPoint.X + bounds.MaxPoint.X) / 2;
+                                cy = (bounds.MinPoint.Y + bounds.MaxPoint.Y) / 2;
+                                w = bounds.MaxPoint.X - bounds.MinPoint.X;
+                                d = bounds.MaxPoint.Y - bounds.MinPoint.Y;
+                            }
+                            else
+                            {
+                                continue;
+                            }
+
+                            // Lấy kích thước từ typed data
+                            if (elemData is ColumnData colData)
+                            {
+                                w = colData.Width ?? w;
+                                d = colData.Height ?? d;
+                            }
+                            else if (elemData is WallData wallData)
+                            {
+                                w = wallData.Thickness ?? w;
+                                // Wall depth is along its length, use bounds if available
+                            }
+
+                            // Kiểm tra có nằm trong vùng không
+                            if (cx < minX || cx > maxX || cy < minY || cy > maxY)
+                                continue;
+
+                            supports.Add(new SupportEntity
+                            {
+                                Handle = ent.Handle.ToString(),
+                                Name = ent.Handle.ToString(),
+                                Type = isColumn ? "Column" : "Wall",
+                                CenterX = cx,
+                                CenterY = cy,
+                                Width = w,
+                                Depth = d
+                            });
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+
+            return supports;
         }
     }
 }

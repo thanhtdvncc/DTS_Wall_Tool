@@ -19,6 +19,17 @@ namespace DTS_Engine.Core.Utils
         private const string APP_NAME = "DTS_APP";
         private const int CHUNK_SIZE = 250;
 
+        // Rebar XData Keys - tránh magic strings
+        public const string KEY_TOP_REBAR = "TopRebar";
+        public const string KEY_BOT_REBAR = "BotRebar";
+        public const string KEY_STIRRUP = "Stirrup";
+        public const string KEY_SIDE_BAR = "SideBar";
+        public const string KEY_BEAM_GROUP = "BeamGroupName";
+        public const string KEY_LAST_MODIFIED = "LastModified";
+
+        // NOD Keys for BeamGroup persistence
+        public const string NOD_BEAM_GROUPS = "DTS_BeamGroups";
+
         #endregion
 
         #region Factory Pattern - Core API
@@ -200,20 +211,20 @@ namespace DTS_Engine.Core.Utils
             // Read existing data
             var dict = GetRawData(obj) ?? new Dictionary<string, object>();
 
-            // Update rebar fields
+            // Update rebar fields using const keys
             if (!string.IsNullOrEmpty(topRebar))
-                dict["TopRebar"] = topRebar;
+                dict[KEY_TOP_REBAR] = topRebar;
             if (!string.IsNullOrEmpty(botRebar))
-                dict["BotRebar"] = botRebar;
+                dict[KEY_BOT_REBAR] = botRebar;
             if (!string.IsNullOrEmpty(stirrup))
-                dict["Stirrup"] = stirrup;
+                dict[KEY_STIRRUP] = stirrup;
             if (!string.IsNullOrEmpty(sideBar))
-                dict["SideBar"] = sideBar;
+                dict[KEY_SIDE_BAR] = sideBar;
             if (!string.IsNullOrEmpty(groupName))
-                dict["BeamGroupName"] = groupName;
+                dict[KEY_BEAM_GROUP] = groupName;
 
             // Update timestamp
-            dict["LastModified"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
             SetRawData(obj, dict, tr);
         }
@@ -228,12 +239,100 @@ namespace DTS_Engine.Core.Utils
 
             return new RebarXDataInfo
             {
-                TopRebar = dict.ContainsKey("TopRebar") ? dict["TopRebar"]?.ToString() : null,
-                BotRebar = dict.ContainsKey("BotRebar") ? dict["BotRebar"]?.ToString() : null,
-                Stirrup = dict.ContainsKey("Stirrup") ? dict["Stirrup"]?.ToString() : null,
-                SideBar = dict.ContainsKey("SideBar") ? dict["SideBar"]?.ToString() : null,
-                BeamGroupName = dict.ContainsKey("BeamGroupName") ? dict["BeamGroupName"]?.ToString() : null
+                TopRebar = dict.ContainsKey(KEY_TOP_REBAR) ? dict[KEY_TOP_REBAR]?.ToString() : null,
+                BotRebar = dict.ContainsKey(KEY_BOT_REBAR) ? dict[KEY_BOT_REBAR]?.ToString() : null,
+                Stirrup = dict.ContainsKey(KEY_STIRRUP) ? dict[KEY_STIRRUP]?.ToString() : null,
+                SideBar = dict.ContainsKey(KEY_SIDE_BAR) ? dict[KEY_SIDE_BAR]?.ToString() : null,
+                BeamGroupName = dict.ContainsKey(KEY_BEAM_GROUP) ? dict[KEY_BEAM_GROUP]?.ToString() : null
             };
+        }
+
+        #endregion
+
+        #region BeamGroup NOD Persistence (Data travels with DWG)
+
+        /// <summary>
+        /// Lưu danh sách BeamGroup vào NOD của bản vẽ.
+        /// Data đi theo file DWG, không dùng file cache bên ngoài.
+        /// </summary>
+        public static void SaveBeamGroupsToNOD(Database db, Transaction tr, string jsonData)
+        {
+            if (db == null || tr == null || string.IsNullOrEmpty(jsonData)) return;
+
+            // Get or create NOD
+            DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForWrite);
+
+            // Remove existing entry if present
+            if (nod.Contains(NOD_BEAM_GROUPS))
+            {
+                nod.Remove(NOD_BEAM_GROUPS);
+            }
+
+            // Create XRecord to store JSON data
+            var xrec = new Xrecord();
+            var resBuf = CreateResultBufferFromJson(jsonData);
+            xrec.Data = resBuf;
+
+            nod.SetAt(NOD_BEAM_GROUPS, xrec);
+            tr.AddNewlyCreatedDBObject(xrec, true);
+        }
+
+        /// <summary>
+        /// Đọc danh sách BeamGroup từ NOD của bản vẽ.
+        /// </summary>
+        public static string LoadBeamGroupsFromNOD(Database db, Transaction tr)
+        {
+            if (db == null || tr == null) return null;
+
+            try
+            {
+                DBDictionary nod = (DBDictionary)tr.GetObject(db.NamedObjectsDictionaryId, OpenMode.ForRead);
+
+                if (!nod.Contains(NOD_BEAM_GROUPS))
+                    return null;
+
+                ObjectId xrecId = nod.GetAt(NOD_BEAM_GROUPS);
+                if (xrecId == ObjectId.Null) return null;
+
+                var xrec = tr.GetObject(xrecId, OpenMode.ForRead) as Xrecord;
+                if (xrec == null || xrec.Data == null) return null;
+
+                return ExtractJsonFromResultBuffer(xrec.Data);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Tạo ResultBuffer từ JSON string (chia thành chunks 250 chars)
+        /// </summary>
+        private static ResultBuffer CreateResultBufferFromJson(string json)
+        {
+            var rb = new ResultBuffer();
+            for (int i = 0; i < json.Length; i += CHUNK_SIZE)
+            {
+                int len = Math.Min(CHUNK_SIZE, json.Length - i);
+                rb.Add(new TypedValue((int)DxfCode.Text, json.Substring(i, len)));
+            }
+            return rb;
+        }
+
+        /// <summary>
+        /// Extract JSON string từ ResultBuffer
+        /// </summary>
+        private static string ExtractJsonFromResultBuffer(ResultBuffer rb)
+        {
+            if (rb == null) return null;
+
+            var sb = new StringBuilder();
+            foreach (TypedValue tv in rb)
+            {
+                if (tv.TypeCode == (int)DxfCode.Text)
+                    sb.Append(tv.Value?.ToString());
+            }
+            return sb.ToString();
         }
 
         #endregion
