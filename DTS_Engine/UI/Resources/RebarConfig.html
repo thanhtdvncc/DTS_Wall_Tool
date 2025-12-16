@@ -452,6 +452,30 @@
                     <div class="hint">Auto Legs: b≤250→2 nhánh, b≤400→3 nhánh...</div>
                 </div>
             </div>
+
+            <div class="section">
+                <div class="section-header">Quy tắc dầm liên tục (Continuous Beam)</div>
+                <div class="section-body">
+                    <div class="check-row"><input type="checkbox" id="ForceContinuousDiameter" checked><label
+                            for="ForceContinuousDiameter">Đồng bộ đường kính chạy suốt (Layer 1)</label></div>
+                    <div class="check-row"><input type="checkbox" id="SingleDiameterPerSpan" checked><label
+                            for="SingleDiameterPerSpan">Một loại đường kính/mặt cắt</label></div>
+                    <div class="check-row"><input type="checkbox" id="AllowDiameterMixing"><label
+                            for="AllowDiameterMixing">Cho phép phối đường kính</label></div>
+                    <div class="row">
+                        <div class="col"><label>Max Diff (cấp)</label><input type="number" id="MaxDiameterDiff"
+                                value="1" min="1" max="3"></div>
+                        <div class="col"><label>Thép tiêu chuẩn (mm)</label><input type="number" id="StandardBarLength"
+                                value="11700"></div>
+                        <div class="col"><label>Nối chồng (xd)</label><input type="number" id="BeamLapSpliceMultiplier"
+                                value="40"></div>
+                    </div>
+                    <div class="check-row"><input type="checkbox" id="MatchTopLayerBars" checked><label
+                            for="MatchTopLayerBars">Khớp số thanh lớp trên (Match Top Layer)</label></div>
+                    <div class="hint">Quy tắc áp dụng khi tính thép dải dầm liên tục (Girder/Beam chạy qua nhiều cột).
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- TAB 2: COLUMN -->
@@ -618,6 +642,14 @@
             setId('MinReinforcementRatio', data.Beam?.MinReinforcementRatio);
             setId('AutoLegsRules', data.Beam?.AutoLegsRules);
             setChk('AllowOddLegs', data.Beam?.AllowOddLegs);
+            // Continuous Beam Rules
+            setChk('ForceContinuousDiameter', data.Beam?.ForceContinuousDiameter ?? true);
+            setChk('SingleDiameterPerSpan', data.Beam?.SingleDiameterPerSpan ?? true);
+            setChk('AllowDiameterMixing', data.Beam?.AllowDiameterMixing ?? false);
+            setId('MaxDiameterDiff', data.Beam?.MaxDiameterDiff ?? 1);
+            setId('StandardBarLength', data.Beam?.StandardBarLength ?? 11700);
+            setId('BeamLapSpliceMultiplier', data.Beam?.LapSpliceMultiplier ?? 40);
+            setChk('MatchTopLayerBars', data.Beam?.MatchTopLayerBars ?? true);
 
             // Tab 2: Column
             setId('ColMainBarRange', data.Column?.MainBarRange);
@@ -704,7 +736,15 @@
                     // Stirrup
                     MinReinforcementRatio: getVal('MinReinforcementRatio'),
                     AutoLegsRules: getVal('AutoLegsRules') || '250-2 400-3 600-4',
-                    AllowOddLegs: getChk('AllowOddLegs')
+                    AllowOddLegs: getChk('AllowOddLegs'),
+                    // Continuous Beam Rules
+                    ForceContinuousDiameter: getChk('ForceContinuousDiameter'),
+                    SingleDiameterPerSpan: getChk('SingleDiameterPerSpan'),
+                    AllowDiameterMixing: getChk('AllowDiameterMixing'),
+                    MaxDiameterDiff: getVal('MaxDiameterDiff') || 1,
+                    StandardBarLength: getVal('StandardBarLength') || 11700,
+                    LapSpliceMultiplier: getVal('BeamLapSpliceMultiplier') || 40,
+                    MatchTopLayerBars: getChk('MatchTopLayerBars')
                 },
                 Column: {
                     MainBarRange: getVal('ColMainBarRange') || '16-28',

@@ -1,0 +1,311 @@
+using System;
+using System.Collections.Generic;
+using Newtonsoft.Json;
+
+namespace DTS_Engine.Core.Data
+{
+    // ===== PHÂN ĐOẠN VẬT LÝ (SAP/CAD) =====
+    /// <summary>
+    /// Đại diện cho 1 đoạn dầm vật lý trong CAD hoặc SAP.
+    /// Một nhịp logic (SpanData) có thể chứa nhiều PhysicalSegment.
+    /// VD: Nhịp 6m có thể gồm 3 frame SAP 2m.
+    /// </summary>
+    public class PhysicalSegment
+    {
+        /// <summary>
+        /// Handle của entity trong CAD
+        /// </summary>
+        public string EntityHandle { get; set; }
+
+        /// <summary>
+        /// Tên frame trong SAP (nếu có mapping)
+        /// </summary>
+        public string SapFrameName { get; set; }
+
+        /// <summary>
+        /// Chiều dài đoạn (m)
+        /// </summary>
+        public double Length { get; set; }
+
+        /// <summary>
+        /// Điểm đầu (X, Y) trong hệ tọa độ CAD
+        /// </summary>
+        public double[] StartPoint { get; set; } = new double[2];
+
+        /// <summary>
+        /// Điểm cuối (X, Y) trong hệ tọa độ CAD
+        /// </summary>
+        public double[] EndPoint { get; set; } = new double[2];
+
+        // Thép bố trí (project từ parent SpanData)
+        public string TopRebar { get; set; }
+        public string BotRebar { get; set; }
+        public string Stirrup { get; set; }
+    }
+
+    // ===== LOẠI GỐI ĐỠ =====
+    public enum SupportType
+    {
+        Column,     // Cột
+        Wall,       // Vách cứng
+        Beam,       // Dầm chính đỡ dầm phụ
+        FreeEnd     // Đầu thừa (cantilever)
+    }
+
+    // ===== GỐI ĐỠ =====
+    /// <summary>
+    /// Gối đỡ của dải dầm liên tục (Column, Wall, Beam, hoặc FreeEnd)
+    /// </summary>
+    public class SupportData
+    {
+        public string SupportId { get; set; }
+        public int SupportIndex { get; set; }
+        public SupportType Type { get; set; }
+
+        /// <summary>
+        /// Bề rộng gối theo hướng dầm (mm)
+        /// </summary>
+        public double Width { get; set; }
+
+        /// <summary>
+        /// Vị trí tim gối (m từ đầu dải dầm)
+        /// </summary>
+        public double Position { get; set; }
+
+        /// <summary>
+        /// Tên lưới trục (VD: "1", "A") hoặc tọa độ nếu không có grid
+        /// </summary>
+        public string GridName { get; set; }
+
+        /// <summary>
+        /// Handle của entity CAD (null nếu FreeEnd)
+        /// </summary>
+        public string EntityHandle { get; set; }
+
+        /// <summary>
+        /// True nếu đây là đầu thừa (cantilever)
+        /// </summary>
+        [JsonIgnore]
+        public bool IsFreeEnd => Type == SupportType.FreeEnd;
+    }
+
+    // ===== NHỊP LOGIC =====
+    /// <summary>
+    /// Nhịp logic của dải dầm (từ gối đến gối).
+    /// Chứa danh sách PhysicalSegment (các đoạn SAP/CAD).
+    /// </summary>
+    public class SpanData
+    {
+        public string SpanId { get; set; }
+        public int SpanIndex { get; set; }
+
+        /// <summary>
+        /// Chiều dài tim-tim gối (m)
+        /// </summary>
+        public double Length { get; set; }
+
+        /// <summary>
+        /// Chiều dài mép-mép gối (m) = nhịp tịnh
+        /// </summary>
+        public double ClearLength { get; set; }
+
+        /// <summary>
+        /// Bề rộng tiết diện (mm)
+        /// </summary>
+        public double Width { get; set; }
+
+        /// <summary>
+        /// Chiều cao tiết diện (mm)
+        /// </summary>
+        public double Height { get; set; }
+
+        public string LeftSupportId { get; set; }
+        public string RightSupportId { get; set; }
+
+        // ===== SUB-SEGMENTS (SAP mapping) =====
+        /// <summary>
+        /// Các đoạn vật lý trong nhịp này.
+        /// Khi user nhập thép cho SpanData → Auto project xuống segments.
+        /// </summary>
+        public List<PhysicalSegment> Segments { get; set; } = new List<PhysicalSegment>();
+
+        // ===== STEP CHANGE (giật cấp) =====
+        /// <summary>
+        /// True nếu chiều cao nhịp này khác nhịp trước > 50mm
+        /// </summary>
+        public bool IsStepChange { get; set; } = false;
+
+        /// <summary>
+        /// Chênh lệch chiều cao so với nhịp trước (mm)
+        /// </summary>
+        public double HeightDifference { get; set; } = 0;
+
+        // ===== CONSOLE (đầu thừa) =====
+        /// <summary>
+        /// True nếu một đầu là FreeEnd (cantilever)
+        /// </summary>
+        public bool IsConsole { get; set; } = false;
+
+        // ===== DIỆN TÍCH YÊU CẦU (6 vị trí) =====
+        // Index: 0=GốiT, 1=L/4T, 2=Giữa, 3=L/4P, 4=GốiP, 5=Reserve
+        public double[] As_Top { get; set; } = new double[6];
+        public double[] As_Bot { get; set; } = new double[6];
+
+        // ===== KẾT QUẢ BỐ THÉP (3 lớp × 6 vị trí) =====
+        // [layer, position] - layer: 0-2, position: 0-5
+        public string[,] TopRebar { get; set; } = new string[3, 6];
+        public string[,] BotRebar { get; set; } = new string[3, 6];
+
+        // ===== THÉP ĐAI & BỤNG =====
+        // Index: 0=Đầu, 1=Giữa, 2=Cuối
+        public string[] Stirrup { get; set; } = new string[3];
+        public string SideBar { get; set; }
+
+        // ===== SPLICE POSITIONS (cho tương lai) =====
+        /// <summary>
+        /// Vị trí nối thép top (% từ đầu nhịp). Rỗng = không nối trong nhịp này.
+        /// </summary>
+        public List<double> SplicePositions_Top { get; set; } = new List<double>();
+        public List<double> SplicePositions_Bot { get; set; } = new List<double>();
+
+        /// <summary>
+        /// Nhịp này có active (nhận thay đổi hàng loạt) không?
+        /// </summary>
+        public bool IsActive { get; set; } = true;
+    }
+
+    // ===== NHÓM DẦM LIÊN TỤC =====
+    /// <summary>
+    /// Nhóm dầm liên tục (Girder hoặc Beam chạy qua nhiều cột).
+    /// Chứa danh sách SpanData và SupportData.
+    /// </summary>
+    public class BeamGroup
+    {
+        /// <summary>
+        /// Tên nhóm theo quy tắc: GX-B x (1-11), BY-B(-2.5) x (2-5)
+        /// </summary>
+        public string GroupName { get; set; }
+
+        /// <summary>
+        /// Loại: "Girder" hoặc "Beam"
+        /// </summary>
+        public string GroupType { get; set; }
+
+        /// <summary>
+        /// Tên trục chính (VD: "B", "C", "3")
+        /// </summary>
+        public string AxisName { get; set; }
+
+        /// <summary>
+        /// Offset so với trục (m). VD: -2.5 nếu cách trục B 2.5m
+        /// </summary>
+        public double AxisOffset { get; set; }
+
+        /// <summary>
+        /// Phạm vi lưới (VD: "1-11", "2-5")
+        /// </summary>
+        public string GridRange { get; set; }
+
+        /// <summary>
+        /// Hướng chạy: "X" hoặc "Y"
+        /// </summary>
+        public string Direction { get; set; }
+
+        /// <summary>
+        /// Bề rộng tiết diện chung (mm)
+        /// </summary>
+        public double Width { get; set; }
+
+        /// <summary>
+        /// Chiều cao tiết diện chung (mm)
+        /// </summary>
+        public double Height { get; set; }
+
+        // ===== FLAGS =====
+        public bool HasStepChange { get; set; } = false;
+        public bool HasConsole { get; set; } = false;
+
+        /// <summary>
+        /// Tổng chiều dài dải dầm (m)
+        /// </summary>
+        public double TotalLength { get; set; }
+
+        /// <summary>
+        /// True nếu TotalLength > StandardBarLength (cần nối thép)
+        /// </summary>
+        public bool RequiresSplice { get; set; } = false;
+
+        // ===== DATA =====
+        public List<SpanData> Spans { get; set; } = new List<SpanData>();
+        public List<SupportData> Supports { get; set; } = new List<SupportData>();
+
+        // ===== BACKBONE OPTIONS (tối đa 3 phương án) =====
+        public List<ContinuousBeamSolution> BackboneOptions { get; set; } = new List<ContinuousBeamSolution>();
+        public int SelectedBackboneIndex { get; set; } = 0;
+
+        // ===== METADATA =====
+        /// <summary>
+        /// Nguồn gốc: "Auto" (tự detect) hoặc "Manual" (user tạo)
+        /// </summary>
+        public string Source { get; set; } = "Auto";
+
+        public List<string> EntityHandles { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Hash của geometry để detect thay đổi (Re-hydration)
+        /// </summary>
+        public string GeometryHash { get; set; }
+
+        /// <summary>
+        /// User đã chỉnh sửa thủ công chưa?
+        /// </summary>
+        public bool IsManuallyEdited { get; set; } = false;
+    }
+
+    // ===== PHƯƠNG ÁN BỐ THÉP =====
+    /// <summary>
+    /// Kết quả bố thép cho 1 dải dầm liên tục (1 phương án backbone)
+    /// </summary>
+    public class ContinuousBeamSolution
+    {
+        public string OptionName { get; set; }
+
+        // ===== BACKBONE (Layer 1 chạy suốt) =====
+        public int BackboneDiameter { get; set; }
+        public int BackboneCount_Top { get; set; }
+        public int BackboneCount_Bot { get; set; }
+        public double As_Backbone_Top { get; set; }
+        public double As_Backbone_Bot { get; set; }
+
+        // ===== REINFORCEMENTS =====
+        /// <summary>
+        /// Dictionary: "SpanId_Position" → RebarSpec
+        /// VD: "S1_Top_Left" → {Diameter=22, Count=2}
+        /// </summary>
+        public Dictionary<string, RebarSpec> Reinforcements { get; set; } = new Dictionary<string, RebarSpec>();
+
+        // ===== METRICS =====
+        public double TotalSteelWeight { get; set; }
+        public double EfficiencyScore { get; set; }
+        public double WastePercentage { get; set; }
+
+        /// <summary>
+        /// Mô tả ngắn gọn: "2D22 suốt + gia cường D22 tại gối"
+        /// </summary>
+        public string Description { get; set; }
+    }
+
+    // ===== THÉP GIA CƯỜNG =====
+    public class RebarSpec
+    {
+        public int Diameter { get; set; }
+        public int Count { get; set; }
+        public string Position { get; set; }  // "Top" hoặc "Bot"
+        public int Layer { get; set; }        // 1 = chạy suốt, 2+ = gia cường
+
+        /// <summary>
+        /// Chuỗi hiển thị: "2D22"
+        /// </summary>
+        public string DisplayString => $"{Count}D{Diameter}";
+    }
+}

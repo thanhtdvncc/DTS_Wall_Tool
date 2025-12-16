@@ -903,5 +903,168 @@ namespace DTS_Engine.Commands
             string[] modeNames = { "Thép dọc", "Đai/Sườn", "Dọc+Area", "Đai/Sườn+Area" };
             WriteSuccess($"Đã hiển thị {count} dầm theo chế độ: {modeNames[mode]}.");
         }
+
+        /// <summary>
+        /// Mở BeamGroupViewer để xem/chỉnh sửa nhóm dầm liên tục
+        /// </summary>
+        [CommandMethod("DTS_BEAM_VIEWER")]
+        public void DTS_BEAM_VIEWER()
+        {
+            WriteMessage("Loading Beam Group Viewer...");
+
+            try
+            {
+                // Get cached beam groups or create empty list
+                var groups = GetOrCreateBeamGroups();
+
+                // Show viewer dialog
+                using (var dialog = new UI.Forms.BeamGroupViewerDialog(groups, ApplyBeamGroupResults))
+                {
+                    Autodesk.AutoCAD.ApplicationServices.Application.ShowModalDialog(dialog);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                WriteError($"Lỗi mở Beam Viewer: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Command cho phép User chọn dầm và tạo nhóm thủ công
+        /// </summary>
+        [CommandMethod("DTS_SET_BEAM")]
+        public void DTS_SET_BEAM()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            WriteMessage("Chọn các dầm để tạo nhóm liên tục...");
+
+            // Prompt selection
+            var opts = new PromptSelectionOptions()
+            {
+                MessageForAdding = "\nChọn các dầm (LINE/POLYLINE):"
+            };
+
+            var result = ed.GetSelection(opts);
+            if (result.Status != PromptStatus.OK)
+            {
+                WriteMessage("Đã hủy chọn.");
+                return;
+            }
+
+            // Prompt for group name
+            var nameOpts = new PromptStringOptions("\nNhập tên nhóm:")
+            {
+                AllowSpaces = true,
+                DefaultValue = "NewGroup"
+            };
+            var nameResult = ed.GetString(nameOpts);
+            if (nameResult.Status != PromptStatus.OK)
+            {
+                WriteMessage("Đã hủy.");
+                return;
+            }
+
+            string groupName = nameResult.StringResult;
+            var handles = new List<string>();
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId id in result.Value.GetObjectIds())
+                {
+                    var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                    if (ent != null)
+                    {
+                        handles.Add(ent.Handle.ToString());
+                    }
+                }
+                tr.Commit();
+            }
+
+            if (handles.Count == 0)
+            {
+                WriteMessage("Không có đối tượng hợp lệ.");
+                return;
+            }
+
+            // Create manual beam group
+            var group = new BeamGroup
+            {
+                GroupName = groupName,
+                GroupType = "Beam",
+                Source = "Manual",
+                EntityHandles = handles
+            };
+
+            // Add to cache
+            var groups = GetOrCreateBeamGroups();
+            groups.Add(group);
+
+            WriteMessage($"Đã tạo nhóm '{groupName}' với {handles.Count} dầm.");
+
+            // Show viewer
+            using (var dialog = new UI.Forms.BeamGroupViewerDialog(groups, ApplyBeamGroupResults))
+            {
+                Autodesk.AutoCAD.ApplicationServices.Application.ShowModalDialog(dialog);
+            }
+        }
+
+        /// <summary>
+        /// Lấy hoặc tạo danh sách BeamGroup từ cache/memory
+        /// </summary>
+        private List<BeamGroup> GetOrCreateBeamGroups()
+        {
+            // TODO: Load từ XData hoặc file cache
+            // Tạm thời return empty list
+            return new List<BeamGroup>();
+        }
+
+        /// <summary>
+        /// Apply kết quả từ BeamGroupViewer vào bản vẽ
+        /// </summary>
+        private void ApplyBeamGroupResults(List<BeamGroup> groups)
+        {
+            if (groups == null || groups.Count == 0) return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var db = doc.Database;
+            var ed = doc.Editor;
+
+            int count = 0;
+
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (var group in groups)
+                {
+                    foreach (var span in group.Spans)
+                    {
+                        // Convert handle to ObjectId
+                        if (!string.IsNullOrEmpty(span.Segments?.FirstOrDefault()?.EntityHandle))
+                        {
+                            // Get handle
+                            string handleStr = span.Segments.First().EntityHandle;
+                            Handle handle = new Handle(Convert.ToInt64(handleStr, 16));
+                            ObjectId objId;
+
+                            if (db.TryGetObjectId(handle, out objId) && objId != ObjectId.Null)
+                            {
+                                var ent = tr.GetObject(objId, OpenMode.ForWrite) as Entity;
+                                if (ent != null)
+                                {
+                                    // Write rebar data to XData
+                                    // TODO: Implement XData write
+                                    count++;
+                                }
+                            }
+                        }
+                    }
+                }
+                tr.Commit();
+            }
+
+            WriteMessage($"Đã apply thép cho {count} đoạn dầm.");
+        }
     }
 }

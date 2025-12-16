@@ -146,6 +146,8 @@
     <Compile Include="Commands\SetTypeCommands.cs" />
     <Compile Include="Commands\UtilityCommands.cs" />
     <Compile Include="Core\Algorithms\AngleAlgorithms.cs" />
+    <Compile Include="Core\Algorithms\BeamGroupDetector.cs" />
+    <Compile Include="Core\Algorithms\ContinuousBeamCalculator.cs" />
     <Compile Include="Core\Algorithms\DistanceAlgorithms.cs" />
     <Compile Include="Core\Algorithms\IntersectionAlgorithms.cs" />
     <Compile Include="Core\Algorithms\MergeAlgorithms.cs" />
@@ -155,6 +157,7 @@
     <Compile Include="Core\Data\AuditData.cs" />
     <Compile Include="Core\Data\BeamData.cs" />
     <Compile Include="Core\Data\BeamDesignData.cs" />
+    <Compile Include="Core\Data\BeamGroupData.cs" />
     <Compile Include="Core\Data\ColumnData.cs" />
     <Compile Include="Core\Data\DtsSettings.cs" />
     <Compile Include="Core\Data\ElementData.cs" />
@@ -218,6 +221,9 @@
     <Compile Include="UI\Forms\RebarConfigDialog.cs">
       <SubType>Form</SubType>
     </Compile>
+    <Compile Include="UI\Forms\BeamGroupViewerDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="UI\SettingsManager.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -226,6 +232,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="UI\Resources\RebarConfig.html" />
+    <EmbeddedResource Include="UI\Resources\BeamGroupViewer.html" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Docs\" />

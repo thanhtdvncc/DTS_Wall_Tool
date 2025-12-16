@@ -255,6 +255,43 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public int WebBarMinHeight { get; set; } = 700;
 
+        // ===== CONTINUOUS BEAM RULES (Dầm liên tục) =====
+        /// <summary>
+        /// Ép buộc Layer 1 dùng cùng 1 đường kính cho toàn dải dầm
+        /// </summary>
+        public bool ForceContinuousDiameter { get; set; } = true;
+
+        /// <summary>
+        /// Chỉ dùng 1 loại đường kính trong mỗi mặt cắt (không phối D22+D20)
+        /// </summary>
+        public bool SingleDiameterPerSpan { get; set; } = true;
+
+        /// <summary>
+        /// Cho phép phối 2 loại đường kính (nếu SingleDiameterPerSpan = false)
+        /// </summary>
+        public bool AllowDiameterMixing { get; set; } = false;
+
+        /// <summary>
+        /// Số cấp đường kính chênh lệch tối đa khi phối (1 = D25+D22, 2 = D25+D20)
+        /// </summary>
+        public int MaxDiameterDiff { get; set; } = 1;
+
+        /// <summary>
+        /// Khớp số thanh lớp trên giữa các nhịp (tìm mẫu số chung)
+        /// </summary>
+        public bool MatchTopLayerBars { get; set; } = true;
+
+        // ===== SPLICE SETTINGS (Nối thép - cho tương lai) =====
+        /// <summary>
+        /// Chiều dài thép tiêu chuẩn (mm). Nếu dải dầm > giá trị này → cần nối
+        /// </summary>
+        public double StandardBarLength { get; set; } = 11700;
+
+        /// <summary>
+        /// Hệ số nhân đường kính cho chiều dài nối chồng (40 = 40d)
+        /// </summary>
+        public double LapSpliceMultiplier { get; set; } = 40;
+
         // ===== BACKWARD COMPATIBILITY =====
         // Các property cũ để không break code cũ
         [JsonIgnore] public double TorsionDist_Top { get => TorsionDist_TopBar; set => TorsionDist_TopBar = value; }

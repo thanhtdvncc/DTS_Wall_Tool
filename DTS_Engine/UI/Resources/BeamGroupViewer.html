@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <title>DTS Beam Group Viewer</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --surface: #16213e;
+            --card: #1f2940;
+            --primary: #0f3460;
+            --accent: #e94560;
+            --text: #f1f1f1;
+            --muted: #8892a0;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --danger: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background: var(--surface);
+            padding: 12px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .header-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .nav-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .nav-btn {
+            background: var(--primary);
+            border: none;
+            color: var(--text);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .nav-btn:hover {
+            background: var(--accent);
+        }
+
+        select {
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: var(--text);
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            min-width: 180px;
+        }
+
+        .tools-group {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+        }
+
+        .tool-btn {
+            background: transparent;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .tool-btn:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .canvas-container {
+            flex: 0 0 280px;
+            background: var(--surface);
+            overflow-x: auto;
+            overflow-y: hidden;
+            position: relative;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #beamCanvas {
+            display: block;
+            min-width: 100%;
+        }
+
+        .metrics-bar {
+            background: var(--card);
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            font-size: 13px;
+            flex-wrap: wrap;
+        }
+
+        .metric {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .metric-label {
+            color: var(--muted);
+        }
+
+        .metric-value {
+            font-weight: 600;
+        }
+
+        .metric-value.good {
+            color: var(--success);
+        }
+
+        .metric-value.warn {
+            color: var(--warning);
+        }
+
+        .warning-tag {
+            background: var(--warning);
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .input-section {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px 20px;
+        }
+
+        .input-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .input-header label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 13px;
+        }
+
+        .span-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .span-table th {
+            background: var(--primary);
+            padding: 8px 6px;
+            text-align: center;
+            font-weight: 500;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .span-table td {
+            padding: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+
+        .span-table input[type="text"] {
+            width: 60px;
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: var(--text);
+            padding: 4px 6px;
+            border-radius: 3px;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .span-table input[type="text"]:focus {
+            border-color: var(--accent);
+            outline: none;
+        }
+
+        .span-table .inactive {
+            opacity: 0.4;
+        }
+
+        .span-table .section-label {
+            background: var(--primary);
+            font-weight: 600;
+            text-align: left;
+            padding-left: 10px;
+        }
+
+        footer {
+            background: var(--surface);
+            padding: 12px 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .footer-left,
+        .footer-right {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .btn-secondary {
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+
+        .stirrup-row {
+            margin-top: 15px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .stirrup-row input {
+            width: 140px;
+            background: var(--card);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: var(--text);
+            padding: 6px 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <span class="header-title">DTS Beam Group Viewer</span>
+
+        <div class="nav-group">
+            <button class="nav-btn" onclick="prevGroup()">◀</button>
+            <select id="groupSelect" onchange="loadGroup(this.value)"></select>
+            <button class="nav-btn" onclick="nextGroup()">▶</button>
+        </div>
+
+        <div class="nav-group">
+            <label>Phương án:</label>
+            <select id="optionSelect" onchange="selectOption(this.value)"></select>
+        </div>
+
+        <div class="tools-group">
+            <button class="tool-btn" onclick="copyFormat()">🖌 Copy Format</button>
+            <button class="tool-btn" onclick="bulkEdit()">Bulk Edit</button>
+        </div>
+    </header>
+
+    <main>
+        <div class="canvas-container">
+            <canvas id="beamCanvas" height="260"></canvas>
+        </div>
+
+        <div class="metrics-bar">
+            <div class="metric">
+                <span class="metric-label">Backbone:</span>
+                <span class="metric-value" id="metricBackbone">2D22</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">As:</span>
+                <span class="metric-value" id="metricAs">7.6 cm²</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Waste:</span>
+                <span class="metric-value" id="metricWaste">8.5%</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Weight:</span>
+                <span class="metric-value" id="metricWeight">245 kg</span>
+            </div>
+            <div class="metric">
+                <span class="metric-label">Score:</span>
+                <span class="metric-value good" id="metricScore">92</span>
+            </div>
+            <div id="warningsContainer"></div>
+        </div>
+
+        <div class="input-section">
+            <div class="input-header">
+                <label><input type="checkbox" id="autoApply" checked> Auto Apply (đồng bộ thép suốt)</label>
+                <button class="tool-btn" onclick="selectAllSpans()">Select All</button>
+                <button class="tool-btn" onclick="selectNoneSpans()">Select None</button>
+            </div>
+
+            <table class="span-table" id="spanTable">
+                <thead>
+                    <tr>
+                        <th rowspan="2">Nhịp</th>
+                        <th rowspan="2">Active</th>
+                        <th colspan="5">THÉP TRÊN (Top)</th>
+                        <th colspan="5">THÉP DƯỚI (Bot)</th>
+                        <th colspan="3">Stirrup</th>
+                        <th rowspan="2">Side</th>
+                    </tr>
+                    <tr>
+                        <th>GốiT</th>
+                        <th>L/4T</th>
+                        <th>Giữa</th>
+                        <th>L/4P</th>
+                        <th>GốiP</th>
+                        <th>GốiT</th>
+                        <th>L/4T</th>
+                        <th>Giữa</th>
+                        <th>L/4P</th>
+                        <th>GốiP</th>
+                        <th>Đầu</th>
+                        <th>Giữa</th>
+                        <th>Cuối</th>
+                    </tr>
+                </thead>
+                <tbody id="spanTableBody">
+                </tbody>
+            </table>
+
+            <div class="stirrup-row">
+                <label>Stirrup pattern:</label>
+                <input type="text" id="stirrupPattern" value="a100/150/100" placeholder="a100/150/100">
+                <button class="tool-btn" onclick="applyStirrupPattern()">Apply to Active</button>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="footer-left">
+            <button class="btn btn-secondary" onclick="doSave()">Save</button>
+            <button class="btn btn-secondary" onclick="doExport()">Export</button>
+            <button class="btn btn-secondary" onclick="doImport()">Import</button>
+        </div>
+        <div class="footer-right">
+            <button class="btn btn-secondary" onclick="doCancel()">Cancel</button>
+            <button class="btn btn-primary" onclick="applyToDrawing()">Apply to Drawing</button>
+        </div>
+    </footer>
+
+    <script>
+        // Data from C#
+        const data = __DATA_JSON__;
+        let currentGroupIndex = 0;
+        let currentGroup = null;
+
+        const MIN_SPAN_WIDTH = 250;
+        const PIXELS_PER_METER = 80;
+        const CANVAS_PADDING = 40;
+        const BEAM_HEIGHT = 80;
+        const SUPPORT_HEIGHT = 120;
+
+        function init() {
+            populateGroupSelect();
+            if (data.groups && data.groups.length > 0) {
+                loadGroup(0);
+            }
+        }
+
+        function populateGroupSelect() {
+            const sel = document.getElementById('groupSelect');
+            sel.innerHTML = '';
+            if (!data.groups) return;
+            data.groups.forEach((g, i) => {
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = g.GroupName || `Group ${i + 1}`;
+                sel.appendChild(opt);
+            });
+        }
+
+        function loadGroup(index) {
+            currentGroupIndex = parseInt(index);
+            currentGroup = data.groups[currentGroupIndex];
+            document.getElementById('groupSelect').value = currentGroupIndex;
+
+            populateOptionSelect();
+            renderCanvas();
+            renderTable();
+            updateMetrics();
+        }
+
+        function prevGroup() {
+            if (currentGroupIndex > 0) loadGroup(currentGroupIndex - 1);
+        }
+
+        function nextGroup() {
+            if (currentGroupIndex < data.groups.length - 1) loadGroup(currentGroupIndex + 1);
+        }
+
+        function populateOptionSelect() {
+            const sel = document.getElementById('optionSelect');
+            sel.innerHTML = '';
+            if (!currentGroup.BackboneOptions) return;
+            currentGroup.BackboneOptions.forEach((opt, i) => {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `${opt.OptionName} - ${opt.Description}${i === 0 ? ' (Best)' : ''}`;
+                sel.appendChild(option);
+            });
+            sel.value = currentGroup.SelectedBackboneIndex || 0;
+        }
+
+        function selectOption(index) {
+            currentGroup.SelectedBackboneIndex = parseInt(index);
+            updateMetrics();
+        }
+
+        function renderCanvas() {
+            const canvas = document.getElementById('beamCanvas');
+            const ctx = canvas.getContext('2d');
+
+            if (!currentGroup || !currentGroup.Spans) return;
+
+            // Calculate total width
+            let totalWidth = CANVAS_PADDING * 2;
+            currentGroup.Spans.forEach(span => {
+                totalWidth += Math.max(span.Length * PIXELS_PER_METER, MIN_SPAN_WIDTH);
+            });
+            totalWidth += currentGroup.Supports ? currentGroup.Supports.length * 30 : 0;
+
+            canvas.width = Math.max(totalWidth, 800);
+            const height = canvas.height;
+
+            // Clear
+            ctx.fillStyle = '#16213e';
+            ctx.fillRect(0, 0, canvas.width, height);
+
+            let x = CANVAS_PADDING;
+            const beamY = 80;
+
+            // Draw supports and spans
+            currentGroup.Spans.forEach((span, i) => {
+                const spanWidth = Math.max(span.Length * PIXELS_PER_METER, MIN_SPAN_WIDTH);
+
+                // Left support
+                if (i === 0 && currentGroup.Supports && currentGroup.Supports[0]) {
+                    drawSupport(ctx, x, beamY, currentGroup.Supports[0]);
+                    x += 15;
+                }
+
+                // Beam span
+                drawSpan(ctx, x, beamY, spanWidth, span);
+                x += spanWidth;
+
+                // Right support
+                if (currentGroup.Supports && currentGroup.Supports[i + 1]) {
+                    drawSupport(ctx, x, beamY, currentGroup.Supports[i + 1]);
+                    x += 15;
+                }
+            });
+
+            // Dimension line
+            drawDimensions(ctx, beamY + BEAM_HEIGHT + 40);
+        }
+
+        function drawSupport(ctx, x, y, support) {
+            const w = 20;
+            const h = SUPPORT_HEIGHT;
+
+            ctx.fillStyle = support.Type === 3 ? '#444' : '#0f3460'; // FreeEnd darker
+            ctx.fillRect(x - w / 2, y - 20, w, h);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(support.GridName || support.SupportId, x, y + h - 30);
+        }
+
+        function drawSpan(ctx, x, y, width, span) {
+            // Beam rect
+            ctx.fillStyle = '#1f4068';
+            ctx.strokeStyle = '#e94560';
+            ctx.lineWidth = 2;
+            ctx.fillRect(x, y, width, BEAM_HEIGHT);
+            ctx.strokeRect(x, y, width, BEAM_HEIGHT);
+
+            // Span label
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(span.SpanId, x + width / 2, y + 20);
+
+            // Dimensions text
+            ctx.fillStyle = '#8892a0';
+            ctx.font = '11px sans-serif';
+            ctx.fillText(`${span.Width}x${span.Height}`, x + width / 2, y + 35);
+            ctx.fillText(`L=${span.Length.toFixed(2)}m`, x + width / 2, y + 50);
+
+            // Step change indicator
+            if (span.IsStepChange) {
+                ctx.fillStyle = '#fbbf24';
+                ctx.fillText('⚠️', x + width - 15, y + 15);
+            }
+        }
+
+        function drawDimensions(ctx, y) {
+            if (!currentGroup.Spans) return;
+
+            let x = CANVAS_PADDING;
+            ctx.strokeStyle = '#555';
+            ctx.fillStyle = '#aaa';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+
+            currentGroup.Spans.forEach(span => {
+                const w = Math.max(span.Length * PIXELS_PER_METER, MIN_SPAN_WIDTH);
+
+                // Dimension line
+                ctx.beginPath();
+                ctx.moveTo(x + 15, y);
+                ctx.lineTo(x + w - 15, y);
+                ctx.stroke();
+
+                // Arrows
+                ctx.beginPath();
+                ctx.moveTo(x + 15, y);
+                ctx.lineTo(x + 20, y - 3);
+                ctx.lineTo(x + 20, y + 3);
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(x + w - 15, y);
+                ctx.lineTo(x + w - 20, y - 3);
+                ctx.lineTo(x + w - 20, y + 3);
+                ctx.fill();
+
+                // Text
+                ctx.fillText(`${span.Length.toFixed(2)}m`, x + w / 2, y - 5);
+
+                x += w + 30;
+            });
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('spanTableBody');
+            tbody.innerHTML = '';
+
+            if (!currentGroup || !currentGroup.Spans) return;
+
+            currentGroup.Spans.forEach((span, i) => {
+                const tr = document.createElement('tr');
+                tr.className = span.IsActive === false ? 'inactive' : '';
+                tr.dataset.spanIndex = i;
+
+                // Span ID
+                tr.innerHTML = `<td>${span.SpanId}</td>`;
+
+                // Active checkbox
+                tr.innerHTML += `<td><input type="checkbox" ${span.IsActive !== false ? 'checked' : ''} 
+                    onchange="toggleSpanActive(${i}, this.checked)"></td>`;
+
+                // Top rebar (5 positions)
+                for (let p = 0; p < 5; p++) {
+                    const val = span.TopRebar && span.TopRebar[0] ? span.TopRebar[0][p] || '' : '';
+                    tr.innerHTML += `<td><input type="text" value="${val}" 
+                        onchange="updateRebar(${i}, 'Top', ${p}, this.value)"></td>`;
+                }
+
+                // Bot rebar (5 positions)
+                for (let p = 0; p < 5; p++) {
+                    const val = span.BotRebar && span.BotRebar[0] ? span.BotRebar[0][p] || '' : '';
+                    tr.innerHTML += `<td><input type="text" value="${val}" 
+                        onchange="updateRebar(${i}, 'Bot', ${p}, this.value)"></td>`;
+                }
+
+                // Stirrup (3 positions)
+                for (let p = 0; p < 3; p++) {
+                    const val = span.Stirrup ? span.Stirrup[p] || '' : '';
+                    tr.innerHTML += `<td><input type="text" value="${val}" 
+                        onchange="updateStirrup(${i}, ${p}, this.value)"></td>`;
+                }
+
+                // Side bar
+                tr.innerHTML += `<td><input type="text" value="${span.SideBar || ''}" 
+                    onchange="updateSideBar(${i}, this.value)"></td>`;
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        function updateMetrics() {
+            if (!currentGroup) return;
+
+            const opt = currentGroup.BackboneOptions?.[currentGroup.SelectedBackboneIndex || 0];
+            if (opt) {
+                document.getElementById('metricBackbone').textContent = opt.OptionName;
+                document.getElementById('metricAs').textContent = `${opt.As_Backbone_Top?.toFixed(1) || 0} cm²`;
+                document.getElementById('metricWaste').textContent = `${opt.WastePercentage?.toFixed(1) || 0}%`;
+                document.getElementById('metricWeight').textContent = `${opt.TotalSteelWeight?.toFixed(0) || 0} kg`;
+                document.getElementById('metricScore').textContent = opt.EfficiencyScore?.toFixed(0) || '-';
+            }
+
+            // Warnings
+            const warnings = [];
+            if (currentGroup.HasStepChange) warnings.push('Giật cấp');
+            if (currentGroup.RequiresSplice) warnings.push('Cần nối thép');
+            if (currentGroup.HasConsole) warnings.push('Có đầu thừa');
+
+            document.getElementById('warningsContainer').innerHTML = warnings
+                .map(w => `<span class="warning-tag">⚠️ ${w}</span>`).join(' ');
+        }
+
+        function toggleSpanActive(index, active) {
+            currentGroup.Spans[index].IsActive = active;
+            renderTable();
+        }
+
+        function updateRebar(spanIndex, type, pos, value) {
+            const span = currentGroup.Spans[spanIndex];
+            const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
+            if (!span[arr]) span[arr] = [[], [], []];
+            if (!span[arr][0]) span[arr][0] = [];
+            span[arr][0][pos] = value;
+
+            // Auto apply
+            if (document.getElementById('autoApply').checked && pos < 5) {
+                for (let i = spanIndex + 1; i < currentGroup.Spans.length; i++) {
+                    if (currentGroup.Spans[i].IsActive !== false) {
+                        if (!currentGroup.Spans[i][arr]) currentGroup.Spans[i][arr] = [[], [], []];
+                        if (!currentGroup.Spans[i][arr][0]) currentGroup.Spans[i][arr][0] = [];
+                        currentGroup.Spans[i][arr][0][pos] = value;
+                    }
+                }
+                renderTable();
+            }
+        }
+
+        function updateStirrup(spanIndex, pos, value) {
+            const span = currentGroup.Spans[spanIndex];
+            if (!span.Stirrup) span.Stirrup = [];
+            span.Stirrup[pos] = value;
+        }
+
+        function updateSideBar(spanIndex, value) {
+            currentGroup.Spans[spanIndex].SideBar = value;
+        }
+
+        function selectAllSpans() {
+            currentGroup.Spans.forEach(s => s.IsActive = true);
+            renderTable();
+        }
+
+        function selectNoneSpans() {
+            currentGroup.Spans.forEach(s => s.IsActive = false);
+            renderTable();
+        }
+
+        function applyStirrupPattern() {
+            const pattern = document.getElementById('stirrupPattern').value;
+            const parts = pattern.replace('a', '').split('/');
+
+            currentGroup.Spans.forEach(span => {
+                if (span.IsActive !== false) {
+                    span.Stirrup = [
+                        `d8a${parts[0] || 100}`,
+                        `d8a${parts[1] || 150}`,
+                        `d8a${parts[2] || 100}`
+                    ];
+                }
+            });
+            renderTable();
+        }
+
+        function copyFormat() {
+            alert('Click nhịp nguồn, sau đó click nhịp đích để copy format');
+        }
+
+        function bulkEdit() {
+            alert('Chọn nhiều nhịp (Ctrl+Click trong bảng), sau đó sửa 1 ô để đồng bộ');
+        }
+
+        function doSave() {
+            window.chrome.webview.postMessage('SAVE|' + JSON.stringify(data));
+        }
+
+        function doExport() {
+            window.chrome.webview.postMessage('EXPORT');
+        }
+
+        function doImport() {
+            window.chrome.webview.postMessage('IMPORT');
+        }
+
+        function doCancel() {
+            window.chrome.webview.postMessage('CANCEL');
+        }
+
+        function applyToDrawing() {
+            window.chrome.webview.postMessage('APPLY|' + JSON.stringify(data));
+        }
+
+        // Initialize
+        init();
+    </script>
+</body>
+
+</html>
