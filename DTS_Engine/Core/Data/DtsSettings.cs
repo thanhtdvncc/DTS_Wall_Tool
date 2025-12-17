@@ -542,9 +542,16 @@ namespace DTS_Engine.Core.Data
     /// </summary>
     public class NamingConfig
     {
+        // === LEGACY PROPERTIES (DEPRECATED) ===
+        // Giữ lại để backward compat khi đọc JSON cũ.
+        // Sử dụng StoryNamingConfig.BeamPrefix/GirderPrefix/Suffix thay thế.
+        [Obsolete("Use StoryNamingConfig per-story settings instead")]
         public string BeamPrefix { get; set; } = "B";
+        [Obsolete("Use StoryNamingConfig per-story settings instead")]
         public string GirderPrefix { get; set; } = "G";
+        [Obsolete("Use StoryNamingConfig per-story settings instead")]
         public string ColumnPrefix { get; set; } = "C";
+        [Obsolete("Use StoryNamingConfig per-story settings instead")]
         public string BeamSuffix { get; set; } = "";
 
         /// <summary>
@@ -989,6 +996,11 @@ namespace DTS_Engine.Core.Data
         /// Prefix cho dầm chính (Girder). VD: "G" → G101
         /// </summary>
         public string GirderPrefix { get; set; } = "G";
+
+        /// <summary>
+        /// Prefix cho cột (Column). VD: "C" → C101
+        /// </summary>
+        public string ColumnPrefix { get; set; } = "C";
 
         /// <summary>
         /// Suffix (nếu cần). VD: "_L1" → B101_L1

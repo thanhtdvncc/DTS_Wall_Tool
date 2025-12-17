@@ -23,6 +23,24 @@ namespace DTS_Engine.Core.Algorithms
             if (groups == null || groups.Count == 0) return;
             if (settings == null) settings = DtsSettings.Instance;
 
+            // 0. ASSIGN STORY TO EACH GROUP based on LevelZ (from XData origin)
+            foreach (var group in groups)
+            {
+                // Get Z from group (set during import from XData origin)
+                double z = group.LevelZ;
+
+                // Find matching story using tolerance
+                var storyConfig = settings.GetStoryConfig(z);
+                if (storyConfig != null)
+                {
+                    group.StoryName = storyConfig.StoryName;
+                }
+                else if (string.IsNullOrEmpty(group.StoryName))
+                {
+                    group.StoryName = "Unknown";
+                }
+            }
+
             // 1. Group by Story
             var storyBuckets = groups
                 .GroupBy(g => g.StoryName ?? "Unknown")

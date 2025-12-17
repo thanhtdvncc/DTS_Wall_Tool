@@ -27,9 +27,9 @@ namespace DTS_Engine.Core.Algorithms
         /// <param name="settings">Cài đặt</param>
         /// <returns>Danh sách nhóm dầm</returns>
         public static List<BeamGroup> DetectGroups(
-            List<BeamData> beams,
+            List<BeamGeometry> beams,
             List<AxisLine> axes,
-            List<SupportEntity> supports,
+            List<SupportGeometry> supports,
             DtsSettings settings)
         {
             var groups = new List<BeamGroup>();
@@ -73,7 +73,7 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// Lấy các dầm nằm trong buffer zone của trục
         /// </summary>
-        private static List<BeamData> QueryBeamsInBuffer(List<BeamData> beams, AxisLine axis, double tolerance)
+        private static List<BeamGeometry> QueryBeamsInBuffer(List<BeamGeometry> beams, AxisLine axis, double tolerance)
         {
             return beams.Where(b => IsBeamOnAxis(b, axis, tolerance)).ToList();
         }
@@ -81,7 +81,7 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// Kiểm tra dầm có nằm trên trục không
         /// </summary>
-        private static bool IsBeamOnAxis(BeamData beam, AxisLine axis, double tolerance)
+        private static bool IsBeamOnAxis(BeamGeometry beam, AxisLine axis, double tolerance)
         {
             // Tính khoảng cách từ trung điểm dầm đến trục
             var midpoint = new Point2D(
@@ -111,9 +111,9 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// Nối các dầm thẳng hàng thành chuỗi
         /// </summary>
-        private static List<List<BeamData>> ChainCollinearBeams(List<BeamData> beams)
+        private static List<List<BeamGeometry>> ChainCollinearBeams(List<BeamGeometry> beams)
         {
-            var chains = new List<List<BeamData>>();
+            var chains = new List<List<BeamGeometry>>();
             var used = new HashSet<string>();
 
             // Sắp xếp theo vị trí (X hoặc Y tùy hướng)
@@ -123,7 +123,7 @@ namespace DTS_Engine.Core.Algorithms
             {
                 if (used.Contains(beam.Handle)) continue;
 
-                var chain = new List<BeamData> { beam };
+                var chain = new List<BeamGeometry> { beam };
                 used.Add(beam.Handle);
 
                 // Tìm các dầm nối tiếp
@@ -158,7 +158,7 @@ namespace DTS_Engine.Core.Algorithms
         /// Kiểm tra 2 dầm có nối tiếp VÀ thẳng hàng không.
         /// Dầm gấp khúc (góc > 5°) sẽ bị từ chối để tránh lỗi Vector Projection.
         /// </summary>
-        private static bool AreBeamsConnected(BeamData b1, BeamData b2)
+        private static bool AreBeamsConnected(BeamGeometry b1, BeamGeometry b2)
         {
             // 1. Kiểm tra khoảng cách - điểm cuối b1 gần điểm đầu b2
             double dist1 = Distance(b1.EndX, b1.EndY, b2.StartX, b2.StartY);
@@ -202,9 +202,9 @@ namespace DTS_Engine.Core.Algorithms
         /// Tạo BeamGroup từ chuỗi dầm
         /// </summary>
         private static BeamGroup CreateGroupFromChain(
-            List<BeamData> chain,
+            List<BeamGeometry> chain,
             AxisLine axis,
-            List<SupportEntity> allSupports,
+            List<SupportGeometry> allSupports,
             DtsSettings settings)
         {
             if (chain.Count == 0) return null;
@@ -221,6 +221,10 @@ namespace DTS_Engine.Core.Algorithms
             group.Width = chain.First().Width;
             group.Height = chain.First().Height;
             group.GroupType = chain.First().Width >= 300 ? "Girder" : "Beam";
+
+            // === SMART NAMING: Populate LevelZ for story matching ===
+            // Get Z from first beam's StartZ
+            group.LevelZ = chain.First().StartZ;
 
             // Tính TotalLength
             group.TotalLength = chain.Sum(b => b.Length) / 1000.0; // Convert to m
@@ -247,7 +251,7 @@ namespace DTS_Engine.Core.Algorithms
         /// - Duyệt qua các Nút (đầu/cuối mỗi đoạn dầm)
         /// - Tại mỗi nút: Check va chạm Column/Wall → Girder → FreeEnd
         /// </summary>
-        public static void DetectSupports(BeamGroup group, List<BeamData> chain, List<SupportEntity> allSupports)
+        public static void DetectSupports(BeamGroup group, List<BeamGeometry> chain, List<SupportGeometry> allSupports)
         {
             const double NODE_HIT_TOLERANCE = 50; // mm - Vùng hit test tại node
 
@@ -376,7 +380,7 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// Tạo SpanData từ danh sách gối
         /// </summary>
-        private static void CreateSpans(BeamGroup group, List<BeamData> chain, DtsSettings settings)
+        private static void CreateSpans(BeamGroup group, List<BeamGeometry> chain, DtsSettings settings)
         {
             var supports = group.Supports;
             if (supports.Count < 2) return;
@@ -435,13 +439,13 @@ namespace DTS_Engine.Core.Algorithms
         /// Tìm các đoạn dầm vật lý thuộc nhịp logic (dựa theo vị trí tọa độ).
         /// Đoạn dầm thuộc nhịp nếu phần lớn chiều dài nằm giữa startPos và endPos.
         /// </summary>
-        private static List<BeamData> FindSegmentsInSpan(
-            List<BeamData> chain,
+        private static List<BeamGeometry> FindSegmentsInSpan(
+            List<BeamGeometry> chain,
             double startPos,
             double endPos)
         {
             if (chain == null || chain.Count == 0)
-                return new List<BeamData>();
+                return new List<BeamGeometry>();
 
             // Xác định hướng chính của chain (X hay Y)
             var first = chain.First();
@@ -463,7 +467,7 @@ namespace DTS_Engine.Core.Algorithms
             double dirX = chainDX / chainLength;
             double dirY = chainDY / chainLength;
 
-            var result = new List<BeamData>();
+            var result = new List<BeamGeometry>();
 
             foreach (var beam in chain)
             {
@@ -531,8 +535,8 @@ namespace DTS_Engine.Core.Algorithms
         /// Nhóm các dầm còn lại không nằm trên trục
         /// </summary>
         private static List<BeamGroup> ChainRemainingBeams(
-            List<BeamData> beams,
-            List<SupportEntity> supports,
+            List<BeamGeometry> beams,
+            List<SupportGeometry> supports,
             DtsSettings settings)
         {
             var groups = new List<BeamGroup>();
@@ -594,36 +598,9 @@ namespace DTS_Engine.Core.Algorithms
         }
     }
 
-    // ===== HELPER CLASSES =====
-
-    /// <summary>
-    /// Dữ liệu dầm đơn giản (từ CAD/SAP)
-    /// </summary>
-    public class BeamData
-    {
-        public string Handle { get; set; }
-        public string Name { get; set; }
-        public double StartX { get; set; }
-        public double StartY { get; set; }
-        public double EndX { get; set; }
-        public double EndY { get; set; }
-        public double Width { get; set; }  // mm
-        public double Height { get; set; } // mm
-        public double Length => Math.Sqrt(Math.Pow(EndX - StartX, 2) + Math.Pow(EndY - StartY, 2));
-    }
-
-    /// <summary>
-    /// Gối đỡ entity (Column, Wall, Beam)
-    /// </summary>
-    public class SupportEntity
-    {
-        public string Handle { get; set; }
-        public string Name { get; set; }
-        public string Type { get; set; }   // "Column", "Wall", "Beam"
-        public double CenterX { get; set; }
-        public double CenterY { get; set; }
-        public double Width { get; set; }  // mm (theo hướng X)
-        public double Depth { get; set; }  // mm (theo hướng Y)
-        public string GridName { get; set; }
-    }
+    // ===== HELPER CLASSES MOVED TO Core/Data =====
+    // BeamGeometry → Core.Data.BeamGeometry
+    // SupportGeometry → Core.Data.SupportGeometry
+    // ISO 25010: Maintainability - Centralized DTOs for reusability
 }
+

@@ -164,6 +164,8 @@
     <Compile Include="Core\Data\AuditData.cs" />
     <Compile Include="Core\Data\BeamData.cs" />
     <Compile Include="Core\Data\BeamDesignData.cs" />
+    <Compile Include="Core\Data\BeamGeometry.cs" />
+    <Compile Include="Core\Data\SupportGeometry.cs" />
     <Compile Include="Core\Data\BeamGroupData.cs" />
     <Compile Include="Core\Data\ColumnData.cs" />
     <Compile Include="Core\Data\DtsSettings.cs" />

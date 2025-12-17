@@ -701,40 +701,60 @@ namespace DTS_Engine.Commands
                 .Select(x => new { Group = x.Group, Representative = x.Group.First() })
                 .ToList();
 
-            // Đặt tên
-            int girderCount = 1, beamCount = 1;
-            string girderPrefix = settings.GirderPrefix ?? "G";
-            string beamPrefix = settings.BeamPrefix ?? "B";
-            string suffix = settings.BeamSuffix ?? "";
+            // === SMART NAMING: Group by Story using Z coordinate ===
+            // Get first beam's Z to determine story (all beams in a group are at same Z)
+            var groupsByStory = sortedGroups
+                .GroupBy(g =>
+                {
+                    var firstBeam = g.Group.First();
+                    return Math.Round(firstBeam.Mid.Z / 100) * 100; // Round to 100mm
+                })
+                .OrderBy(s => s.Key);
 
             UsingTransaction(tr =>
             {
                 var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
 
-                foreach (var group in sortedGroups)
+                foreach (var storyGroup in groupsByStory)
                 {
-                    bool isGirder = group.Group.First().IsGirder;
-                    string prefix = isGirder ? girderPrefix : beamPrefix;
-                    int number = isGirder ? girderCount++ : beamCount++;
-                    string beamName = $"{prefix}{number}{suffix}";
+                    double levelZ = storyGroup.Key;
 
-                    // Sort beams within group theo thứ tự
-                    var sortedMembers = group.Group.ToList();
-                    sortedMembers.Sort((a, b) => comparePoints(a.Mid, b.Mid));
+                    // Get story config for this Z level (from DtsSettings)
+                    var storyConfig = DtsSettings.Instance.GetStoryConfig(levelZ);
+                    string beamPrefix = storyConfig?.BeamPrefix ?? "B";
+                    string girderPrefix = storyConfig?.GirderPrefix ?? "G";
+                    string suffix = storyConfig?.Suffix ?? "";
+                    int startIndex = storyConfig?.StartIndex ?? 1;
 
-                    foreach (var beam in sortedMembers)
+                    int girderCount = startIndex, beamCount = startIndex;
+
+                    foreach (var group in storyGroup)
                     {
-                        var curve = tr.GetObject(beam.Id, OpenMode.ForWrite) as Curve;
-                        if (curve == null) continue;
+                        bool isGirder = group.Group.First().IsGirder;
+                        string prefix = isGirder ? girderPrefix : beamPrefix;
+                        int number = isGirder ? girderCount++ : beamCount++;
+                        string beamName = $"{prefix}{number}{suffix}";
 
-                        Point3d pStart = curve.StartPoint;
-                        Point3d pEnd = curve.EndPoint;
-                        LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, beamName, LabelPosition.MiddleBottom);
+                        // Sort beams within group theo thứ tự
+                        var sortedMembers = group.Group.ToList();
+                        sortedMembers.Sort((a, b) => comparePoints(a.Mid, b.Mid));
+
+                        foreach (var beam in sortedMembers)
+                        {
+                            var curve = tr.GetObject(beam.Id, OpenMode.ForWrite) as Curve;
+                            if (curve == null) continue;
+
+                            Point3d pStart = curve.StartPoint;
+                            Point3d pEnd = curve.EndPoint;
+                            LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, beamName, LabelPosition.MiddleBottom);
+                        }
                     }
+
+                    WriteMessage($"  Story Z={levelZ:F0}mm: {girderCount - startIndex} Girder, {beamCount - startIndex} Beam");
                 }
             });
 
-            WriteSuccess($"Đã đặt tên: {girderCount - 1} Girder ({girderPrefix}), {beamCount - 1} Beam ({beamPrefix}).");
+            WriteSuccess($"Đã đặt tên theo StoryConfigs. Dùng Settings → Naming để cấu hình prefix/suffix theo tầng.");
             WriteMessage($"Quy tắc: Corner={settings.SortCorner}, Direction={(settings.SortDirection == 0 ? "Horizontal" : "Vertical")}");
         }
 
@@ -946,6 +966,116 @@ namespace DTS_Engine.Commands
             WriteSuccess($"Đã cập nhật {successCount} dầm về SAP2000.");
         }
 
+        /// <summary>
+        /// SMART SECTION SYNC: Đồng bộ sections SAP2000 theo BeamGroup names.
+        /// - Tạo sections mới nếu chưa có
+        /// - Cập nhật dimensions nếu khác
+        /// - Xóa sections rác không còn sử dụng
+        /// </summary>
+        [CommandMethod("DTS_SYNC_SAP_SECTIONS")]
+        public void DTS_SYNC_SAP_SECTIONS()
+        {
+            WriteMessage("=== SMART SECTION SYNC: SAP2000 ===");
+
+            // 1. Check SAP Connection
+            if (!SapUtils.IsConnected)
+            {
+                if (!SapUtils.Connect(out string msg))
+                {
+                    WriteError(msg);
+                    return;
+                }
+            }
+
+            var engine = new SapDesignEngine();
+            if (!engine.IsReady)
+            {
+                WriteError("Không thể khởi tạo SAP Design Engine.");
+                return;
+            }
+
+            // 2. Get all BeamGroups from DWG
+            var groups = GetOrCreateBeamGroups();
+            if (groups.Count == 0)
+            {
+                WriteMessage("Không có BeamGroup nào trong bản vẽ.");
+                return;
+            }
+
+            WriteMessage($"Tìm thấy {groups.Count} BeamGroups trong bản vẽ.");
+
+            // 3. Get material (hardcoded for now, TODO: add to settings)
+            string material = "C25";
+
+            // 4. Sync sections
+            int created = 0, updated = 0, noChange = 0, failed = 0;
+
+            foreach (var group in groups)
+            {
+                // Skip unnamed groups
+                if (string.IsNullOrEmpty(group.Name))
+                {
+                    failed++;
+                    continue;
+                }
+
+                var result = engine.EnsureSection(group.Name, group.Width, group.Height, material);
+
+                if (result.Success)
+                {
+                    switch (result.Action)
+                    {
+                        case SectionAction.Created:
+                            created++;
+                            WriteMessage($"  [+] {result.Message}");
+                            break;
+                        case SectionAction.Updated:
+                            updated++;
+                            WriteMessage($"  [~] {result.Message}");
+                            break;
+                        case SectionAction.NoChange:
+                            noChange++;
+                            break;
+                    }
+                }
+                else
+                {
+                    failed++;
+                    WriteError($"  [!] {group.Name}: {result.Message}");
+                }
+            }
+
+            // 5. Ask about cleanup
+            var ed = AcadUtils.Ed;
+            var cleanupOpt = new PromptKeywordOptions("\nXóa sections không còn sử dụng? [Yes/No] <No>: ");
+            cleanupOpt.Keywords.Add("Yes");
+            cleanupOpt.Keywords.Add("No");
+            cleanupOpt.Keywords.Default = "No";
+            cleanupOpt.AllowNone = true;
+
+            var cleanupRes = ed.GetKeywords(cleanupOpt);
+            if (cleanupRes.Status == PromptStatus.OK && cleanupRes.StringResult == "Yes")
+            {
+                int deletedCount = engine.CleanupUnusedSections(null);
+                if (deletedCount > 0)
+                {
+                    WriteMessage($"\n🗑️ Đã xóa {deletedCount} sections rác.");
+                }
+                else
+                {
+                    WriteMessage("Không có section rác cần xóa.");
+                }
+            }
+
+            // 6. Summary
+            WriteSuccess($"\n=== KẾT QUẢ SYNC ===");
+            WriteMessage($"  ✅ Tạo mới: {created} sections");
+            WriteMessage($"  🔄 Cập nhật: {updated} sections");
+            WriteMessage($"  ⏭️ Không đổi: {noChange} sections");
+            if (failed > 0)
+                WriteError($"  ❌ Thất bại: {failed} sections");
+        }
+
         [CommandMethod("DTS_REBAR_SHOW")]
         public void DTS_REBAR_SHOW()
         {
@@ -1125,8 +1255,8 @@ namespace DTS_Engine.Commands
             }
 
             string groupName = nameResult.StringResult;
-            // Use full namespace to avoid ambiguity with Core.Algorithms.BeamData
-            var beamDataList = new List<Core.Algorithms.BeamData>();
+            // Use full namespace to avoid ambiguity with Core.Data.BeamGeometry
+            var beamDataList = new List<Core.Data.BeamGeometry>();
 
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -1164,7 +1294,7 @@ namespace DTS_Engine.Commands
                         h = beamXData.Height ?? h;
                     }
 
-                    beamDataList.Add(new Core.Algorithms.BeamData
+                    beamDataList.Add(new Core.Data.BeamGeometry
                     {
                         Handle = ent.Handle.ToString(),
                         Name = ent.Handle.ToString(),
@@ -1212,7 +1342,7 @@ namespace DTS_Engine.Commands
         /// Tạo BeamGroup thủ công từ danh sách BeamData, bao gồm detection logic
         /// Sorting theo NamingConfig.SortCorner và SortDirection
         /// </summary>
-        private BeamGroup CreateManualBeamGroup(string name, List<Core.Algorithms.BeamData> beamDataList)
+        private BeamGroup CreateManualBeamGroup(string name, List<Core.Data.BeamGeometry> beamDataList)
         {
             var settings = DtsSettings.Instance;
             var namingCfg = settings.Naming ?? new NamingConfig();
@@ -1239,6 +1369,9 @@ namespace DTS_Engine.Commands
             double dx = Math.Abs(last.EndX - first.StartX);
             double dy = Math.Abs(last.EndY - first.StartY);
             group.Direction = dy > dx ? "Y" : "X";
+
+            // === SMART NAMING: Populate LevelZ for story matching ===
+            group.LevelZ = first.StartZ;
 
             // Check splice requirement
             double standardLength = settings.Beam?.StandardBarLength ?? 11700;
@@ -1310,7 +1443,7 @@ namespace DTS_Engine.Commands
 
                     // Find beams that fall within this span's position range
                     double cumPos = 0;
-                    var spanBeams = new List<Core.Algorithms.BeamData>();
+                    var spanBeams = new List<Core.Data.BeamGeometry>();
                     foreach (var b in sortedBeams)
                     {
                         double beamMidPos = cumPos + (b.Length / 1000.0) / 2;
@@ -1722,7 +1855,7 @@ namespace DTS_Engine.Commands
         /// </summary>
         private BeamGroup AutoCreateGroupFromCalculatedBeams(ICollection<ObjectId> calculatedIds)
         {
-            var beamDataList = new List<Core.Algorithms.BeamData>();
+            var beamDataList = new List<Core.Data.BeamGeometry>();
             var settings = DtsSettings.Instance;
 
             UsingTransaction(tr =>
@@ -1750,7 +1883,7 @@ namespace DTS_Engine.Commands
                         }
                         else continue;
 
-                        beamDataList.Add(new Core.Algorithms.BeamData
+                        beamDataList.Add(new Core.Data.BeamGeometry
                         {
                             Handle = obj.Handle.ToString(),
                             Name = data.SapElementName ?? obj.Handle.ToString(),
@@ -2063,11 +2196,11 @@ namespace DTS_Engine.Commands
         /// SortCorner: 0=TopLeft, 1=TopRight, 2=BottomLeft, 3=BottomRight
         /// SortDirection: 0=Horizontal(X first), 1=Vertical(Y first)
         /// </summary>
-        private List<Core.Algorithms.BeamData> SortBeamsByNamingConfig(
-            List<Core.Algorithms.BeamData> beams, NamingConfig cfg)
+        private List<Core.Data.BeamGeometry> SortBeamsByNamingConfig(
+            List<Core.Data.BeamGeometry> beams, NamingConfig cfg)
         {
             if (beams == null || beams.Count == 0)
-                return new List<Core.Algorithms.BeamData>();
+                return new List<Core.Data.BeamGeometry>();
 
             int corner = cfg?.SortCorner ?? 0;
             int direction = cfg?.SortDirection ?? 0;
@@ -2098,9 +2231,9 @@ namespace DTS_Engine.Commands
         /// Query hỗ trợ (Column, Wall) từ database dựa trên khu vực dầm.
         /// OPTIMIZED: Dùng SelectCrossingWindow + XData filter thay vì duyệt toàn bộ ModelSpace.
         /// </summary>
-        private List<SupportEntity> QuerySupportsFromDrawing(List<Core.Algorithms.BeamData> beams)
+        private List<SupportGeometry> QuerySupportsFromDrawing(List<Core.Data.BeamGeometry> beams)
         {
-            var supports = new List<SupportEntity>();
+            var supports = new List<SupportGeometry>();
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null || beams == null || beams.Count == 0) return supports;
 
@@ -2196,7 +2329,7 @@ namespace DTS_Engine.Commands
                                 w = wallData.Thickness ?? w;
                             }
 
-                            supports.Add(new SupportEntity
+                            supports.Add(new SupportGeometry
                             {
                                 Handle = ent.Handle.ToString(),
                                 Name = ent.Handle.ToString(),
@@ -2351,7 +2484,7 @@ namespace DTS_Engine.Commands
                                      .ToList();
 
                 // Collect BeamData for CreateManualBeamGroup
-                var beamDataList = new List<Core.Algorithms.BeamData>();
+                var beamDataList = new List<Core.Data.BeamGeometry>();
 
                 UsingTransaction(tr =>
                 {
@@ -2362,7 +2495,7 @@ namespace DTS_Engine.Commands
 
                         var xdata = XDataUtils.ReadElementData(curve) as BeamResultData;
 
-                        beamDataList.Add(new Core.Algorithms.BeamData
+                        beamDataList.Add(new Core.Data.BeamGeometry
                         {
                             Handle = curve.Handle.ToString(),
                             Name = xdata?.SapElementName ?? curve.Handle.ToString(),
@@ -2513,3 +2646,4 @@ namespace DTS_Engine.Commands
         }
     }
 }
+

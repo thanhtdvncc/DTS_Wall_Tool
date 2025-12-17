@@ -297,10 +297,11 @@ namespace DTS_Engine.UI.Forms
                         result.Add(new Core.Data.StoryNamingConfig
                         {
                             StoryName = z.Name,
-                            Elevation = z.Coordinate * 1000, // m -> mm if needed
-                            StartIndex = idx * 100,
+                            Elevation = z.Coordinate, // Already in mm from SapUtils.GetStories
+                            StartIndex = idx, // Start at 1 for each story
                             BeamPrefix = "B",
                             GirderPrefix = "G",
+                            ColumnPrefix = "C",
                             Suffix = ""
                         });
                         idx++;

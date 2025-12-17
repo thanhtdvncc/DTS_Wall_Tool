@@ -47,14 +47,14 @@ namespace DTS_Engine.Core.Engines
                     int numberItems = 0;
                     string[] frames = null;
                     double[] location = null;
-                    
+
                     // Flexure (Uốn)
                     string[] topCombo = null; double[] topArea = null; // TopArea [L2]
                     string[] botCombo = null; double[] botArea = null; // BotArea [L2]
-                    
+
                     // Shear (Cắt)
                     string[] vMajorCombo = null; double[] vMajorArea = null; // VmajorArea [L2/L] -> Av/s
-                    
+
                     // Torsion (Xoắn)
                     string[] tlCombo = null; double[] tlArea = null; // TLArea [L2] -> Total Longitudinal Al
                     string[] ttCombo = null; double[] ttArea = null; // TTArea [L2/L] -> Transverse At/s
@@ -64,11 +64,11 @@ namespace DTS_Engine.Core.Engines
 
                     // Gọi API chuẩn theo thứ tự tham số tài liệu cung cấp
                     int ret = _model.DesignConcrete.GetSummaryResultsBeam(
-                        name, 
-                        ref numberItems, 
-                        ref frames, 
+                        name,
+                        ref numberItems,
+                        ref frames,
                         ref location,
-                        ref topCombo, ref topArea, 
+                        ref topCombo, ref topArea,
                         ref botCombo, ref botArea,
                         ref vMajorCombo, ref vMajorArea, // Shear
                         ref tlCombo, ref tlArea,         // Torsion Long
@@ -95,8 +95,8 @@ namespace DTS_Engine.Core.Engines
                             // Cố gắng lấy properties hình chữ nhật
                             if (_model.PropFrame.GetRectangle(propName, ref propName, ref matProp, ref t3, ref t2, ref color, ref notes, ref guid) == 0)
                             {
-                                data.SectionHeight = t3; 
-                                data.Width = t2;         
+                                data.SectionHeight = t3;
+                                data.Width = t2;
                             }
                             else
                             {
@@ -132,7 +132,7 @@ namespace DTS_Engine.Core.Engines
 
                             data.TopArea[z] = GetMaxInZone(topArea, start, end);
                             data.BotArea[z] = GetMaxInZone(botArea, start, end);
-                            
+
                             // Mapping chuẩn theo tài liệu:
                             data.ShearArea[z] = GetMaxInZone(vMajorArea, start, end); // Av/s (Shear Only)
                             data.TorsionArea[z] = GetMaxInZone(tlArea, start, end);   // Al (Total Long Torsion)
@@ -291,5 +291,224 @@ namespace DTS_Engine.Core.Engines
             System.Diagnostics.Debug.WriteLine($"[SapDesignEngine] WARNING: Cannot clone section '{sourceName}' - not a rectangular section (T, I, etc. not supported).");
             return false;
         }
+
+        #region Smart Section Management
+
+        /// <summary>
+        /// Lấy danh sách tất cả Frame Sections trong model.
+        /// </summary>
+        public List<string> GetAllBeamSections()
+        {
+            var sections = new List<string>();
+            if (_model == null) return sections;
+
+            int count = 0;
+            string[] names = null;
+            if (_model.PropFrame.GetNameList(ref count, ref names) == 0 && names != null)
+            {
+                sections.AddRange(names);
+            }
+            return sections;
+        }
+
+        /// <summary>
+        /// Lấy danh sách sections đang được sử dụng bởi các frames.
+        /// </summary>
+        public HashSet<string> GetUsedSections()
+        {
+            var usedSections = new HashSet<string>();
+            if (_model == null) return usedSections;
+
+            // Lấy tất cả frames
+            int count = 0;
+            string[] frameNames = null;
+            _model.FrameObj.GetNameList(ref count, ref frameNames);
+
+            if (frameNames == null) return usedSections;
+
+            foreach (var frame in frameNames)
+            {
+                string propName = "";
+                string sAuto = "";
+                if (_model.FrameObj.GetSection(frame, ref propName, ref sAuto) == 0)
+                {
+                    usedSections.Add(propName);
+                }
+            }
+            return usedSections;
+        }
+
+        /// <summary>
+        /// Đảm bảo section tồn tại với đúng dimensions. Nếu chưa có → tạo mới.
+        /// Trả về true nếu section sẵn sàng sử dụng.
+        /// </summary>
+        /// <param name="sectionName">Tên section (VD: "B101", "G205")</param>
+        /// <param name="width">Bề rộng (mm)</param>
+        /// <param name="height">Chiều cao (mm)</param>
+        /// <param name="material">Vật liệu (VD: "C25", "C30")</param>
+        public SectionSyncResult EnsureSection(string sectionName, double width, double height, string material = "C25")
+        {
+            if (_model == null)
+                return new SectionSyncResult { Success = false, Message = "SAP Model not connected" };
+
+            try
+            {
+                // Convert mm -> m (SAP default units)
+                double widthM = width / 1000.0;
+                double heightM = height / 1000.0;
+
+                if (SectionExists(sectionName))
+                {
+                    // Kiểm tra dimensions có khớp không
+                    string matProp = "";
+                    string fileName = "";
+                    double t3 = 0, t2 = 0;
+                    int color = -1;
+                    string notes = "", guid = "";
+
+                    if (_model.PropFrame.GetRectangle(sectionName, ref fileName, ref matProp, ref t3, ref t2, ref color, ref notes, ref guid) == 0)
+                    {
+                        // So sánh dimensions (tolerance 1mm = 0.001m)
+                        bool sameSize = Math.Abs(t3 - heightM) < 0.001 && Math.Abs(t2 - widthM) < 0.001;
+
+                        if (sameSize)
+                        {
+                            return new SectionSyncResult
+                            {
+                                Success = true,
+                                Action = SectionAction.NoChange,
+                                Message = $"Section '{sectionName}' already exists with correct size"
+                            };
+                        }
+                        else
+                        {
+                            // Size khác → Update
+                            if (_model.PropFrame.SetRectangle(sectionName, material, heightM, widthM, -1, "", "") == 0)
+                            {
+                                return new SectionSyncResult
+                                {
+                                    Success = true,
+                                    Action = SectionAction.Updated,
+                                    Message = $"Section '{sectionName}' updated: {t2 * 1000:F0}x{t3 * 1000:F0} → {width:F0}x{height:F0}"
+                                };
+                            }
+                            else
+                            {
+                                return new SectionSyncResult
+                                {
+                                    Success = false,
+                                    Message = $"Failed to update section '{sectionName}'"
+                                };
+                            }
+                        }
+                    }
+                }
+
+                // Section chưa tồn tại → Tạo mới
+                if (_model.PropFrame.SetRectangle(sectionName, material, heightM, widthM, -1, "", "") == 0)
+                {
+                    return new SectionSyncResult
+                    {
+                        Success = true,
+                        Action = SectionAction.Created,
+                        Message = $"Section '{sectionName}' created: {width:F0}x{height:F0}"
+                    };
+                }
+                else
+                {
+                    return new SectionSyncResult
+                    {
+                        Success = false,
+                        Message = $"Failed to create section '{sectionName}'"
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                return new SectionSyncResult
+                {
+                    Success = false,
+                    Message = $"Error: {ex.Message}"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Xóa các sections không còn được sử dụng bởi bất kỳ frame nào.
+        /// Chỉ xóa sections có pattern "_DTS" hoặc theo prefix cụ thể.
+        /// </summary>
+        /// <param name="prefixFilter">Chỉ xóa sections có prefix này (VD: "B", "G"). Null = xóa tất cả unused.</param>
+        /// <returns>Số lượng sections đã xóa</returns>
+        public int CleanupUnusedSections(string prefixFilter = null)
+        {
+            if (_model == null) return 0;
+
+            var allSections = GetAllBeamSections();
+            var usedSections = GetUsedSections();
+            int deletedCount = 0;
+
+            foreach (var section in allSections)
+            {
+                // Bỏ qua sections đang sử dụng
+                if (usedSections.Contains(section)) continue;
+
+                // Nếu có filter, chỉ xóa sections match filter
+                if (!string.IsNullOrEmpty(prefixFilter) && !section.StartsWith(prefixFilter))
+                    continue;
+
+                // Thử xóa section
+                try
+                {
+                    if (_model.PropFrame.Delete(section) == 0)
+                    {
+                        deletedCount++;
+                        System.Diagnostics.Debug.WriteLine($"[SapDesignEngine] Deleted unused section: {section}");
+                    }
+                }
+                catch
+                {
+                    // SAP có thể không cho xóa một số sections đặc biệt
+                }
+            }
+
+            return deletedCount;
+        }
+
+        /// <summary>
+        /// Gán section cho danh sách frames.
+        /// </summary>
+        public int AssignSectionToFrames(string sectionName, List<string> frameNames)
+        {
+            if (_model == null || frameNames == null) return 0;
+
+            int successCount = 0;
+            foreach (var frame in frameNames)
+            {
+                if (_model.FrameObj.SetSection(frame, sectionName, eItemType.Objects) == 0)
+                    successCount++;
+            }
+            return successCount;
+        }
+
+        #endregion
     }
+
+    #region Section Sync Result
+
+    public enum SectionAction
+    {
+        NoChange,
+        Created,
+        Updated,
+        Deleted
+    }
+
+    public class SectionSyncResult
+    {
+        public bool Success { get; set; }
+        public SectionAction Action { get; set; }
+        public string Message { get; set; }
+    }
+
+    #endregion
 }

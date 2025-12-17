@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using DTS_Engine.Core.Data;
+using DTS_Engine.Core.Engines;
+using DTS_Engine.Core.Utils;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Newtonsoft.Json;
@@ -204,6 +207,78 @@ namespace DTS_Engine.UI.Forms
                 catch { }
                 return;
             }
+
+            // === REALTIME SAP SYNC: Auto-sync section when design is locked ===
+            if (message.StartsWith("LOCK_DESIGN|"))
+            {
+                try
+                {
+                    string idxStr = message.Substring(12);
+                    if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
+                    {
+                        var group = _groups[groupIndex];
+                        this.BeginInvoke(new Action(() => SyncSectionToSAP(group)));
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            if (message.StartsWith("UNLOCK_DESIGN|"))
+            {
+                // Optional: Could delete section or just log
+                System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design unlocked");
+                return;
+            }
+        }
+
+        /// <summary>
+        /// REALTIME SAP SYNC: Tạo/cập nhật section trong SAP khi user chốt phương án.
+        /// </summary>
+        private void SyncSectionToSAP(BeamGroup group)
+        {
+            if (group == null || string.IsNullOrEmpty(group.Name)) return;
+
+            // Check SAP connection
+            if (!SapUtils.IsConnected)
+            {
+                if (!SapUtils.Connect(out string msg))
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SapSync] Cannot connect: {msg}");
+                    return;
+                }
+            }
+
+            var engine = new SapDesignEngine();
+            if (!engine.IsReady) return;
+
+            // Create/update section
+            var result = engine.EnsureSection(group.Name, group.Width, group.Height, "C25");
+
+            if (result.Success)
+            {
+                string actionText = result.Action == SectionAction.Created ? "Created" :
+                                   result.Action == SectionAction.Updated ? "Updated" : "OK";
+                System.Diagnostics.Debug.WriteLine($"[SapSync] Section '{group.Name}': {actionText}");
+
+                // Show toast in UI
+                _ = SendToastToWebView($"✅ SAP Section '{group.Name}' {actionText.ToLower()}!", "success");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[SapSync] Failed: {result.Message}");
+                _ = SendToastToWebView($"⚠️ SAP Sync failed: {result.Message}", "warning");
+            }
+        }
+
+        private async Task SendToastToWebView(string message, string type)
+        {
+            try
+            {
+                string escaped = message.Replace("'", "\\'");
+                await _webView.CoreWebView2.ExecuteScriptAsync($"showToast('{escaped}', '{type}')");
+            }
+            catch { }
         }
 
         private void HighlightBeamsInCAD(List<string> handles)
