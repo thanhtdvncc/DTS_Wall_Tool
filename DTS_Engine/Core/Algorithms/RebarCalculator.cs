@@ -199,40 +199,34 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
-        /// Tính số thanh tối đa trong 1 lớp với DtsSettings (hỗ trợ bar diameter-based spacing)
+        /// Tính số thanh tối đa trong 1 lớp với DtsSettings
+        /// Công thức: n = (UsableWidth + spacing) / (d + spacing)
+        /// UsableWidth = B - 2×Cover - 2×StirrupDia
+        /// spacing = max(barDiameter, MinClearance)
         /// </summary>
-        private static int GetMaxBarsPerLayer(double b, int d, DtsSettings settings)
+        private static int GetMaxBarsPerLayer(double beamWidth, int barDiameter, DtsSettings settings)
         {
+            // Lấy từ Settings - KHÔNG HARDCODE
             double cover = settings.Beam?.CoverSide ?? 25;
-            double stirrupDia = 10;
+            double stirrupDia = settings.Beam?.StirrupDiameter ?? 10;  // Từ Settings
+            double minClearance = settings.Beam?.MinClearance ?? 25;    // Từ Settings
 
-            // Working width = b - 2*cover - 2*stirrup
-            double workingWidth = b - 2 * cover - 2 * stirrupDia;
+            // UsableWidth = B - 2×Cover - 2×StirrupDia
+            double usableWidth = beamWidth - (2 * cover) - (2 * stirrupDia);
 
-            // Tính min spacing
-            double minSpacing;
-            if (settings.Beam?.UseBarDiameterForSpacing == true)
-            {
-                // Spacing >= N x bar diameter (theo tiêu chuẩn)
-                double multiplier = settings.Beam?.BarDiameterSpacingMultiplier ?? 1.0;
-                minSpacing = multiplier * d;
+            if (usableWidth < barDiameter) return 0; // Dầm quá bé
 
-                // Nhưng không được nhỏ hơn MinClearSpacing cố định
-                int fixedMin = settings.Beam?.MinClearSpacing ?? 30;
-                if (minSpacing < fixedMin) minSpacing = fixedMin;
-            }
-            else
-            {
-                // Dùng spacing cố định
-                minSpacing = settings.Beam?.MinClearSpacing ?? 30;
-            }
+            // spacing = max(barDiameter, MinClearance)
+            // Theo tiêu chuẩn: khoảng hở >= đường kính thanh VÀ >= giá trị tối thiểu
+            double reqClearance = Math.Max(barDiameter, minClearance);
 
-            // n * d + (n-1)*s <= workingWidth
-            double val = (workingWidth + minSpacing) / (d + minSpacing);
-            int n = (int)Math.Floor(val);
+            // Công thức: n = (W + s) / (d + s)
+            // Từ: n×d + (n-1)×s <= W
+            double val = (usableWidth + reqClearance) / (barDiameter + reqClearance);
+            int maxBars = (int)Math.Floor(val);
 
             int minBars = settings.Beam?.MinBarsPerLayer ?? 2;
-            return n < minBars ? minBars : n;
+            return maxBars < minBars ? minBars : maxBars;
         }
 
         /// <summary>
@@ -477,5 +471,204 @@ namespace DTS_Engine.Core.Algorithms
             }
             return 0;
         }
+
+        #region BeamGroup-Based Calculation (Multi-Standard)
+
+        /// <summary>
+        /// Kết quả tính thép cho 1 lớp (Top hoặc Bot) của BeamGroup
+        /// </summary>
+        public class LayerResult
+        {
+            public bool IsValid { get; set; }
+            public int Diameter { get; set; }
+            public int MainBars { get; set; }         // Thép chạy suốt
+            public Dictionary<string, int> AddBars { get; set; } = new Dictionary<string, int>(); // Thép gia cường theo section
+            public int TotalBars { get; set; }
+            public int LayersNeeded { get; set; }
+            public double AsProvided { get; set; }    // cm²
+        }
+
+        /// <summary>
+        /// Kết quả tổng hợp cho cả BeamGroup (Top + Bot)
+        /// </summary>
+        public class BeamGroupSolution
+        {
+            public bool IsValid { get; set; }
+            public int MainDiameter { get; set; }
+            public LayerResult TopLayer { get; set; }
+            public LayerResult BotLayer { get; set; }
+            public string WarningMessage { get; set; }
+        }
+
+        /// <summary>
+        /// Tính thép cho cả BeamGroup theo tiêu chuẩn đa quốc gia
+        /// Top và Bot tính riêng biệt, đường kính đồng nhất cho dải dầm
+        /// </summary>
+        public static BeamGroupSolution SolveBeamGroup(BeamGroup group, DtsSettings settings)
+        {
+            if (group?.Spans == null || group.Spans.Count == 0)
+                return new BeamGroupSolution { IsValid = false, WarningMessage = "Không có nhịp trong nhóm" };
+
+            // Lấy danh sách đường kính từ Settings
+            var inventory = settings.General?.AvailableDiameters ?? new List<int> { 16, 18, 20, 22, 25 };
+            var diameters = DiameterParser.ParseRange(settings.Beam?.MainBarRange ?? "16-25", inventory);
+            if (diameters.Count == 0) diameters = inventory;
+
+            int maxLayers = settings.Beam?.MaxLayers ?? 2;
+
+            // Duyệt từng đường kính từ nhỏ → lớn
+            foreach (int d in diameters.OrderBy(x => x))
+            {
+                // Tính riêng TOP và BOT
+                var topResult = SolveLayer(group, d, true, settings);   // isTopBar = true
+                var botResult = SolveLayer(group, d, false, settings);  // isTopBar = false
+
+                // Kiểm tra cả 2 đều valid
+                if (topResult.IsValid && botResult.IsValid)
+                {
+                    // Ưu tiên phương án ≤2 lớp
+                    if (topResult.LayersNeeded <= 2 && botResult.LayersNeeded <= 2)
+                    {
+                        return new BeamGroupSolution
+                        {
+                            IsValid = true,
+                            MainDiameter = d,
+                            TopLayer = topResult,
+                            BotLayer = botResult
+                        };
+                    }
+                }
+            }
+
+            // Fallback: dùng đường kính lớn nhất
+            int dMax = diameters.Max();
+            return new BeamGroupSolution
+            {
+                IsValid = false,
+                MainDiameter = dMax,
+                TopLayer = SolveLayer(group, dMax, true, settings),
+                BotLayer = SolveLayer(group, dMax, false, settings),
+                WarningMessage = $"Không tìm được phương án ≤{maxLayers} lớp, dùng D{dMax}"
+            };
+        }
+
+        /// <summary>
+        /// Tính thép cho 1 lớp (Top hoặc Bot) với đường kính cho trước
+        /// </summary>
+        private static LayerResult SolveLayer(BeamGroup group, int d, bool isTopBar, DtsSettings settings)
+        {
+            var result = new LayerResult { Diameter = d };
+
+            // Bề rộng dầm (TODO: Dầm T thì dùng Bf cho Top, Bw cho Bot)
+            double beamWidth = group.Width > 0 ? group.Width : (group.Spans.FirstOrDefault()?.Width ?? 300);
+
+            // Tính số thanh tối đa 1 lớp
+            int maxPerLayer = GetMaxBarsPerLayer(beamWidth, d, settings);
+            if (maxPerLayer <= 0)
+            {
+                result.IsValid = false;
+                return result;
+            }
+
+            int maxLayers = settings.Beam?.MaxLayers ?? 2;
+            double as1 = Math.PI * d * d / 400.0; // cm² per bar
+
+            // Tìm As_max từ tất cả tiết diện trong dải dầm
+            // SpanData.As_Top[6]: 0=GốiT, 1=L/4T, 2=Giữa, 3=L/4P, 4=GốiP
+            // SpanData.As_Bot[6]: tương tự
+            double asMaxRequired = 0;
+            foreach (var span in group.Spans)
+            {
+                if (isTopBar)
+                {
+                    // Thép trên: lấy max từ As_Top array (chủ yếu tại gối 0 và 4)
+                    if (span.As_Top != null)
+                    {
+                        foreach (double asVal in span.As_Top)
+                        {
+                            if (asVal > asMaxRequired) asMaxRequired = asVal;
+                        }
+                    }
+                }
+                else
+                {
+                    // Thép dưới: lấy max từ As_Bot array (chủ yếu tại giữa nhịp 2)
+                    if (span.As_Bot != null)
+                    {
+                        foreach (double asVal in span.As_Bot)
+                        {
+                            if (asVal > asMaxRequired) asMaxRequired = asVal;
+                        }
+                    }
+                }
+            }
+
+            if (asMaxRequired <= 0.01)
+            {
+                // Không cần thép (hoặc theo cấu tạo min 2 thanh)
+                result.IsValid = true;
+                result.MainBars = 2;
+                result.TotalBars = 2;
+                result.LayersNeeded = 1;
+                result.AsProvided = 2 * as1;
+                return result;
+            }
+
+            // Tính số thanh cần thiết
+            int totalBars = (int)Math.Ceiling(asMaxRequired / as1);
+            if (totalBars < 2) totalBars = 2;
+
+            // Tính số lớp cần thiết
+            int layersNeeded = (int)Math.Ceiling((double)totalBars / maxPerLayer);
+
+            // Kiểm tra constraint
+            bool isValid = layersNeeded <= maxLayers && layersNeeded <= 2; // Ưu tiên ≤2 lớp
+
+            result.IsValid = isValid;
+            result.MainBars = Math.Min(totalBars, maxPerLayer); // Thép chạy suốt = lớp 1
+            result.TotalBars = totalBars;
+            result.LayersNeeded = layersNeeded;
+            result.AsProvided = totalBars * as1;
+
+            return result;
+        }
+
+        /// <summary>
+        /// Tính chiều dài neo có xét TopBarFactor
+        /// </summary>
+        public static double GetAnchorageWithTopFactor(int diameter, bool isTopBar, DtsSettings settings)
+        {
+            // Lấy chiều dài neo cơ bản từ AnchorageConfig
+            double baseLength = settings.Anchorage?.GetAnchorageLength(diameter, "B25", "CB400")
+                ?? (40 * diameter); // Fallback: 40d
+
+            // Áp dụng TopBarFactor nếu là thép lớp trên
+            if (isTopBar && settings.Beam?.ApplyTopBarFactor == true)
+            {
+                double factor = settings.Beam?.TopBarFactor ?? 1.3;
+                baseLength *= factor;
+            }
+
+            return baseLength;
+        }
+
+        /// <summary>
+        /// Tính chiều dài nối có xét TopBarFactor
+        /// </summary>
+        public static double GetSpliceWithTopFactor(int diameter, bool isTopBar, DtsSettings settings)
+        {
+            double baseLength = settings.Anchorage?.GetSpliceLength(diameter, "B25", "CB400")
+                ?? (52 * diameter); // Fallback: 52d
+
+            if (isTopBar && settings.Beam?.ApplyTopBarFactor == true)
+            {
+                double factor = settings.Beam?.TopBarFactor ?? 1.3;
+                baseLength *= factor;
+            }
+
+            return baseLength;
+        }
+
+        #endregion
     }
 }

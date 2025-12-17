@@ -296,6 +296,28 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public int WebBarMinHeight { get; set; } = 700;
 
+        /// <summary>
+        /// Đường kính cốt đai (mm) - Dùng để trừ khi tính bề rộng khả dụng
+        /// </summary>
+        public double StirrupDiameter { get; set; } = 10.0;
+
+        /// <summary>
+        /// Khoảng hở tịnh tối thiểu (mm) - TCVN: 25, ACI: 25.4
+        /// Dùng cho công thức: spacing = max(barDia, MinClearance)
+        /// </summary>
+        public double MinClearance { get; set; } = 25.0;
+
+        /// <summary>
+        /// Hệ số tăng chiều dài neo cho thép lớp trên (vùng đổ BT >300mm)
+        /// ACI/TCVN thường = 1.3
+        /// </summary>
+        public double TopBarFactor { get; set; } = 1.3;
+
+        /// <summary>
+        /// Có áp dụng TopBarFactor hay không
+        /// </summary>
+        public bool ApplyTopBarFactor { get; set; } = true;
+
         // ===== CONTINUOUS BEAM RULES (Dầm liên tục) =====
         /// <summary>
         /// Ép buộc Layer 1 dùng cùng 1 đường kính cho toàn dải dầm
