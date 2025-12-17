@@ -30,6 +30,9 @@ namespace DTS_Engine.Core.Data
         /// <summary>End point Y (mm)</summary>
         public double EndY { get; set; }
 
+        /// <summary>End point Z (mm) - for story matching</summary>
+        public double EndZ { get; set; }
+
         /// <summary>Section width (mm)</summary>
         public double Width { get; set; }
 

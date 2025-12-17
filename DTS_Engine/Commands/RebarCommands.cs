@@ -2353,6 +2353,7 @@ namespace DTS_Engine.Commands
         /// Tự động gom nhóm TẤT CẢ dầm trong bản vẽ theo trục.
         /// Tính toán bar segments và lưu vào NOD để Viewer có thể mở ngay.
         /// Giải quyết bottleneck phải chọn từng dầm.
+        /// [UPDATED] Fixed issue where beams on different levels were grouped together.
         /// </summary>
         [CommandMethod("DTS_REBAR_GROUP_AUTO")]
         public void DTS_AUTO_GROUP()
@@ -2404,7 +2405,8 @@ namespace DTS_Engine.Commands
 
             // 2. Thu thập dầm CHƯA thuộc nhóm nào (INCREMENTAL mode - không đè data user)
             var freeBeamIds = new List<ObjectId>();
-            var beamsDataMap = new Dictionary<ObjectId, (Point3d Mid, bool IsGirder, bool IsXDir, string AxisKey, string Handle)>();
+            // Key map: ObjectId -> (MidPoint, IsGirder, IsXDir, AxisKey, Handle, LevelZ)
+            var beamsDataMap = new Dictionary<ObjectId, (Point3d Mid, bool IsGirder, bool IsXDir, string AxisKey, string Handle, double LevelZ)>();
 
             UsingTransaction(tr =>
             {
@@ -2438,11 +2440,17 @@ namespace DTS_Engine.Commands
                             bool onGridEnd = gridIntersections.Any(g => g.DistanceTo(curve.EndPoint) < 200);
                             bool isGirder = onGridStart && onGridEnd;
 
-                            // AxisKey để nhóm dầm cùng trục
-                            double axisCoord = isXDir ? Math.Round(mid.Y / 100) * 100 : Math.Round(mid.X / 100) * 100;
-                            string axisKey = $"{(isGirder ? "G" : "B")}_{(isXDir ? "X" : "Y")}_{axisCoord:F0}";
+                            // === FIX: Include Z-Level in grouping key ===
+                            // Round Z to nearest 100mm to tolerate small modeling errors
+                            double levelZ = Math.Round(mid.Z / 100.0) * 100.0;
 
-                            beamsDataMap[id] = (mid, isGirder, isXDir, axisKey, handle);
+                            // AxisKey để nhóm dầm cùng trục VÀ cùng tầng
+                            double axisCoord = isXDir ? Math.Round(mid.Y / 100) * 100 : Math.Round(mid.X / 100) * 100;
+
+                            // New Key Format: L[Z]_G/B_X/Y_[Coord]
+                            string axisKey = $"L{levelZ:F0}_{(isGirder ? "G" : "B")}_{(isXDir ? "X" : "Y")}_{axisCoord:F0}";
+
+                            beamsDataMap[id] = (mid, isGirder, isXDir, axisKey, handle, levelZ);
                         }
                     }
                 }
@@ -2465,8 +2473,10 @@ namespace DTS_Engine.Commands
             WriteMessage($"Tìm thấy {freeBeamIds.Count} dầm chưa thuộc nhóm.");
 
             // 3. Nhóm dầm theo AxisKey
+            // Sort groups by LevelZ first, then by Girder/Beam, then by Coordinate
             var groups = beamsDataMap.GroupBy(b => b.Value.AxisKey)
-                                     .OrderBy(g => g.First().Value.IsGirder ? 0 : 1)
+                                     .OrderBy(g => g.First().Value.LevelZ) // Sort by Level first
+                                     .ThenBy(g => g.First().Value.IsGirder ? 0 : 1)
                                      .ThenBy(g => g.Key)
                                      .ToList();
 
@@ -2474,21 +2484,23 @@ namespace DTS_Engine.Commands
 
             // 4. Tạo BeamGroup cho mỗi nhóm
             var beamGroups = new List<BeamGroup>();
-            int groupIndex = 1;
+
+            // Dictionary to track group index per Level
+            // Key: LevelZ, Value: Current Index
+            var levelIndices = new Dictionary<double, int>();
 
             foreach (var group in groups)
             {
-                // Sort members within group by position
-                var sortedIds = group.OrderBy(m => m.Value.IsXDir ? m.Value.Mid.X : m.Value.Mid.Y)
-                                     .Select(m => m.Key)
-                                     .ToList();
+                var firstItem = group.First().Value;
+
+                var memberIds = group.Select(m => m.Key).ToList();
 
                 // Collect BeamData for CreateManualBeamGroup
                 var beamDataList = new List<Core.Data.BeamGeometry>();
 
                 UsingTransaction(tr =>
                 {
-                    foreach (var id in sortedIds)
+                    foreach (var id in memberIds)
                     {
                         var curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                         if (curve == null) continue;
@@ -2503,7 +2515,8 @@ namespace DTS_Engine.Commands
                             StartY = curve.StartPoint.Y,
                             EndX = curve.EndPoint.X,
                             EndY = curve.EndPoint.Y,
-                            // Length is computed property, no need to set
+                            StartZ = curve.StartPoint.Z, // Important for Level capture
+                            EndZ = curve.EndPoint.Z,
                             Width = xdata?.Width ?? 0,
                             Height = xdata?.SectionHeight ?? 0
                         });
@@ -2512,17 +2525,23 @@ namespace DTS_Engine.Commands
 
                 if (beamDataList.Count == 0) continue;
 
-                // Use first item's info for group name
-                var first = beamsDataMap[sortedIds.First()];
-                string prefix = first.IsGirder ? "G" : "B";
-                string direction = first.IsXDir ? "X" : "Y";
-                string groupName = $"{prefix}{groupIndex}_{direction}";
+                // Manage Index per Level
+                double z = firstItem.LevelZ;
+                if (!levelIndices.ContainsKey(z)) levelIndices[z] = 1;
+                int currentIndex = levelIndices[z]++;
+
+                // Generate Group Name
+                string prefix = firstItem.IsGirder ? "G" : "B";
+                string direction = firstItem.IsXDir ? "X" : "Y";
+                string groupName = $"{prefix}{currentIndex}_{direction}";
 
                 // Create BeamGroup (this also calls CalculateBarSegmentsForGroup)
                 var beamGroup = CreateManualBeamGroup(groupName, beamDataList);
-                beamGroups.Add(beamGroup);
 
-                groupIndex++;
+                // Explicitly set LevelZ for the group
+                beamGroup.LevelZ = z;
+
+                beamGroups.Add(beamGroup);
             }
 
             // 5. Merge với existing groups và lưu vào NOD (INCREMENTAL - không xóa data cũ)
