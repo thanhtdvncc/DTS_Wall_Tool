@@ -161,8 +161,15 @@ namespace DTS_Engine.UI.Forms
                         };
                         JsonConvert.PopulateObject(message, _settings, serSettings);
 
+                        // DEBUG: Log StoryConfigs count to verify data
+                        System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] Saving settings...");
+                        System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] StoryConfigs count: {_settings.StoryConfigs?.Count ?? 0}");
+                        System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] StoryTolerance: {_settings.StoryTolerance}");
+
                         // Save to default file
                         _settings.Save();
+
+                        System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] Settings saved successfully!");
 
                         this.DialogResult = DialogResult.OK;
                         this.Close();

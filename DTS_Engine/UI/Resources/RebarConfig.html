@@ -1339,9 +1339,10 @@
             const idx = parseInt(name) - 1;
             if (isNaN(idx) || idx < 0 || idx >= presets.length) return;
 
-            const key = 'DTS_AnchoragePreset_' + presets[idx].replace(/\\s/g, '_');
+            const key = 'DTS_AnchoragePreset_' + presets[idx].replace(/\s/g, '_');
             if (confirm(`Xóa preset "${presets[idx]}"?`)) {
                 localStorage.removeItem(key);
+                renderSavedPresets(); // Update UI after delete
                 alert('Đã xóa.');
             }
         }
@@ -1808,6 +1809,8 @@
             renderDiameterMatrices();
 
             // Tab 3: Naming - Load Story Configs (NEW)
+            console.log('[loadForm] data.StoryConfigs:', data.StoryConfigs);
+            console.log('[loadForm] StoryConfigs length:', data.StoryConfigs?.length || 0);
             loadStoryTable(data.StoryConfigs || []);
             setId('StoryTolerance', data.StoryTolerance ?? 500);
         }
