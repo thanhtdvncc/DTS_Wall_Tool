@@ -243,6 +243,19 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public string Direction { get; set; }
 
+        // ===== MULTI-STORY SUPPORT =====
+        /// <summary>
+        /// Tên tầng (VD: "L1", "L2", "Roof")
+        /// Dùng để phân biệt dầm cùng tên ở các tầng khác nhau
+        /// </summary>
+        public string StoryName { get; set; }
+
+        /// <summary>
+        /// Cao độ Z (mm) của nhóm dầm
+        /// Dùng để auto-group theo cao độ
+        /// </summary>
+        public double LevelZ { get; set; }
+
         /// <summary>
         /// Bề rộng tiết diện chung (mm)
         /// </summary>

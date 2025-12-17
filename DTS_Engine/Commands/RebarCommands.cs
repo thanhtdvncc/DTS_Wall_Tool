@@ -1530,6 +1530,11 @@ namespace DTS_Engine.Commands
                 // Skip if user has manually edited - only sync "best" option, not overwrite
                 bool hasUserData = group.IsManuallyEdited && group.BackboneOptions.Count > 0;
 
+                // ===== CRITICAL: BẢO VỆ SELECTED DESIGN =====
+                // Nếu đã chốt phương án, KHÔNG ĐƯỢC ghi đè SelectedDesign
+                // Chỉ tính lại ProposedDesigns và ValidateSafety
+                bool isLocked = group.IsDesignLocked && group.SelectedDesign != null;
+
                 // Collect all BeamResultData for this group
                 var groupRebarData = new List<BeamResultData>();
                 foreach (var handle in group.EntityHandles)
@@ -1542,11 +1547,52 @@ namespace DTS_Engine.Commands
 
                 if (groupRebarData.Count == 0) continue;
 
-                // ===== CREATE 3 BACKBONE OPTIONS =====
-                if (!hasUserData)
+                // ===== CREATE 3 BACKBONE OPTIONS (Always regenerate for comparison) =====
+                // Luôn tạo lại ProposedDesigns để user có thể so sánh với SelectedDesign
+                group.BackboneOptions = GenerateBackboneOptions(groupRebarData, settings, group.Width, group.Height);
+
+                if (!isLocked)
                 {
-                    group.BackboneOptions = GenerateBackboneOptions(groupRebarData, settings, group.Width, group.Height);
-                    group.SelectedBackboneIndex = 0; // Best option first
+                    // Chưa chốt → Chọn option 0 làm mặc định
+                    group.SelectedBackboneIndex = 0;
+                }
+                else
+                {
+                    // ===== VALIDATE SAFETY: Kiểm tra SelectedDesign còn đủ thép không =====
+                    // Tính As_required mới từ nội lực mới
+                    double maxAsReqTop = 0, maxAsReqBot = 0;
+                    foreach (var data in groupRebarData)
+                    {
+                        for (int i = 0; i < 3; i++)
+                        {
+                            maxAsReqTop = Math.Max(maxAsReqTop, data.TopArea[i]);
+                            maxAsReqBot = Math.Max(maxAsReqBot, data.BotArea[i]);
+                        }
+                    }
+
+                    // Lưu As_required mới vào SelectedDesign để hiển thị cảnh báo
+                    group.SelectedDesign.As_Required_Top_Max = maxAsReqTop;
+                    group.SelectedDesign.As_Required_Bot_Max = maxAsReqBot;
+
+                    // So sánh As_provided (trong SelectedDesign) vs As_required (mới)
+                    double asProvTop = group.SelectedDesign.As_Backbone_Top;
+                    double asProvBot = group.SelectedDesign.As_Backbone_Bot;
+
+                    bool isSafe = asProvTop >= maxAsReqTop && asProvBot >= maxAsReqBot;
+                    group.SelectedDesign.IsValid = isSafe;
+
+                    if (!isSafe)
+                    {
+                        double deficitTop = maxAsReqTop - asProvTop;
+                        double deficitBot = maxAsReqBot - asProvBot;
+                        group.SelectedDesign.ValidationMessage =
+                            $"UNSAFE: Thiếu Top {deficitTop:F2}cm², Bot {deficitBot:F2}cm²";
+                        WriteMessage($"   ⚠️ WARNING: Nhóm {group.GroupName} - {group.SelectedDesign.ValidationMessage}");
+                    }
+                    else
+                    {
+                        group.SelectedDesign.ValidationMessage = null;
+                    }
                 }
 
                 // ===== APPLY UNIFIED BACKBONE TO ALL SPANS =====
@@ -2396,6 +2442,19 @@ namespace DTS_Engine.Commands
                         group.EntityHandles.Remove(handle);
                         removedCount++;
                         WriteMessage($"   Đã tách dầm {handle} khỏi nhóm {group.GroupName}");
+
+                        // ===== HARD RESET: Clear design data when structure changes =====
+                        // Khi cấu trúc nhóm thay đổi, dữ liệu thiết kế cũ không còn valid
+                        if (group.SelectedDesign != null)
+                        {
+                            WriteMessage($"   ⚠️ Reset phương án đã chốt của nhóm {group.GroupName}");
+                            group.SelectedDesign = null;
+                            group.LockedAt = null;
+                            group.LockedBy = null;
+                        }
+                        // Clear proposed designs too (will be regenerated on next calculate)
+                        group.BackboneOptions.Clear();
+                        group.IsManuallyEdited = false;
 
                         // Mark empty groups for removal
                         if (group.EntityHandles.Count == 0)
