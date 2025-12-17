@@ -556,7 +556,12 @@ namespace DTS_Engine.Commands
             return Math.Abs(p2d.X - p3d.X) < tol && Math.Abs(p2d.Y - p3d.Y) < tol;
         }
 
-        [CommandMethod("DTS_REBAR_BEAM_NAME")]
+        /// <summary>
+        /// [FIXED] Đặt tên dầm thông minh:
+        /// 1. Phân tách theo tầng (Level Z).
+        /// 2. Sort theo không gian tuyệt đối (Trên->Dưới, Trái->Phải) dùng Row-Binning.
+        /// 3. Tự động gom nhóm các dầm giống nhau (Tiết diện + Thép) để dùng chung tên.
+        /// </summary>
         [CommandMethod("DTS_REBAR_BEAM_NAME")]
         public void DTS_REBAR_BEAM_NAME()
         {
