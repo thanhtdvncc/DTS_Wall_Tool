@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 
 namespace DTS_Engine.Core.Data
@@ -334,6 +335,76 @@ namespace DTS_Engine.Core.Data
         /// Hash của geometry để detect thay đổi (Re-hydration)
         /// </summary>
         public string GeometryHash { get; set; }
+
+        // ===== SMART NAMING SYSTEM =====
+        /// <summary>
+        /// Tên Label hiển thị (VD: "B101", "G205").
+        /// Dùng chung cho các dầm có cùng Signature.
+        /// </summary>
+        public string Name { get; set; }
+
+        /// <summary>
+        /// True = User đã sửa tên thủ công → Không auto đổi nữa.
+        /// </summary>
+        public bool IsNameLocked { get; set; } = false;
+
+        /// <summary>
+        /// "Chữ ký" nhận dạng để so sánh sự giống nhau.
+        /// Format: TYPE_WxH_MAT_TOP(nxD)_BOT(nxD)
+        /// VD: B_300x500_B25_T(1x18+2x20)_B(3x22)
+        /// </summary>
+        public string Signature { get; set; }
+
+        /// <summary>
+        /// Cập nhật chữ ký dựa trên SelectedDesign hoặc ProposedDesign[0].
+        /// QUAN TRỌNG: Sắp xếp đường kính trước khi nối chuỗi để đảm bảo
+        /// 2D20+1D18 == 1D18+2D20 (deterministic).
+        /// </summary>
+        public void UpdateSignature()
+        {
+            var design = this.SelectedDesign ?? (this.BackboneOptions.Count > 0 ? this.BackboneOptions[0] : null);
+            if (design == null)
+            {
+                this.Signature = $"B_{Width}x{Height}_NoDesign";
+                return;
+            }
+
+            // Lấy thông tin thép từ design (BackboneCount + Diameter)
+            // Format: nDd (VD: 2D20, 3D25)
+            string topInfo = $"{design.BackboneCount_Top}D{design.BackboneDiameter}";
+            string botInfo = $"{design.BackboneCount_Bot}D{design.BackboneDiameter}";
+            string material = "B25"; // TODO: Get from settings if needed
+
+            // Signature = TYPE_WxH_MAT_TOP_BOT
+            this.Signature = $"B_{Width}x{Height}_{material}_T({topInfo})_B({botInfo})";
+        }
+
+        /// <summary>
+        /// Helper: Format thông tin thép thành chuỗi chuẩn hóa (sorted ascending).
+        /// </summary>
+        private string FormatRebarInfo(string rebarString)
+        {
+            if (string.IsNullOrEmpty(rebarString))
+                return "0x0";
+
+            // Parse và sort: "2D20+1D18" → ["1x18", "2x20"]
+            var parts = rebarString.Split('+')
+                .Select(p => p.Trim())
+                .Where(p => !string.IsNullOrEmpty(p))
+                .OrderBy(p => ExtractDiameter(p))
+                .ToList();
+
+            return parts.Count > 0 ? string.Join("+", parts) : "0x0";
+        }
+
+        /// <summary>
+        /// Helper: Trích xuất đường kính từ chuỗi "2D20" → 20
+        /// </summary>
+        private int ExtractDiameter(string s)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(s, @"D?(\d+)");
+            return match.Success && int.TryParse(match.Groups[1].Value, out int d) ? d : 0;
+        }
 
         // ===== PRE-CALCULATED BAR SEGMENTS (từ RebarCuttingAlgorithm) =====
         /// <summary>

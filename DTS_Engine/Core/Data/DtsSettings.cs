@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Newtonsoft.Json;
 
 namespace DTS_Engine.Core.Data
@@ -31,6 +32,56 @@ namespace DTS_Engine.Core.Data
         /// Cấu hình quy tắc Bố trí chi tiết (Detailing Rules)
         /// </summary>
         public DetailingConfig Detailing { get; set; } = new DetailingConfig();
+
+        // ===== MULTI-STORY NAMING SYSTEM =====
+        /// <summary>
+        /// Danh sách cấu hình đặt tên theo tầng.
+        /// Khởi tạo với list rỗng để tránh NullReferenceException khi load file cũ.
+        /// </summary>
+        public List<StoryNamingConfig> StoryConfigs { get; set; } = new List<StoryNamingConfig>();
+
+        /// <summary>
+        /// Dung sai cao độ (mm) để gán dầm vào tầng.
+        /// Mặc định 500mm cho phép bắt dính dầm có chút lệch cao độ.
+        /// </summary>
+        public double StoryTolerance { get; set; } = 500;
+
+        /// <summary>
+        /// Tìm cấu hình tầng dựa trên cao độ Z của dầm.
+        /// Ưu tiên Floor Below nếu dầm nằm giữa 2 tầng (cho thi công).
+        /// </summary>
+        public StoryNamingConfig GetStoryConfig(double z)
+        {
+            if (StoryConfigs == null || StoryConfigs.Count == 0)
+                return null;
+
+            // Sắp xếp theo cao độ tăng dần
+            var sorted = StoryConfigs.OrderBy(s => s.Elevation).ToList();
+
+            // Tìm tầng gần nhất trong dung sai
+            StoryNamingConfig bestMatch = null;
+            double minDistance = double.MaxValue;
+
+            foreach (var config in sorted)
+            {
+                double distance = Math.Abs(config.Elevation - z);
+                if (distance <= StoryTolerance && distance < minDistance)
+                {
+                    minDistance = distance;
+                    bestMatch = config;
+                }
+            }
+
+            // Nếu nằm giữa 2 tầng (equidistant), ưu tiên Floor Below
+            // Dầm chiếu nghỉ thường đổ cùng cột vách tầng dưới
+            if (bestMatch == null)
+            {
+                // Fallback: Tìm tầng cao nhất có Elevation <= Z
+                bestMatch = sorted.LastOrDefault(s => s.Elevation <= z);
+            }
+
+            return bestMatch;
+        }
 
         /// <summary>
         /// Singleton Instance - Auto-load từ file nếu có
@@ -906,4 +957,42 @@ namespace DTS_Engine.Core.Data
     }
 
     #endregion
+
+    // ===== MULTI-STORY NAMING CONFIG =====
+    /// <summary>
+    /// Cấu hình đặt tên dầm cho từng tầng.
+    /// Mỗi tầng có thể có Prefix, StartIndex và Suffix riêng.
+    /// </summary>
+    public class StoryNamingConfig
+    {
+        /// <summary>
+        /// Tên tầng (lấy từ SAP hoặc user nhập). VD: "L1", "Story 2", "Roof"
+        /// </summary>
+        public string StoryName { get; set; }
+
+        /// <summary>
+        /// Cao độ Z của tầng (mm). VD: 3500, 7000, 10500
+        /// </summary>
+        public double Elevation { get; set; }
+
+        /// <summary>
+        /// Số bắt đầu đếm tên. VD: 100 → Tên sẽ là B101, B102...
+        /// </summary>
+        public int StartIndex { get; set; } = 1;
+
+        /// <summary>
+        /// Prefix cho dầm phụ. VD: "B" → B101
+        /// </summary>
+        public string BeamPrefix { get; set; } = "B";
+
+        /// <summary>
+        /// Prefix cho dầm chính (Girder). VD: "G" → G101
+        /// </summary>
+        public string GirderPrefix { get; set; } = "G";
+
+        /// <summary>
+        /// Suffix (nếu cần). VD: "_L1" → B101_L1
+        /// </summary>
+        public string Suffix { get; set; } = "";
+    }
 }

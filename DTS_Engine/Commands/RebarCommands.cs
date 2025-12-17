@@ -1644,6 +1644,15 @@ namespace DTS_Engine.Commands
             // Save updated groups back to NOD
             if (synced > 0)
             {
+                // Generate Signature for each group
+                foreach (var g in groups)
+                {
+                    g.UpdateSignature();
+                }
+
+                // Auto-naming: Assign names based on story and signature
+                Core.Algorithms.NamingEngine.AutoLabeling(groups, DtsSettings.Instance);
+
                 SaveBeamGroupsToNOD(groups);
                 WriteMessage($"   Synced data to {synced} groups.");
             }

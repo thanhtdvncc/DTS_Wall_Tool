@@ -600,6 +600,50 @@
                     </div>
                 </div>
             </div>
+
+            <!-- STORY CONFIGURATION (NEW) -->
+            <div class="section" style="background:#e8f4fd;border:1px solid #3b82f6;">
+                <div class="section-header" style="background:#3b82f6;color:white;">📍 Cấu hình Tầng (Story
+                    Configuration)</div>
+                <div class="section-body">
+                    <div class="row" style="align-items:center;">
+                        <div class="col">
+                            <label>Dung sai cao độ (mm)</label>
+                            <input type="number" id="StoryTolerance" value="500" min="100" max="5000">
+                        </div>
+                        <div class="col">
+                            <button class="btn-primary" id="btnGetStories" onclick="getStoriesFromSAP()">
+                                <span id="btnGetStoriesText">📥 Get Stories from SAP</span>
+                            </button>
+                        </div>
+                        <div class="col">
+                            <button class="btn-secondary btn-sm" onclick="addStoryRow()">➕ Thêm tầng</button>
+                        </div>
+                    </div>
+                    <div class="hint" style="margin-top:8px;">Nhấn "Get Stories" để tự động lấy danh sách tầng từ
+                        SAP2000. Hoặc nhập thủ công.</div>
+
+                    <!-- Story Config Table -->
+                    <div style="margin-top:12px;max-height:180px;overflow-y:auto;">
+                        <table id="storyConfigTable" style="width:100%;border-collapse:collapse;font-size:11px;">
+                            <thead style="background:#f0f0f0;position:sticky;top:0;">
+                                <tr>
+                                    <th style="padding:6px;border:1px solid #ddd;width:25%;">Tên tầng</th>
+                                    <th style="padding:6px;border:1px solid #ddd;width:20%;">Cao độ (mm)</th>
+                                    <th style="padding:6px;border:1px solid #ddd;width:15%;">Start Index</th>
+                                    <th style="padding:6px;border:1px solid #ddd;width:12%;">Beam Prefix</th>
+                                    <th style="padding:6px;border:1px solid #ddd;width:12%;">Girder Prefix</th>
+                                    <th style="padding:6px;border:1px solid #ddd;width:12%;">Suffix</th>
+                                    <th style="padding:6px;border:1px solid #ddd;width:4%;">Xóa</th>
+                                </tr>
+                            </thead>
+                            <tbody id="storyConfigBody">
+                                <!-- Rows will be populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- TAB 4: ANCHORAGE (Neo & Nối) - COMPREHENSIVE -->
@@ -1650,6 +1694,111 @@
             renderSavedPresets();
             renderShuttleSelectors();
             renderDiameterMatrices();
+
+            // Tab 3: Naming - Load Story Configs (NEW)
+            loadStoryTable(data.StoryConfigs || []);
+            setId('StoryTolerance', data.StoryTolerance ?? 500);
+        }
+
+        // ===== STORY CONFIGURATION FUNCTIONS (NEW) =====
+        function loadStoryTable(configs) {
+            const tbody = document.getElementById('storyConfigBody');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            if (!configs || configs.length === 0) return;
+            configs.forEach((cfg, idx) => addStoryRowData(cfg));
+        }
+
+        function addStoryRow() {
+            const tbody = document.getElementById('storyConfigBody');
+            const rowCount = tbody.querySelectorAll('tr').length;
+            addStoryRowData({
+                StoryName: `L${rowCount + 1}`,
+                Elevation: (rowCount + 1) * 3500,
+                StartIndex: (rowCount + 1) * 100,
+                BeamPrefix: 'B',
+                GirderPrefix: 'G',
+                Suffix: ''
+            });
+        }
+
+        function addStoryRowData(cfg) {
+            const tbody = document.getElementById('storyConfigBody');
+            if (!tbody) return;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td style="padding:4px;border:1px solid #ddd;"><input type="text" class="storyName" value="${cfg.StoryName || ''}" style="width:100%;padding:3px;border:1px solid #ccc;border-radius:3px;"></td>
+                <td style="padding:4px;border:1px solid #ddd;"><input type="number" class="storyElev" value="${cfg.Elevation || 0}" style="width:100%;padding:3px;border:1px solid #ccc;border-radius:3px;"></td>
+                <td style="padding:4px;border:1px solid #ddd;"><input type="number" class="storyStartIdx" value="${cfg.StartIndex || 1}" style="width:100%;padding:3px;border:1px solid #ccc;border-radius:3px;"></td>
+                <td style="padding:4px;border:1px solid #ddd;"><input type="text" class="storyBeamPrefix" value="${cfg.BeamPrefix || 'B'}" style="width:100%;padding:3px;border:1px solid #ccc;border-radius:3px;"></td>
+                <td style="padding:4px;border:1px solid #ddd;"><input type="text" class="storyGirderPrefix" value="${cfg.GirderPrefix || 'G'}" style="width:100%;padding:3px;border:1px solid #ccc;border-radius:3px;"></td>
+                <td style="padding:4px;border:1px solid #ddd;"><input type="text" class="storySuffix" value="${cfg.Suffix || ''}" style="width:100%;padding:3px;border:1px solid #ccc;border-radius:3px;"></td>
+                <td style="padding:4px;border:1px solid #ddd;text-align:center;"><button onclick="deleteStoryRow(this)" style="background:#dc3545;color:white;border:none;border-radius:3px;padding:2px 6px;cursor:pointer;">✕</button></td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        function deleteStoryRow(btn) {
+            const tr = btn.closest('tr');
+            if (tr) tr.remove();
+        }
+
+        function collectStoryConfigs() {
+            const configs = [];
+            const rows = document.querySelectorAll('#storyConfigBody tr');
+            rows.forEach(row => {
+                const name = row.querySelector('.storyName')?.value || '';
+                const elev = parseFloat(row.querySelector('.storyElev')?.value) || 0;
+                const startIdx = parseInt(row.querySelector('.storyStartIdx')?.value) || 1;
+                const beamPrefix = row.querySelector('.storyBeamPrefix')?.value || 'B';
+                const girderPrefix = row.querySelector('.storyGirderPrefix')?.value || 'G';
+                const suffix = row.querySelector('.storySuffix')?.value || '';
+                if (name) {
+                    configs.push({
+                        StoryName: name,
+                        Elevation: elev,
+                        StartIndex: startIdx,
+                        BeamPrefix: beamPrefix,
+                        GirderPrefix: girderPrefix,
+                        Suffix: suffix
+                    });
+                }
+            });
+            return configs;
+        }
+
+        function getStoriesFromSAP() {
+            const btn = document.getElementById('btnGetStories');
+            const btnText = document.getElementById('btnGetStoriesText');
+
+            // Show loading state
+            btn.disabled = true;
+            btnText.textContent = '⏳ Loading...';
+
+            // Send message to C# to get stories
+            window.chrome.webview.postMessage('GET_STORIES');
+        }
+
+        // Called from C# after retrieving stories
+        function onStoriesReceived(storiesJson) {
+            const btn = document.getElementById('btnGetStories');
+            const btnText = document.getElementById('btnGetStoriesText');
+
+            // Reset button
+            btn.disabled = false;
+            btnText.textContent = '📥 Get Stories from SAP';
+
+            try {
+                const stories = JSON.parse(storiesJson);
+                if (stories && stories.length > 0) {
+                    loadStoryTable(stories);
+                } else {
+                    alert('Không tìm thấy Story trong SAP2000. Vui lòng kiểm tra kết nối.');
+                }
+            } catch (e) {
+                console.error('Parse stories error:', e);
+                alert('Lỗi: ' + e.message);
+            }
         }
 
         function doSave() {
@@ -1735,6 +1884,9 @@
                     SortCorner: parseInt(getVal('SortCorner')) || 0,
                     SortDirection: parseInt(getVal('SortDirection')) || 0
                 },
+                // Story Naming Config (NEW)
+                StoryTolerance: getVal('StoryTolerance') || 500,
+                StoryConfigs: collectStoryConfigs(),
                 Anchorage: collectAnchorageData(),
                 Detailing: {
                     MaxBarLength: getVal('MaxBarLength') || 11700,

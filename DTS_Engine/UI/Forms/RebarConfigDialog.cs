@@ -8,6 +8,7 @@ using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using Newtonsoft.Json;
 using DTS_Engine.Core.Data;
+using System.Linq;
 
 namespace DTS_Engine.UI.Forms
 {
@@ -142,6 +143,13 @@ namespace DTS_Engine.UI.Forms
                     return;
                 }
 
+                // Handle GET_STORIES - Fetch stories from SAP2000
+                if (message == "GET_STORIES")
+                {
+                    this.BeginInvoke(new Action(HandleGetStories));
+                    return;
+                }
+
                 // Normal save: JSON payload - invoke on UI thread
                 this.BeginInvoke(new Action(() =>
                 {
@@ -256,6 +264,65 @@ namespace DTS_Engine.UI.Forms
             catch (Exception ex)
             {
                 MessageBox.Show("Lỗi export: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>
+        /// Xử lý Get Stories từ SAP2000
+        /// </summary>
+        private async void HandleGetStories()
+        {
+            try
+            {
+                // Run on background thread to avoid UI freeze
+                var stories = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    var result = new System.Collections.Generic.List<Core.Data.StoryNamingConfig>();
+
+                    // Try to get stories from SAP using existing GetStories method
+                    var gridItems = Core.Utils.SapUtils.GetStories();
+                    if (gridItems == null || gridItems.Count == 0)
+                        return result;
+
+                    // Filter Z items (stories) and convert to StoryNamingConfig
+                    var zItems = gridItems
+                        .Where(g => !string.IsNullOrEmpty(g.AxisDir) && g.AxisDir.StartsWith("Z", StringComparison.OrdinalIgnoreCase))
+                        .OrderBy(g => g.Coordinate)
+                        .ToList();
+
+                    int idx = 1;
+                    foreach (var z in zItems)
+                    {
+                        result.Add(new Core.Data.StoryNamingConfig
+                        {
+                            StoryName = z.Name,
+                            Elevation = z.Coordinate * 1000, // m -> mm if needed
+                            StartIndex = idx * 100,
+                            BeamPrefix = "B",
+                            GirderPrefix = "G",
+                            Suffix = ""
+                        });
+                        idx++;
+                    }
+
+                    return result;
+                });
+
+                // Send stories back to WebView as JSON
+                string json = JsonConvert.SerializeObject(stories);
+                string escapedJson = json.Replace("'", "\\'").Replace("\\", "\\\\");
+                await _webView.CoreWebView2.ExecuteScriptAsync($"onStoriesReceived('{escapedJson}')");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi lấy stories từ SAP: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+                // Reset button state via JS
+                try
+                {
+                    await _webView.CoreWebView2.ExecuteScriptAsync("onStoriesReceived('[]')");
+                }
+                catch { }
             }
         }
 

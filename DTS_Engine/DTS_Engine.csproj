@@ -160,6 +160,7 @@
     <Compile Include="Core\Algorithms\ProjectionAlgorithms.cs" />
     <Compile Include="Core\Algorithms\RebarCalculator.cs" />
     <Compile Include="Core\Algorithms\RebarCuttingAlgorithm.cs" />
+    <Compile Include="Core\Algorithms\NamingEngine.cs" />
     <Compile Include="Core\Data\AuditData.cs" />
     <Compile Include="Core\Data\BeamData.cs" />
     <Compile Include="Core\Data\BeamDesignData.cs" />
