@@ -65,11 +65,12 @@ namespace DTS_Engine.UI.Forms
             _dashboardForm.StartPosition = FormStartPosition.Manual;
             _dashboardForm.TopMost = true;
 
-            // Size: 9 buttons * 28px + gaps + padding = ~300px width, 30px height
-            _dashboardForm.Size = new Size(300, 30);
+            // Size: 9 buttons * 20px + 1 separator * 3px = 183px width, 20px height
+            _dashboardForm.Size = new Size(185, 20);
 
-            // Background (WebView handles actual transparency)
+            // Transparent background
             _dashboardForm.BackColor = Color.White;
+            _dashboardForm.TransparencyKey = Color.Magenta; // Not used but ready
 
             // Embed WebView2 control
             var control = new DashboardControl();
