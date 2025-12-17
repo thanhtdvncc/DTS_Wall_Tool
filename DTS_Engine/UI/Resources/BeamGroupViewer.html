@@ -98,6 +98,13 @@
                 <label class="text-xs text-slate-400">Phương án:</label>
                 <select id="optionSelect" onchange="selectOption(this.value)"
                     class="bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded text-xs"></select>
+                <button id="lockBtn" onclick="lockDesign()" title="Chốt phương án này làm Official Design"
+                    class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs flex items-center gap-1">
+                    <i class="fa-solid fa-lock"></i> Chốt
+                </button>
+                <span id="lockStatus" class="text-xs text-green-400 hidden">
+                    <i class="fa-solid fa-check-circle"></i> Đã chốt
+                </span>
             </div>
 
             <div class="flex items-center gap-2">
@@ -321,6 +328,7 @@
             updateMetrics();
             updateGroupInfo();
             loadMaterialSelects();
+            updateLockStatus();
         }
 
         function prevGroup() { if (currentGroupIndex > 0) loadGroup(currentGroupIndex - 1); }
@@ -368,6 +376,68 @@
             updateMetrics();
             renderCanvas();
             renderTable();
+        }
+
+        // ===== SELECTED DESIGN (Phương án Chốt) =====
+        function lockDesign() {
+            if (!currentGroup) return;
+
+            const selectedIdx = currentGroup.SelectedBackboneIndex || 0;
+            const option = currentGroup.BackboneOptions?.[selectedIdx];
+
+            if (!option) {
+                showToast('⚠️ Không có phương án để chốt!', 'error');
+                return;
+            }
+
+            // Clone option vào SelectedDesign
+            currentGroup.SelectedDesign = JSON.parse(JSON.stringify(option));
+            currentGroup.LockedAt = new Date().toISOString();
+            currentGroup.LockedBy = 'User';
+
+            updateLockStatus();
+            showToast('🔒 Đã CHỐT phương án làm Official Design!', 'success');
+
+            // Notify C# để save
+            window.chrome.webview?.postMessage('LOCK_DESIGN|' + currentGroupIndex);
+        }
+
+        function unlockDesign() {
+            if (!currentGroup) return;
+
+            if (!confirm('Bạn có chắc muốn HỦY CHỐT? Phương án đã lưu sẽ bị xóa.')) return;
+
+            currentGroup.SelectedDesign = null;
+            currentGroup.LockedAt = null;
+            currentGroup.LockedBy = null;
+
+            updateLockStatus();
+            showToast('🔓 Đã hủy chốt phương án.', 'info');
+
+            window.chrome.webview?.postMessage('UNLOCK_DESIGN|' + currentGroupIndex);
+        }
+
+        function updateLockStatus() {
+            const lockBtn = document.getElementById('lockBtn');
+            const lockStatus = document.getElementById('lockStatus');
+
+            if (!lockBtn || !lockStatus) return;
+
+            const isLocked = currentGroup?.SelectedDesign != null;
+
+            if (isLocked) {
+                lockBtn.innerHTML = '<i class="fa-solid fa-unlock"></i> Hủy chốt';
+                lockBtn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
+                lockBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
+                lockBtn.onclick = unlockDesign;
+                lockStatus.classList.remove('hidden');
+            } else {
+                lockBtn.innerHTML = '<i class="fa-solid fa-lock"></i> Chốt';
+                lockBtn.classList.add('bg-amber-600', 'hover:bg-amber-500');
+                lockBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
+                lockBtn.onclick = lockDesign;
+                lockStatus.classList.add('hidden');
+            }
         }
 
         function updateGroupInfo() {

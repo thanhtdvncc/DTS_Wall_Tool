@@ -271,9 +271,43 @@ namespace DTS_Engine.Core.Data
         public List<SpanData> Spans { get; set; } = new List<SpanData>();
         public List<SupportData> Supports { get; set; } = new List<SupportData>();
 
-        // ===== BACKBONE OPTIONS (tối đa 3 phương án) =====
+        // ===== BACKBONE OPTIONS (tối đa 3 phương án máy đề xuất) =====
+        /// <summary>
+        /// Danh sách phương án máy đề xuất (System Proposals)
+        /// Option 1: Tiết kiệm (D nhỏ, nhiều thanh)
+        /// Option 2: Cân bằng
+        /// Option 3: Thi công nhanh (D lớn, ít thanh)
+        /// </summary>
         public List<ContinuousBeamSolution> BackboneOptions { get; set; } = new List<ContinuousBeamSolution>();
+
+        /// <summary>
+        /// Index phương án đang chọn hiển thị (chưa phải chốt)
+        /// </summary>
         public int SelectedBackboneIndex { get; set; } = 0;
+
+        // ===== SELECTED DESIGN (Phương án CHỐT) =====
+        /// <summary>
+        /// Phương án CHỐT (User Selected/Official Design)
+        /// Đây là phương án sẽ dùng để vẽ CAD và xuất thuyết minh.
+        /// Khi recalculate, chỉ cập nhật BackboneOptions, KHÔNG GHI ĐÈ SelectedDesign.
+        /// </summary>
+        public ContinuousBeamSolution SelectedDesign { get; set; }
+
+        /// <summary>
+        /// Thời điểm chốt phương án (UTC)
+        /// </summary>
+        public DateTime? LockedAt { get; set; }
+
+        /// <summary>
+        /// Người chốt phương án (nếu có)
+        /// </summary>
+        public string LockedBy { get; set; }
+
+        /// <summary>
+        /// Kiểm tra đã chốt phương án chưa (Computed property)
+        /// </summary>
+        [JsonIgnore]
+        public bool IsDesignLocked => SelectedDesign != null;
 
         // ===== METADATA =====
         /// <summary>
