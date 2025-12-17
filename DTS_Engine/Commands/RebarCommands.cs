@@ -483,8 +483,12 @@ namespace DTS_Engine.Commands
                         double asTop = data.TopArea[i] + data.TorsionArea[i] * settings.TorsionRatioTop;
                         double asBot = data.BotArea[i] + data.TorsionArea[i] * settings.TorsionRatioBot;
 
+                        // LEGACY: Using old RebarSettings-based Calculate (marked Obsolete)
+                        // TODO: Migrate to DtsSettings version in future refactoring
+#pragma warning disable CS0618
                         string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.SectionHeight * 10, settings);
                         string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.SectionHeight * 10, settings);
+#pragma warning restore CS0618
 
                         data.TopRebarString[i] = sTop;
                         data.BotRebarString[i] = sBot;
@@ -876,8 +880,10 @@ namespace DTS_Engine.Commands
                             double asTop = data.TopArea[i] + data.TorsionArea[i] * settings.TorsionRatioTop;
                             double asBot = data.BotArea[i] + data.TorsionArea[i] * settings.TorsionRatioBot;
 
+#pragma warning disable CS0618 // Legacy Calculate - TODO: migrate to DtsSettings
                             string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.SectionHeight * 10, settings);
                             string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.SectionHeight * 10, settings);
+#pragma warning restore CS0618
 
                             data.TopAreaProv[i] = RebarStringParser.Parse(sTop);
                             data.BotAreaProv[i] = RebarStringParser.Parse(sBot);
