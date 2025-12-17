@@ -1,129 +1,258 @@
 using System;
 using System.Drawing;
-using Autodesk.AutoCAD.Windows;
-using Application = Autodesk.AutoCAD.ApplicationServices.Application;
+using System.Windows.Forms;
+using System.Runtime.InteropServices;
+using App = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace DTS_Engine.UI.Forms
 {
     /// <summary>
-    /// DashboardPalette - Mini-Toolbar trôi nổi dạng Photoshop
-    /// Hiển thị thanh công cụ ngang nhỏ gọn, neo ở góc trên phải màn hình vẽ
+    /// DashboardPalette - Manages floating borderless HTML toolbar
+    /// Syncs with AutoCAD window (move/hide/show together)
     /// </summary>
     public static class DashboardPalette
     {
-        private static PaletteSet _ps;
-        private static DashboardControl _control;
+        private static Form _dashboardForm;
+        private static Timer _syncTimer;
+        private static Rectangle _lastCadRect;
+        private static bool _lastCadMinimized;
 
-        // GUID để AutoCAD nhớ trạng thái palette
-        private static readonly Guid PaletteGuid = new Guid("E8F3D5A1-7B2C-4D6E-9A8F-1C3B5D7E9F0A");
+        // Offset from AutoCAD window top-right corner
+        private const int OFFSET_RIGHT = 60;
+        private const int OFFSET_TOP = 120;
+
+        // Windows API for window position
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left, Top, Right, Bottom;
+            public Rectangle ToRectangle() => new Rectangle(Left, Top, Right - Left, Bottom - Top);
+        }
 
         /// <summary>
-        /// Hiện Dashboard Mini-Toolbar
+        /// Show the floating Dashboard toolbar
         /// </summary>
         public static void ShowPalette()
         {
-            if (_ps == null)
+            if (_dashboardForm == null || _dashboardForm.IsDisposed)
             {
-                _ps = new PaletteSet("DTS", PaletteGuid);
-
-                // Kích thước siêu nhỏ gọn (420x40)
-                int barWidth = 420;
-                int barHeight = 40;
-
-                _ps.MinimumSize = new Size(barWidth, barHeight);
-                _ps.Size = new Size(barWidth, barHeight);
-
-                // QUAN TRỌNG: Để trôi nổi tự do
-                _ps.Dock = DockSides.None;
-
-                // Style tối giản
-                _ps.Style = PaletteSetStyles.ShowCloseButton;
-
-                _control = new DashboardControl();
-                _ps.Add("", _control);
+                CreateDashboardForm();
             }
 
-            // Tính toán vị trí để đưa về góc trên bên phải
-            MoveToTopRight();
+            UpdatePosition();
+            _dashboardForm.Show();
 
-            _ps.Visible = true;
-            _ps.KeepFocus = false; // Để focus trả về AutoCAD ngay giúp gõ lệnh được
+            // Start sync timer
+            StartSyncTimer();
         }
 
-        /// <summary>
-        /// Hàm tính toán vị trí để đặt bảng trôi nổi ở góc trên phải Canvas
-        /// </summary>
-        private static void MoveToTopRight()
+        private static void CreateDashboardForm()
         {
-            if (_ps == null) return;
+            _dashboardForm = new Form();
+
+            // Borderless window
+            _dashboardForm.FormBorderStyle = FormBorderStyle.None;
+            _dashboardForm.ShowInTaskbar = false;
+            _dashboardForm.StartPosition = FormStartPosition.Manual;
+            _dashboardForm.TopMost = true;
+
+            // Size: 9 buttons * 28px + gaps + padding = ~300px width, 30px height
+            _dashboardForm.Size = new Size(300, 30);
+
+            // Background (WebView handles actual transparency)
+            _dashboardForm.BackColor = Color.White;
+
+            // Embed WebView2 control
+            var control = new DashboardControl();
+            control.Dock = DockStyle.Fill;
+            _dashboardForm.Controls.Add(control);
+        }
+
+        private static void StartSyncTimer()
+        {
+            if (_syncTimer != null) return;
+
+            _syncTimer = new Timer();
+            _syncTimer.Interval = 100; // Check every 100ms
+            _syncTimer.Tick += SyncTimer_Tick;
+            _syncTimer.Start();
+
+            // Init last position
+            _lastCadRect = GetCadWindowRect();
+            _lastCadMinimized = IsCadMinimized();
+        }
+
+        private static void SyncTimer_Tick(object sender, EventArgs e)
+        {
+            if (_dashboardForm == null || _dashboardForm.IsDisposed)
+            {
+                StopSyncTimer();
+                return;
+            }
 
             try
             {
-                // Lấy working area của màn hình chính
-                var screen = System.Windows.Forms.Screen.PrimaryScreen.WorkingArea;
+                Rectangle cadRect = GetCadWindowRect();
+                bool cadMinimized = IsCadMinimized();
+                bool cadVisible = IsCadVisible();
 
-                // Các thông số Margin (Khoảng cách)
-                int marginTop = 80;    // Né thanh Title Bar và Ribbon
-                int marginRight = 40;  // Cách mép phải (né scrollbar/ViewCube)
+                // Check if CAD window moved or resized
+                if (cadRect != _lastCadRect)
+                {
+                    UpdatePosition();
+                    _lastCadRect = cadRect;
+                }
 
-                // Tính toán tọa độ X, Y (góc trên phải)
-                int x = screen.Right - _ps.Size.Width - marginRight;
-                int y = screen.Top + marginTop;
+                // Check if CAD minimized/restored
+                if (cadMinimized != _lastCadMinimized)
+                {
+                    if (cadMinimized)
+                    {
+                        _dashboardForm.Hide();
+                    }
+                    else
+                    {
+                        _dashboardForm.Show();
+                        UpdatePosition();
+                    }
+                    _lastCadMinimized = cadMinimized;
+                }
 
-                // Kiểm tra an toàn
-                if (x < 0) x = 100;
-                if (y < 0) y = 100;
-
-                // Gán vị trí mới
-                _ps.Location = new Point(x, y);
+                // Also hide if CAD is not visible
+                if (!cadVisible && _dashboardForm.Visible)
+                {
+                    _dashboardForm.Hide();
+                }
+                else if (cadVisible && !cadMinimized && !_dashboardForm.Visible)
+                {
+                    _dashboardForm.Show();
+                    UpdatePosition();
+                }
             }
             catch
             {
-                // Fallback nếu không lấy được screen info
+                // AutoCAD may not be available
+            }
+        }
+
+        private static Rectangle GetCadWindowRect()
+        {
+            try
+            {
+                IntPtr handle = App.MainWindow.Handle;
+                if (GetWindowRect(handle, out RECT rect))
+                {
+                    return rect.ToRectangle();
+                }
+            }
+            catch { }
+            return Rectangle.Empty;
+        }
+
+        private static bool IsCadMinimized()
+        {
+            try
+            {
+                return IsIconic(App.MainWindow.Handle);
+            }
+            catch { return false; }
+        }
+
+        private static bool IsCadVisible()
+        {
+            try
+            {
+                return IsWindowVisible(App.MainWindow.Handle);
+            }
+            catch { return false; }
+        }
+
+        private static void UpdatePosition()
+        {
+            if (_dashboardForm == null || _dashboardForm.IsDisposed) return;
+
+            Rectangle cadRect = GetCadWindowRect();
+            if (cadRect.IsEmpty)
+            {
+                _dashboardForm.Location = new Point(100, 100);
+                return;
+            }
+
+            // Position at top-right of AutoCAD window
+            int x = cadRect.Right - _dashboardForm.Width - OFFSET_RIGHT;
+            int y = cadRect.Top + OFFSET_TOP;
+
+            // Bounds check
+            if (x < 0) x = 10;
+            if (y < 0) y = 10;
+
+            _dashboardForm.Location = new Point(x, y);
+        }
+
+        private static void StopSyncTimer()
+        {
+            if (_syncTimer != null)
+            {
+                _syncTimer.Stop();
+                _syncTimer.Dispose();
+                _syncTimer = null;
             }
         }
 
         /// <summary>
-        /// Ẩn Dashboard
+        /// Hide the Dashboard
         /// </summary>
         public static void HidePalette()
         {
-            if (_ps != null)
+            StopSyncTimer();
+            if (_dashboardForm != null && !_dashboardForm.IsDisposed)
             {
-                _ps.Visible = false;
+                _dashboardForm.Hide();
             }
         }
 
         /// <summary>
-        /// Toggle hiện/ẩn Dashboard
+        /// Toggle Dashboard visibility
         /// </summary>
         public static void TogglePalette()
         {
-            if (_ps == null)
+            if (_dashboardForm == null || _dashboardForm.IsDisposed)
             {
                 ShowPalette();
             }
             else
             {
-                if (!_ps.Visible)
+                if (_dashboardForm.Visible)
                 {
-                    // Nếu đang ẩn mà hiện lên thì tính lại vị trí
-                    MoveToTopRight();
+                    HidePalette();
                 }
-                _ps.Visible = !_ps.Visible;
+                else
+                {
+                    ShowPalette();
+                }
             }
         }
 
         /// <summary>
-        /// Đóng hoàn toàn Dashboard (khi unload DLL)
+        /// Close and dispose Dashboard (for DLL unload)
         /// </summary>
         public static void ClosePalette()
         {
-            if (_ps != null)
+            StopSyncTimer();
+            if (_dashboardForm != null)
             {
-                _ps.Visible = false;
-                _ps.Dispose();
-                _ps = null;
+                _dashboardForm.Close();
+                _dashboardForm.Dispose();
+                _dashboardForm = null;
             }
         }
     }

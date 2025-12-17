@@ -155,16 +155,34 @@ namespace DTS_Engine.UI.Forms
                 {
                     try
                     {
+                        // Use DeserializeObject instead of PopulateObject to avoid list merging issues
                         var serSettings = new JsonSerializerSettings
                         {
-                            ObjectCreationHandling = ObjectCreationHandling.Replace
+                            ObjectCreationHandling = ObjectCreationHandling.Replace,
+                            NullValueHandling = NullValueHandling.Ignore
                         };
-                        JsonConvert.PopulateObject(message, _settings, serSettings);
 
-                        // DEBUG: Log StoryConfigs count to verify data
+                        // Deserialize to a new object first
+                        var newSettings = JsonConvert.DeserializeObject<DtsSettings>(message, serSettings);
+
+                        if (newSettings != null)
+                        {
+                            // Copy all properties from new settings to singleton
+                            _settings.General = newSettings.General;
+                            _settings.Beam = newSettings.Beam;
+                            _settings.Column = newSettings.Column;
+                            _settings.Naming = newSettings.Naming;
+                            _settings.Anchorage = newSettings.Anchorage;
+                            _settings.Detailing = newSettings.Detailing;
+                            _settings.StoryConfigs = newSettings.StoryConfigs;
+                            _settings.StoryTolerance = newSettings.StoryTolerance;
+                            _settings.UserPresets = newSettings.UserPresets;
+                        }
+
+                        // DEBUG: Log to verify data
                         System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] Saving settings...");
                         System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] StoryConfigs count: {_settings.StoryConfigs?.Count ?? 0}");
-                        System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] StoryTolerance: {_settings.StoryTolerance}");
+                        System.Diagnostics.Debug.WriteLine($"[RebarConfigDialog] Anchorage.ConcreteGrades count: {_settings.Anchorage?.ConcreteGrades?.Count ?? 0}");
 
                         // Save to default file
                         _settings.Save();

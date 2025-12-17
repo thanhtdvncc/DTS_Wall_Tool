@@ -668,36 +668,45 @@
 
         <!-- TAB 4: ANCHORAGE (Neo & Nối) - COMPREHENSIVE -->
         <div class="tab-panel" id="tab4">
-            <!-- QUICK PRESETS TOOLBAR - COMPACT -->
+            <!-- QUICK PRESETS TOOLBAR -->
             <div class="section" style="background:#e8f4fd;border:1px solid #3b82f6;">
-                <div class="section-header"
-                    style="background:#3b82f6;color:white;display:flex;justify-content:space-between;align-items:center;padding:6px 12px;">
-                    <span>⚡ Quick Presets</span>
-                    <div style="display:flex;gap:4px;align-items:center;">
-                        <button id="presetTCVN" class="btn-primary" onclick="loadPreset('TCVN')" title="TCVN 5574:2018"
-                            style="padding:2px 6px;font-size:10px;">🇻🇳 TCVN</button>
-                        <button id="presetACI" class="btn-secondary" onclick="loadPreset('ACI')" title="ACI 318-19"
-                            style="padding:2px 6px;font-size:10px;">🇺🇸 ACI</button>
-                        <button id="presetEUROCODE" class="btn-secondary" onclick="loadPreset('EUROCODE')"
-                            title="Eurocode 2" style="padding:2px 6px;font-size:10px;">🇪🇺 EC2</button>
-                        <button id="presetRC" class="btn-secondary" onclick="loadPreset('RC')" title="Standard RC SD420"
-                            style="padding:2px 6px;font-size:10px;">📋 RC</button>
-                    </div>
-                </div>
-                <div class="section-body" style="padding:8px 12px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                            <span style="font-size:11px;color:#666;">Tiêu chuẩn: <b id="currentStandard">TCVN</b> | Chế
-                                độ: <b id="currentModeLabel">Hệ số ×d</b></span>
-                            <div id="savedPresetsContainer" style="display:flex;gap:3px;flex-wrap:wrap;"></div>
+                <div class="section-header" style="background:#3b82f6;color:white;">⚡ Quick Presets</div>
+                <div class="section-body">
+                    <div style="display:flex;gap:16px;">
+                        <!-- LEFT: Preset Buttons with Flag Icons -->
+                        <div style="flex:1;">
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                                <button id="presetTCVN" class="btn-primary" onclick="loadPreset('TCVN')"
+                                    title="TCVN 5574:2018" style="padding:4px 10px;">
+                                    <img src="https://flagcdn.com/w20/vn.png"
+                                        style="width:18px;height:12px;margin-right:4px;vertical-align:middle;">
+                                    TCVN</button>
+                                <button id="presetACI" class="btn-secondary" onclick="loadPreset('ACI')"
+                                    title="ACI 318-19" style="padding:4px 10px;">
+                                    <img src="https://flagcdn.com/w20/us.png"
+                                        style="width:18px;height:12px;margin-right:4px;vertical-align:middle;">
+                                    ACI</button>
+                                <button id="presetEUROCODE" class="btn-secondary" onclick="loadPreset('EUROCODE')"
+                                    title="Eurocode 2" style="padding:4px 10px;">
+                                    <img src="https://flagcdn.com/w20/eu.png"
+                                        style="width:18px;height:12px;margin-right:4px;vertical-align:middle;">
+                                    EC2</button>
+                                <button id="presetRC" class="btn-secondary" onclick="loadPreset('RC')"
+                                    title="Standard RC SD420" style="padding:4px 10px;">📋 RC</button>
+                            </div>
+                            <!-- Saved Presets -->
+                            <div id="savedPresetsContainer" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+                            <div class="hint" style="margin-top:8px;">
+                                Tiêu chuẩn: <b id="currentStandard">TCVN</b> | Chế độ: <b id="currentModeLabel">Hệ số
+                                    ×d</b>
+                            </div>
                         </div>
-                        <div style="display:flex;gap:3px;">
-                            <button class="btn-secondary" onclick="saveCurrentPreset()" title="Lưu"
-                                style="padding:2px 6px;font-size:10px;">💾</button>
-                            <button class="btn-secondary" onclick="createNewPreset()" title="Tạo mới"
-                                style="padding:2px 6px;font-size:10px;">➕</button>
-                            <button class="btn-secondary" onclick="deleteSavedPreset()" title="Xóa"
-                                style="padding:2px 6px;font-size:10px;">🗑️</button>
+                        <!-- RIGHT: Action Buttons (Vertical Column) -->
+                        <div style="display:flex;flex-direction:column;gap:4px;min-width:70px;">
+                            <button class="btn-secondary btn-sm" onclick="createNewPreset()"
+                                title="Tạo preset mới từ cấu hình hiện tại">➕ Tạo</button>
+                            <button id="btnDeletePreset" class="btn-secondary btn-sm" onclick="deleteSavedPreset()"
+                                title="Chuột phải vào preset để chọn" disabled>🗑️ Xóa</button>
                         </div>
                     </div>
                 </div>
@@ -1211,39 +1220,14 @@
             }
         }
 
-        // ===== SAVE/LOAD PRESET (Using data.UserPresets instead of localStorage) =====
-        function saveCurrentPreset() {
-            const name = prompt('Nhập tên preset:', anchorageState.standardName || 'My Preset');
-            if (!name) return;
-
-            // Create preset data object
-            const presetData = {
-                StandardName: name,
-                Mode: anchorageState.mode,
-                AvailableConcreteGrades: anchorageState.availableConcrete,
-                AvailableSteelGrades: anchorageState.availableSteel,
-                ConcreteGrades: anchorageState.selectedConcrete,
-                SteelGrades: anchorageState.selectedSteel,
-                AnchorageValues: anchorageState.anchorageValues,
-                SpliceValues: anchorageState.spliceValues
-            };
-
-            // Save to data.UserPresets (will be persisted to C# on doSave)
-            if (!data.UserPresets) data.UserPresets = {};
-            data.UserPresets[name] = presetData;
-
-            anchorageState.standardName = name;
-            document.getElementById('currentStandard').textContent = name;
-            renderSavedPresets();
-
-            alert(`Đã lưu preset "${name}". Bấm "Lưu cấu hình" để ghi xuống file.`);
-        }
+        // ===== PRESET MANAGEMENT (Using data.UserPresets) =====
+        // Selected preset for deletion
+        let selectedPresetForDelete = null;
 
         function renderSavedPresets() {
             const container = document.getElementById('savedPresetsContainer');
             if (!container) return;
 
-            // Get presets from data.UserPresets (loaded from C#)
             const userPresets = data.UserPresets || {};
             const presetNames = Object.keys(userPresets);
 
@@ -1252,9 +1236,12 @@
                 return;
             }
 
+            // Larger buttons matching sample presets style, with click-to-select for delete
             container.innerHTML = presetNames.map(name =>
-                `<button class="btn-secondary btn-sm" onclick="loadUserPreset('${name.replace(/'/g, "\\'")}')" 
-                    style="font-size:10px;padding:2px 6px;margin-bottom:2px;" title="${name}">📁 ${name}</button>`
+                `<button class="btn-secondary preset-user-btn" data-preset="${name}"
+                    onclick="loadUserPreset('${name.replace(/'/g, "\\'")}')"
+                    oncontextmenu="event.preventDefault(); selectPresetForDelete('${name.replace(/'/g, "\\'")}'); return false;"
+                    style="padding:4px 10px;" title="Click để tải | Chuột phải để chọn xóa">📁 ${name}</button>`
             ).join('');
         }
 
@@ -1263,7 +1250,6 @@
 
             const preset = data.UserPresets[name];
 
-            // Map data from preset to anchorageState
             anchorageState.standardName = preset.StandardName || name;
             anchorageState.mode = preset.Mode || 'ByFactor';
             anchorageState.availableConcrete = preset.AvailableConcreteGrades || [];
@@ -1273,7 +1259,6 @@
             anchorageState.anchorageValues = preset.AnchorageValues || {};
             anchorageState.spliceValues = preset.SpliceValues || {};
 
-            // Refresh UI
             document.getElementById('currentStandard').textContent = anchorageState.standardName;
             const modeRadio = document.querySelector(`input[name="calcMode"][value="${anchorageState.mode}"]`);
             if (modeRadio) modeRadio.checked = true;
@@ -1283,9 +1268,12 @@
             updateAnchorageHint();
             renderShuttleSelectors();
             renderDiameterMatrices();
+
+            // Clear delete selection
+            selectedPresetForDelete = null;
+            updateDeleteButtonState();
         }
 
-        // Keep loadSavedPresetByName as alias for backward compatibility
         function loadSavedPresetByName(name) {
             loadUserPreset(name);
         }
@@ -1294,64 +1282,60 @@
             const name = prompt('Nhập tên preset mới:');
             if (!name) return;
 
-            // Reset to empty state
+            // Keep current state instead of resetting
             anchorageState.standardName = name;
-            anchorageState.mode = 'ByFactor';
-            anchorageState.availableConcrete = ['B20', 'B25', 'B30', 'B35'];
-            anchorageState.availableSteel = ['CB300', 'CB400'];
-            anchorageState.selectedConcrete = ['B25'];
-            anchorageState.selectedSteel = ['CB400'];
-            anchorageState.anchorageValues = {};
-            anchorageState.spliceValues = {};
 
-            // Save to data.UserPresets
+            // Save current state to data.UserPresets
             const presetData = {
                 StandardName: name,
                 Mode: anchorageState.mode,
-                AvailableConcreteGrades: anchorageState.availableConcrete,
-                AvailableSteelGrades: anchorageState.availableSteel,
-                ConcreteGrades: anchorageState.selectedConcrete,
-                SteelGrades: anchorageState.selectedSteel,
-                AnchorageValues: anchorageState.anchorageValues,
-                SpliceValues: anchorageState.spliceValues
+                AvailableConcreteGrades: [...anchorageState.availableConcrete],
+                AvailableSteelGrades: [...anchorageState.availableSteel],
+                ConcreteGrades: [...anchorageState.selectedConcrete],
+                SteelGrades: [...anchorageState.selectedSteel],
+                AnchorageValues: JSON.parse(JSON.stringify(anchorageState.anchorageValues)),
+                SpliceValues: JSON.parse(JSON.stringify(anchorageState.spliceValues))
             };
             if (!data.UserPresets) data.UserPresets = {};
             data.UserPresets[name] = presetData;
 
-            // Update UI
             document.getElementById('currentStandard').textContent = name;
-            document.querySelector('input[name="calcMode"][value="ByFactor"]').checked = true;
             highlightPresetButton(null);
-            updateModeLabel();
-            updateAnchorageHint();
-            renderShuttleSelectors();
-            renderDiameterMatrices();
             renderSavedPresets();
+            // No alert - will be saved when user clicks main Save button
+        }
 
-            alert(`Đã tạo preset "${name}". Bấm "Lưu cấu hình" để ghi xuống file.`);
+        function selectPresetForDelete(name) {
+            selectedPresetForDelete = name;
+            // Highlight selected preset
+            document.querySelectorAll('.preset-user-btn').forEach(btn => {
+                btn.classList.toggle('btn-danger', btn.dataset.preset === name);
+                btn.classList.toggle('btn-secondary', btn.dataset.preset !== name);
+            });
+            updateDeleteButtonState();
+        }
+
+        function updateDeleteButtonState() {
+            const deleteBtn = document.getElementById('btnDeletePreset');
+            if (deleteBtn) {
+                deleteBtn.disabled = !selectedPresetForDelete;
+                deleteBtn.title = selectedPresetForDelete
+                    ? `Xóa preset: ${selectedPresetForDelete}`
+                    : 'Chuột phải vào preset để chọn';
+            }
         }
 
         function deleteSavedPreset() {
-            if (!data.UserPresets) {
-                alert('Chưa có preset nào được lưu.');
+            if (!selectedPresetForDelete) {
+                // No selection - show hint
                 return;
             }
 
-            const presetNames = Object.keys(data.UserPresets);
-            if (presetNames.length === 0) {
-                alert('Chưa có preset nào được lưu.');
-                return;
-            }
-
-            const name = prompt('Chọn preset để XÓA:\n\n' + presetNames.map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n\nNhập số thứ tự:');
-            const idx = parseInt(name) - 1;
-            if (isNaN(idx) || idx < 0 || idx >= presetNames.length) return;
-
-            const presetName = presetNames[idx];
-            if (confirm(`Xóa preset "${presetName}"?`)) {
-                delete data.UserPresets[presetName];
+            if (confirm(`Xóa preset "${selectedPresetForDelete}"?`)) {
+                delete data.UserPresets[selectedPresetForDelete];
+                selectedPresetForDelete = null;
                 renderSavedPresets();
-                alert(`Đã xóa. Bấm "Lưu cấu hình" để ghi thay đổi.`);
+                updateDeleteButtonState();
             }
         }
 
