@@ -202,26 +202,31 @@ namespace DTS_Engine.Core.Algorithms
         /// Tính số thanh tối đa trong 1 lớp với DtsSettings
         /// Công thức: n = (UsableWidth + spacing) / (d + spacing)
         /// UsableWidth = B - 2×Cover - 2×StirrupDia
-        /// spacing = max(barDiameter, MinClearance)
+        /// spacing = max(barDiameter, MinClearSpacing)
         /// </summary>
         private static int GetMaxBarsPerLayer(double beamWidth, int barDiameter, DtsSettings settings)
         {
-            // Lấy từ Settings - KHÔNG HARDCODE
+            // 1. Cover từ Settings
             double cover = settings.Beam?.CoverSide ?? 25;
-            double stirrupDia = settings.Beam?.StirrupDiameter ?? 10;  // Từ Settings
-            double minClearance = settings.Beam?.MinClearance ?? 25;    // Từ Settings
 
-            // UsableWidth = B - 2×Cover - 2×StirrupDia
+            // 2. Đường kính đai: Parse từ StirrupBarRange, lấy đường kính NHỎ NHẤT trong list
+            // VD: "8-10" → [8, 10] → chọn 8 (bảo thủ - bề rộng khả dụng lớn nhất)
+            var inventory = settings.General?.AvailableDiameters ?? new List<int> { 6, 8, 10, 12 };
+            var stirrupDiameters = DiameterParser.ParseRange(settings.Beam?.StirrupBarRange ?? "8-10", inventory);
+            // Lấy đường kính đai nhỏ nhất (hoặc default 8mm)
+            double stirrupDia = stirrupDiameters.Count > 0 ? stirrupDiameters.Min() : 8;
+
+            // 3. UsableWidth = B - 2×Cover - 2×StirrupDia
             double usableWidth = beamWidth - (2 * cover) - (2 * stirrupDia);
 
             if (usableWidth < barDiameter) return 0; // Dầm quá bé
 
-            // spacing = max(barDiameter, MinClearance)
-            // Theo tiêu chuẩn: khoảng hở >= đường kính thanh VÀ >= giá trị tối thiểu
-            double reqClearance = Math.Max(barDiameter, minClearance);
+            // 4. Khoảng hở: Dùng MinClearSpacing đã có trong settings
+            // spacing = max(barDiameter, MinClearSpacing)
+            double minClearSpacing = settings.Beam?.MinClearSpacing ?? 30;
+            double reqClearance = Math.Max(barDiameter, minClearSpacing);
 
-            // Công thức: n = (W + s) / (d + s)
-            // Từ: n×d + (n-1)×s <= W
+            // 5. Công thức: n = (W + s) / (d + s)
             double val = (usableWidth + reqClearance) / (barDiameter + reqClearance);
             int maxBars = (int)Math.Floor(val);
 
@@ -523,20 +528,16 @@ namespace DTS_Engine.Core.Algorithms
                 var topResult = SolveLayer(group, d, true, settings);   // isTopBar = true
                 var botResult = SolveLayer(group, d, false, settings);  // isTopBar = false
 
-                // Kiểm tra cả 2 đều valid
+                // Kiểm tra cả 2 đều valid (SolveLayer đã check maxLayers)
                 if (topResult.IsValid && botResult.IsValid)
                 {
-                    // Ưu tiên phương án ≤2 lớp
-                    if (topResult.LayersNeeded <= 2 && botResult.LayersNeeded <= 2)
+                    return new BeamGroupSolution
                     {
-                        return new BeamGroupSolution
-                        {
-                            IsValid = true,
-                            MainDiameter = d,
-                            TopLayer = topResult,
-                            BotLayer = botResult
-                        };
-                    }
+                        IsValid = true,
+                        MainDiameter = d,
+                        TopLayer = topResult,
+                        BotLayer = botResult
+                    };
                 }
             }
 
@@ -621,8 +622,8 @@ namespace DTS_Engine.Core.Algorithms
             // Tính số lớp cần thiết
             int layersNeeded = (int)Math.Ceiling((double)totalBars / maxPerLayer);
 
-            // Kiểm tra constraint
-            bool isValid = layersNeeded <= maxLayers && layersNeeded <= 2; // Ưu tiên ≤2 lớp
+            // Kiểm tra constraint - DÙNG settings.MaxLayers, không hardcode
+            bool isValid = layersNeeded <= maxLayers;
 
             result.IsValid = isValid;
             result.MainBars = Math.Min(totalBars, maxPerLayer); // Thép chạy suốt = lớp 1

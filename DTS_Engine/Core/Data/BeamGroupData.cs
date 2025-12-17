@@ -193,6 +193,17 @@ namespace DTS_Engine.Core.Data
         /// Nhịp này có active (nhận thay đổi hàng loạt) không?
         /// </summary>
         public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// Flag đánh dấu nhịp đã được chỉnh sửa thủ công (thép, nối, cắt).
+        /// Khi Import SAP lại, chỉ cập nhật nội lực, KHÔNG chạy RebarCalculator đè lên.
+        /// </summary>
+        public bool IsManualModified { get; set; } = false;
+
+        /// <summary>
+        /// Thời điểm sửa thủ công gần nhất (UTC)
+        /// </summary>
+        public DateTime? LastManualEdit { get; set; }
     }
 
     // ===== NHÓM DẦM LIÊN TỤC =====

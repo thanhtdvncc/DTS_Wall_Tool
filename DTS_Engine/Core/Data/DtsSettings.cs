@@ -108,6 +108,54 @@ namespace DTS_Engine.Core.Data
             }
             return _instance;
         }
+
+        /// <summary>
+        /// Kiểm tra Settings có hợp lệ để tính toán không
+        /// </summary>
+        /// <param name="error">Thông báo lỗi nếu không hợp lệ</param>
+        /// <returns>True nếu settings hợp lệ</returns>
+        public bool ValidateSettings(out string error)
+        {
+            error = null;
+
+            // 1. Check General
+            if (General == null)
+            {
+                error = "GeneralConfig chưa khởi tạo";
+                return false;
+            }
+            if (General.AvailableDiameters == null || General.AvailableDiameters.Count == 0)
+            {
+                error = "Chưa khai báo danh sách đường kính thép (AvailableDiameters)";
+                return false;
+            }
+
+            // 2. Check Beam
+            if (Beam == null)
+            {
+                error = "BeamConfig chưa khởi tạo";
+                return false;
+            }
+            if (Beam.CoverTop <= 0 || Beam.CoverBot <= 0)
+            {
+                error = "Lớp bảo vệ (Cover) phải > 0";
+                return false;
+            }
+            if (Beam.MaxLayers <= 0)
+            {
+                error = "Số lớp thép tối đa (MaxLayers) phải > 0";
+                return false;
+            }
+
+            // 3. Check Anchorage (nếu cần cho tính toán neo/nối)
+            if (Anchorage == null)
+            {
+                error = "AnchorageConfig chưa khởi tạo";
+                return false;
+            }
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -295,17 +343,6 @@ namespace DTS_Engine.Core.Data
         /// Chiều cao tối thiểu để đặt thép sườn (mm)
         /// </summary>
         public int WebBarMinHeight { get; set; } = 700;
-
-        /// <summary>
-        /// Đường kính cốt đai (mm) - Dùng để trừ khi tính bề rộng khả dụng
-        /// </summary>
-        public double StirrupDiameter { get; set; } = 10.0;
-
-        /// <summary>
-        /// Khoảng hở tịnh tối thiểu (mm) - TCVN: 25, ACI: 25.4
-        /// Dùng cho công thức: spacing = max(barDia, MinClearance)
-        /// </summary>
-        public double MinClearance { get; set; } = 25.0;
 
         /// <summary>
         /// Hệ số tăng chiều dài neo cho thép lớp trên (vùng đổ BT >300mm)

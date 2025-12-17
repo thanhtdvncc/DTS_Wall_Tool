@@ -1,4 +1,4 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.Runtime;
@@ -327,6 +327,41 @@ namespace DTS_Engine.Commands
                 WriteMessage($"   Đã đổi màu {changed}/{insufficientCount} dầm.");
             }
             // === END Sync Highlight ===
+
+            // === AUTO-GROUP: Tự động gom nhóm sau khi import ===
+            // Ngăn user chạy Viewer với dầm rời rạc
+            if (successCount > 0)
+            {
+                WriteMessage("\n→ Đang tự động gom nhóm dầm...");
+                try
+                {
+                    DTS_AUTO_GROUP();
+                }
+                catch (System.Exception exGroup)
+                {
+                    WriteMessage($"   Lỗi gom nhóm: {exGroup.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// WORKFLOW: Import dữ liệu SAP + Tự động gom nhóm
+        /// Kết hợp DTS_REBAR_SAP_RESULT + DTS_REBAR_GROUP_AUTO
+        /// Tránh trường hợp user quên gom nhóm sau khi import
+        /// </summary>
+        [CommandMethod("DTS_REBAR_IMPORT_SAP")]
+        public void DTS_REBAR_IMPORT_SAP()
+        {
+            WriteMessage("=== IMPORT SAP + AUTO GROUP ===");
+
+            // Bước 1: Import dữ liệu từ SAP (gọi command hiện có)
+            DTS_REBAR_SAP_RESULT();
+
+            // Bước 2: Tự động gom nhóm các dầm vừa import
+            WriteMessage("\n→ Đang tự động gom nhóm dầm...");
+            DTS_AUTO_GROUP();
+
+            WriteSuccess("✅ Đã import dữ liệu SAP và gom nhóm tự động!");
         }
 
         /// <summary>
