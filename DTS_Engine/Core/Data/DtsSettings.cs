@@ -36,8 +36,9 @@ namespace DTS_Engine.Core.Data
         // ===== MULTI-STORY NAMING SYSTEM =====
         /// <summary>
         /// Danh sách cấu hình đặt tên theo tầng.
-        /// Khởi tạo với list rỗng để tránh NullReferenceException khi load file cũ.
+        /// Dùng ObjectCreationHandling.Replace để ghi đè list cũ khi deserialize.
         /// </summary>
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<StoryNamingConfig> StoryConfigs { get; set; } = new List<StoryNamingConfig>();
 
         /// <summary>
@@ -45,6 +46,13 @@ namespace DTS_Engine.Core.Data
         /// Mặc định 500mm cho phép bắt dính dầm có chút lệch cao độ.
         /// </summary>
         public double StoryTolerance { get; set; } = 500;
+
+        /// <summary>
+        /// User-defined presets cho Anchorage tab.
+        /// Lưu vào file thay vì localStorage để đảm bảo persistence.
+        /// </summary>
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
+        public Dictionary<string, object> UserPresets { get; set; } = new Dictionary<string, object>();
 
         /// <summary>
         /// Tìm cấu hình tầng dựa trên cao độ Z của dầm.
@@ -254,7 +262,9 @@ namespace DTS_Engine.Core.Data
         /// <summary>
         /// Kho thép chuẩn của dự án (Inventory) - TCVN mặc định
         /// User có thể bỏ chọn các đường kính không sử dụng
+        /// Dùng ObjectCreationHandling.Replace để tránh duplicate khi load.
         /// </summary>
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<int> AvailableDiameters { get; set; } = new List<int>
             { 6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32 };
 
@@ -604,13 +614,19 @@ namespace DTS_Engine.Core.Data
         public CalculationMode Mode { get; set; } = CalculationMode.ByFactor;
 
         // ===== THƯ VIỆN VẬT LIỆU (Available - bên trái rổ) =====
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> AvailableConcreteGrades { get; set; } = new List<string>
             { "B15", "B20", "B25", "B30", "B35", "B40", "B45", "B50" };
+
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> AvailableSteelGrades { get; set; } = new List<string>
             { "CB240", "CB300", "CB400", "CB500" };
 
         // ===== VẬT LIỆU DỰ ÁN (Selected - bên phải rổ) =====
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> ConcreteGrades { get; set; } = new List<string> { "B20", "B25", "B30", "B35" };
+
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
         public List<string> SteelGrades { get; set; } = new List<string> { "CB300", "CB400" };
 
         // ===== BẢNG TRA CHIỀU DÀI NEO (Development Length) =====

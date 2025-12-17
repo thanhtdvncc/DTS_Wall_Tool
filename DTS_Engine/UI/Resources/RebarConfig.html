@@ -668,44 +668,36 @@
 
         <!-- TAB 4: ANCHORAGE (Neo & Nối) - COMPREHENSIVE -->
         <div class="tab-panel" id="tab4">
-            <!-- QUICK PRESETS TOOLBAR -->
+            <!-- QUICK PRESETS TOOLBAR - COMPACT -->
             <div class="section" style="background:#e8f4fd;border:1px solid #3b82f6;">
-                <div class="section-header" style="background:#3b82f6;color:white;">⚡ Quick Presets</div>
-                <div class="section-body">
-                    <div style="display:flex;gap:16px;">
-                        <!-- LEFT: Preset Buttons -->
-                        <div style="flex:1;">
-                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
-                                <button id="presetTCVN" class="btn-primary" onclick="loadPreset('TCVN')"
-                                    title="TCVN 5574:2018">
-                                    <img src="https://flagcdn.com/w20/vn.png"
-                                        style="width:16px;height:12px;margin-right:2px;"> TCVN</button>
-                                <button id="presetACI" class="btn-secondary" onclick="loadPreset('ACI')"
-                                    title="ACI 318-19">
-                                    <img src="https://flagcdn.com/w20/us.png"
-                                        style="width:16px;height:12px;margin-right:2px;"> ACI</button>
-                                <button id="presetEUROCODE" class="btn-secondary" onclick="loadPreset('EUROCODE')"
-                                    title="Eurocode 2">
-                                    <img src="https://flagcdn.com/w20/eu.png"
-                                        style="width:16px;height:12px;margin-right:2px;"> EC2</button>
-                                <button id="presetRC" class="btn-secondary" onclick="loadPreset('RC')"
-                                    title="Standard RC SD420">📋 RC</button>
-                            </div>
-                            <!-- Saved Presets -->
-                            <div id="savedPresetsContainer" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
-                            <div class="hint" style="margin-top:6px;">
-                                Tiêu chuẩn: <b id="currentStandard">TCVN</b> | Chế độ: <b id="currentModeLabel">Hệ số
-                                    ×d</b>
-                            </div>
+                <div class="section-header"
+                    style="background:#3b82f6;color:white;display:flex;justify-content:space-between;align-items:center;padding:6px 12px;">
+                    <span>⚡ Quick Presets</span>
+                    <div style="display:flex;gap:4px;align-items:center;">
+                        <button id="presetTCVN" class="btn-primary" onclick="loadPreset('TCVN')" title="TCVN 5574:2018"
+                            style="padding:2px 6px;font-size:10px;">🇻🇳 TCVN</button>
+                        <button id="presetACI" class="btn-secondary" onclick="loadPreset('ACI')" title="ACI 318-19"
+                            style="padding:2px 6px;font-size:10px;">🇺🇸 ACI</button>
+                        <button id="presetEUROCODE" class="btn-secondary" onclick="loadPreset('EUROCODE')"
+                            title="Eurocode 2" style="padding:2px 6px;font-size:10px;">🇪🇺 EC2</button>
+                        <button id="presetRC" class="btn-secondary" onclick="loadPreset('RC')" title="Standard RC SD420"
+                            style="padding:2px 6px;font-size:10px;">📋 RC</button>
+                    </div>
+                </div>
+                <div class="section-body" style="padding:8px 12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span style="font-size:11px;color:#666;">Tiêu chuẩn: <b id="currentStandard">TCVN</b> | Chế
+                                độ: <b id="currentModeLabel">Hệ số ×d</b></span>
+                            <div id="savedPresetsContainer" style="display:flex;gap:3px;flex-wrap:wrap;"></div>
                         </div>
-                        <!-- RIGHT: Action Buttons -->
-                        <div style="display:flex;flex-direction:column;gap:4px;min-width:80px;">
-                            <button class="btn-secondary btn-sm" onclick="saveCurrentPreset()" title="Lưu">💾
-                                Lưu</button>
-                            <button class="btn-secondary btn-sm" onclick="createNewPreset()" title="Tạo mới">➕
-                                Tạo</button>
-                            <button class="btn-secondary btn-sm" onclick="deleteSavedPreset()" title="Xóa">🗑️
-                                Xóa</button>
+                        <div style="display:flex;gap:3px;">
+                            <button class="btn-secondary" onclick="saveCurrentPreset()" title="Lưu"
+                                style="padding:2px 6px;font-size:10px;">💾</button>
+                            <button class="btn-secondary" onclick="createNewPreset()" title="Tạo mới"
+                                style="padding:2px 6px;font-size:10px;">➕</button>
+                            <button class="btn-secondary" onclick="deleteSavedPreset()" title="Xóa"
+                                style="padding:2px 6px;font-size:10px;">🗑️</button>
                         </div>
                     </div>
                 </div>
@@ -1219,68 +1211,83 @@
             }
         }
 
-        // ===== SAVE/LOAD PRESET =====
+        // ===== SAVE/LOAD PRESET (Using data.UserPresets instead of localStorage) =====
         function saveCurrentPreset() {
             const name = prompt('Nhập tên preset:', anchorageState.standardName || 'My Preset');
             if (!name) return;
 
+            // Create preset data object
             const presetData = {
-                name: name,
-                mode: anchorageState.mode,
-                availableConcrete: anchorageState.availableConcrete,
-                availableSteel: anchorageState.availableSteel,
-                selectedConcrete: anchorageState.selectedConcrete,
-                selectedSteel: anchorageState.selectedSteel,
-                anchorageValues: anchorageState.anchorageValues,
-                spliceValues: anchorageState.spliceValues
+                StandardName: name,
+                Mode: anchorageState.mode,
+                AvailableConcreteGrades: anchorageState.availableConcrete,
+                AvailableSteelGrades: anchorageState.availableSteel,
+                ConcreteGrades: anchorageState.selectedConcrete,
+                SteelGrades: anchorageState.selectedSteel,
+                AnchorageValues: anchorageState.anchorageValues,
+                SpliceValues: anchorageState.spliceValues
             };
 
-            localStorage.setItem('DTS_AnchoragePreset_' + name.replace(/\s/g, '_'), JSON.stringify(presetData));
+            // Save to data.UserPresets (will be persisted to C# on doSave)
+            if (!data.UserPresets) data.UserPresets = {};
+            data.UserPresets[name] = presetData;
+
             anchorageState.standardName = name;
             document.getElementById('currentStandard').textContent = name;
-            renderSavedPresets(); // Update UI
+            renderSavedPresets();
+
+            alert(`Đã lưu preset "${name}". Bấm "Lưu cấu hình" để ghi xuống file.`);
         }
 
         function renderSavedPresets() {
             const container = document.getElementById('savedPresetsContainer');
             if (!container) return;
 
-            const presets = [];
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key.startsWith('DTS_AnchoragePreset_')) {
-                    presets.push(key.replace('DTS_AnchoragePreset_', '').replace(/_/g, ' '));
-                }
-            }
+            // Get presets from data.UserPresets (loaded from C#)
+            const userPresets = data.UserPresets || {};
+            const presetNames = Object.keys(userPresets);
 
-            if (presets.length === 0) {
-                container.innerHTML = '<span style="color:#999;font-size:11px;">Chưa có preset đã lưu</span>';
+            if (presetNames.length === 0) {
+                container.innerHTML = '<span style="color:#999;font-size:11px;">Chưa có preset</span>';
                 return;
             }
 
-            container.innerHTML = presets.map(p =>
-                `<button class="btn-secondary btn-sm" onclick="loadSavedPresetByName('${p.replace(/'/g, "\\'")}')" 
-                    style="font-size:10px;padding:2px 6px;" title="${p}">📁 ${p}</button>`
+            container.innerHTML = presetNames.map(name =>
+                `<button class="btn-secondary btn-sm" onclick="loadUserPreset('${name.replace(/'/g, "\\'")}')" 
+                    style="font-size:10px;padding:2px 6px;margin-bottom:2px;" title="${name}">📁 ${name}</button>`
             ).join('');
         }
 
-        function loadSavedPresetByName(name) {
-            const key = 'DTS_AnchoragePreset_' + name.replace(/\s/g, '_');
-            const dataStr = localStorage.getItem(key);
-            if (!dataStr) return;
+        function loadUserPreset(name) {
+            if (!data.UserPresets || !data.UserPresets[name]) return;
 
-            try {
-                const presetData = JSON.parse(dataStr);
-                Object.assign(anchorageState, presetData);
-                document.getElementById('currentStandard').textContent = presetData.name;
-                document.querySelector(`input[name="calcMode"][value="${presetData.mode}"]`).checked = true;
-                updateModeLabel();
-                updateAnchorageHint();
-                renderShuttleSelectors();
-                renderDiameterMatrices();
-            } catch (e) {
-                alert('Lỗi đọc preset: ' + e.message);
-            }
+            const preset = data.UserPresets[name];
+
+            // Map data from preset to anchorageState
+            anchorageState.standardName = preset.StandardName || name;
+            anchorageState.mode = preset.Mode || 'ByFactor';
+            anchorageState.availableConcrete = preset.AvailableConcreteGrades || [];
+            anchorageState.availableSteel = preset.AvailableSteelGrades || [];
+            anchorageState.selectedConcrete = preset.ConcreteGrades || [];
+            anchorageState.selectedSteel = preset.SteelGrades || [];
+            anchorageState.anchorageValues = preset.AnchorageValues || {};
+            anchorageState.spliceValues = preset.SpliceValues || {};
+
+            // Refresh UI
+            document.getElementById('currentStandard').textContent = anchorageState.standardName;
+            const modeRadio = document.querySelector(`input[name="calcMode"][value="${anchorageState.mode}"]`);
+            if (modeRadio) modeRadio.checked = true;
+
+            highlightPresetButton(null);
+            updateModeLabel();
+            updateAnchorageHint();
+            renderShuttleSelectors();
+            renderDiameterMatrices();
+        }
+
+        // Keep loadSavedPresetByName as alias for backward compatibility
+        function loadSavedPresetByName(name) {
+            loadUserPreset(name);
         }
 
         function createNewPreset() {
@@ -1297,53 +1304,54 @@
             anchorageState.anchorageValues = {};
             anchorageState.spliceValues = {};
 
-            // Auto-save to localStorage
+            // Save to data.UserPresets
             const presetData = {
-                name: name,
-                mode: anchorageState.mode,
-                availableConcrete: anchorageState.availableConcrete,
-                availableSteel: anchorageState.availableSteel,
-                selectedConcrete: anchorageState.selectedConcrete,
-                selectedSteel: anchorageState.selectedSteel,
-                anchorageValues: anchorageState.anchorageValues,
-                spliceValues: anchorageState.spliceValues
+                StandardName: name,
+                Mode: anchorageState.mode,
+                AvailableConcreteGrades: anchorageState.availableConcrete,
+                AvailableSteelGrades: anchorageState.availableSteel,
+                ConcreteGrades: anchorageState.selectedConcrete,
+                SteelGrades: anchorageState.selectedSteel,
+                AnchorageValues: anchorageState.anchorageValues,
+                SpliceValues: anchorageState.spliceValues
             };
-            localStorage.setItem('DTS_AnchoragePreset_' + name.replace(/\s/g, '_'), JSON.stringify(presetData));
+            if (!data.UserPresets) data.UserPresets = {};
+            data.UserPresets[name] = presetData;
 
             // Update UI
             document.getElementById('currentStandard').textContent = name;
             document.querySelector('input[name="calcMode"][value="ByFactor"]').checked = true;
-            highlightPresetButton(null); // No preset active
+            highlightPresetButton(null);
             updateModeLabel();
             updateAnchorageHint();
             renderShuttleSelectors();
             renderDiameterMatrices();
-            renderSavedPresets(); // Update saved presets list
+            renderSavedPresets();
+
+            alert(`Đã tạo preset "${name}". Bấm "Lưu cấu hình" để ghi xuống file.`);
         }
 
         function deleteSavedPreset() {
-            const presets = [];
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key.startsWith('DTS_AnchoragePreset_')) {
-                    presets.push(key.replace('DTS_AnchoragePreset_', '').replace(/_/g, ' '));
-                }
-            }
-
-            if (presets.length === 0) {
+            if (!data.UserPresets) {
                 alert('Chưa có preset nào được lưu.');
                 return;
             }
 
-            const name = prompt('Chọn preset để XÓA:\n\n' + presets.map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n\nNhập số thứ tự:');
-            const idx = parseInt(name) - 1;
-            if (isNaN(idx) || idx < 0 || idx >= presets.length) return;
+            const presetNames = Object.keys(data.UserPresets);
+            if (presetNames.length === 0) {
+                alert('Chưa có preset nào được lưu.');
+                return;
+            }
 
-            const key = 'DTS_AnchoragePreset_' + presets[idx].replace(/\s/g, '_');
-            if (confirm(`Xóa preset "${presets[idx]}"?`)) {
-                localStorage.removeItem(key);
-                renderSavedPresets(); // Update UI after delete
-                alert('Đã xóa.');
+            const name = prompt('Chọn preset để XÓA:\n\n' + presetNames.map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n\nNhập số thứ tự:');
+            const idx = parseInt(name) - 1;
+            if (isNaN(idx) || idx < 0 || idx >= presetNames.length) return;
+
+            const presetName = presetNames[idx];
+            if (confirm(`Xóa preset "${presetName}"?`)) {
+                delete data.UserPresets[presetName];
+                renderSavedPresets();
+                alert(`Đã xóa. Bấm "Lưu cấu hình" để ghi thay đổi.`);
             }
         }
 
@@ -1530,30 +1538,31 @@
 
         // ===== LOAD/SAVE =====
         function loadAnchorageTab() {
-            // Load from data or use defaults
+            // Load from data - use spread operator to copy arrays (avoid reference issues)
             if (data.Anchorage?.StandardName) {
                 anchorageState.standardName = data.Anchorage.StandardName;
             }
             if (data.Anchorage?.Mode) {
                 anchorageState.mode = data.Anchorage.Mode;
             }
-            if (data.Anchorage?.AvailableConcreteGrades) {
-                anchorageState.availableConcrete = data.Anchorage.AvailableConcreteGrades;
+            // Use spread to create new arrays (prevent duplicates from default init)
+            if (data.Anchorage?.AvailableConcreteGrades?.length > 0) {
+                anchorageState.availableConcrete = [...data.Anchorage.AvailableConcreteGrades];
             }
-            if (data.Anchorage?.AvailableSteelGrades) {
-                anchorageState.availableSteel = data.Anchorage.AvailableSteelGrades;
+            if (data.Anchorage?.AvailableSteelGrades?.length > 0) {
+                anchorageState.availableSteel = [...data.Anchorage.AvailableSteelGrades];
             }
-            if (data.Anchorage?.ConcreteGrades) {
-                anchorageState.selectedConcrete = data.Anchorage.ConcreteGrades;
+            if (data.Anchorage?.ConcreteGrades?.length > 0) {
+                anchorageState.selectedConcrete = [...data.Anchorage.ConcreteGrades];
             }
-            if (data.Anchorage?.SteelGrades) {
-                anchorageState.selectedSteel = data.Anchorage.SteelGrades;
+            if (data.Anchorage?.SteelGrades?.length > 0) {
+                anchorageState.selectedSteel = [...data.Anchorage.SteelGrades];
             }
             if (data.Anchorage?.AnchorageValues) {
-                anchorageState.anchorageValues = data.Anchorage.AnchorageValues;
+                anchorageState.anchorageValues = JSON.parse(JSON.stringify(data.Anchorage.AnchorageValues));
             }
             if (data.Anchorage?.SpliceValues) {
-                anchorageState.spliceValues = data.Anchorage.SpliceValues;
+                anchorageState.spliceValues = JSON.parse(JSON.stringify(data.Anchorage.SpliceValues));
             }
 
             // Update UI
@@ -2094,6 +2103,8 @@
                     SortCorner: parseInt(getVal('SortCorner')) || 0,
                     SortDirection: parseInt(getVal('SortDirection')) || 0
                 },
+                // User Presets (from Anchorage tab)
+                UserPresets: data.UserPresets || {},
                 // Story Naming Config (PRIMARY)
                 StoryTolerance: getVal('StoryTolerance') || 500,
                 StoryConfigs: collectStoryConfigs(),
