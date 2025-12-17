@@ -1,6 +1,4 @@
-using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Windows;
-using System;
 using System.Drawing;
 
 namespace DTS_Engine.UI.Forms
@@ -15,36 +13,67 @@ namespace DTS_Engine.UI.Forms
         private static DashboardControl _control;
 
         /// <summary>
-        /// Hiện/Ẩn Dashboard Mini-Toolbar
+        /// Hiện Dashboard Mini-Toolbar
         /// </summary>
         public static void ShowPalette()
         {
             if (_ps == null)
             {
-                _ps = new PaletteSet("DTS Mini", new Guid("E8F3D5A1-7B2C-4D6E-9A8F-1C3B5D7E9F0A"));
+                _ps = new PaletteSet("DTS", new System.Guid("E8F3D5A1-7B2C-4D6E-9A8F-1C3B5D7E9F0A"));
 
-                // Kích thước compact: 9 nút x 38px + padding + margins
-                int width = 380;
-                int height = 55;
+                // Kích thước siêu nhỏ gọn
+                // Chiều rộng = 420px (10 nút)
+                // Chiều cao = 40px (chỉ đủ icon, không có tab header)
+                int barWidth = 420;
+                int barHeight = 40;
 
-                _ps.MinimumSize = new Size(width, height);
-                _ps.Size = new Size(width, height);
+                _ps.MinimumSize = new Size(barWidth, barHeight);
+                _ps.Size = new Size(barWidth, barHeight);
 
-                // Dock = None để trôi nổi tự do
+                // Trôi nổi, không dính vào cạnh
                 _ps.Dock = DockSides.None;
 
-                // Tắt bớt nút menu thừa cho gọn
-                _ps.Style = PaletteSetStyles.ShowCloseButton | PaletteSetStyles.ShowAutoHideButton;
+                // Style tối giản - tắt tất cả header buttons để tiết kiệm không gian
+                _ps.Style = PaletteSetStyles.ShowCloseButton;
+
+                // Ẩn tab để tiết kiệm thêm không gian
+                _ps.SetSize(new Size(barWidth, barHeight));
 
                 _control = new DashboardControl();
-                _ps.Add("Toolbar", _control);
+                _ps.Add("", _control); // Tên trống để ẩn tab
             }
 
-            _ps.Visible = !_ps.Visible;
+            _ps.Visible = true;
         }
 
         /// <summary>
-        /// Đóng Dashboard
+        /// Ẩn Dashboard
+        /// </summary>
+        public static void HidePalette()
+        {
+            if (_ps != null)
+            {
+                _ps.Visible = false;
+            }
+        }
+
+        /// <summary>
+        /// Toggle hiện/ẩn Dashboard
+        /// </summary>
+        public static void TogglePalette()
+        {
+            if (_ps == null)
+            {
+                ShowPalette();
+            }
+            else
+            {
+                _ps.Visible = !_ps.Visible;
+            }
+        }
+
+        /// <summary>
+        /// Đóng hoàn toàn Dashboard (khi unload DLL)
         /// </summary>
         public static void ClosePalette()
         {

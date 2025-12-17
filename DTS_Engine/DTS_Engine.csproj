@@ -227,7 +227,9 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="UI\Forms\DashboardPalette.cs" />
-    <Compile Include="UI\Forms\DashboardControl.cs" />
+    <Compile Include="UI\Forms\DashboardControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
     <Compile Include="UI\SettingsManager.cs" />
   </ItemGroup>
   <ItemGroup>
