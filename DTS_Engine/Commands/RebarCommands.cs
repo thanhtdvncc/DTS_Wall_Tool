@@ -557,53 +557,18 @@ namespace DTS_Engine.Commands
         }
 
         [CommandMethod("DTS_REBAR_BEAM_NAME")]
+        [CommandMethod("DTS_REBAR_BEAM_NAME")]
         public void DTS_REBAR_BEAM_NAME()
         {
-            WriteMessage("=== SMART BEAM NAMING ===");
+            WriteMessage("=== SMART BEAM NAMING (SCANLINE SORT) ===");
             WriteMessage("\nChọn các đường Dầm cần đặt tên: ");
             var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
             if (selectedIds.Count == 0) return;
 
             var settings = RebarSettings.Instance;
 
-            // Lấy thông tin lưới trục 
-            List<Point3d> gridIntersections = new List<Point3d>();
-            List<Curve> gridLines = new List<Curve>();
-
-            UsingTransaction(tr =>
-            {
-                var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForRead) as BlockTableRecord;
-                foreach (ObjectId id in btr)
-                {
-                    var obj = tr.GetObject(id, OpenMode.ForRead);
-                    if (obj is Curve crv)
-                    {
-                        string layer = (obj as Entity)?.Layer ?? "";
-                        if (layer.ToUpper().Contains("GRID") || layer.ToUpper().Contains("AXIS"))
-                            gridLines.Add(crv);
-                    }
-                }
-
-                for (int i = 0; i < gridLines.Count; i++)
-                {
-                    for (int j = i + 1; j < gridLines.Count; j++)
-                    {
-                        var pts = new Point3dCollection();
-                        gridLines[i].IntersectWith(gridLines[j], Intersect.ExtendBoth, pts, IntPtr.Zero, IntPtr.Zero);
-                        foreach (Point3d p in pts)
-                        {
-                            if (!gridIntersections.Any(x => x.DistanceTo(p) < 100))
-                                gridIntersections.Add(p);
-                        }
-                    }
-                }
-            });
-
-            WriteMessage($"Tìm thấy {gridIntersections.Count} giao điểm lưới trục.");
-
-            // Thu thập dữ liệu dầm
-            var beamsData = new List<(ObjectId Id, Point3d Mid, bool IsGirder, bool IsXDir, string GroupKey,
-                                      double Width, double Height, string TopRebar, string BotRebar, string Stirrup)>();
+            // 1. Thu thập dữ liệu dầm
+            var allBeams = new List<(ObjectId Id, Point3d Mid, bool IsGirder, bool IsXDir, BeamResultData Data, double LevelZ)>();
 
             UsingTransaction(tr =>
             {
@@ -616,146 +581,120 @@ namespace DTS_Engine.Commands
                     Vector3d dir = curve.EndPoint - curve.StartPoint;
                     bool isXDir = Math.Abs(dir.X) > Math.Abs(dir.Y);
 
-                    bool onGridStart = gridIntersections.Any(g => g.DistanceTo(curve.StartPoint) < 200);
-                    bool onGridEnd = gridIntersections.Any(g => g.DistanceTo(curve.EndPoint) < 200);
-                    bool isGirder = onGridStart && onGridEnd;
-
-                    // Đọc XData để lấy rebar strings
                     var xdata = XDataUtils.ReadElementData(curve) as BeamResultData;
-                    string topRebar = "-", botRebar = "-", stirrup = "-";
-                    double width = 0, height = 0;
 
+                    // Fix: Làm tròn Z để phân tầng
+                    double levelZ = Math.Round(mid.Z / 100.0) * 100.0;
+
+                    bool isGirder = false;
                     if (xdata != null)
                     {
-                        topRebar = (xdata.TopRebarString != null && xdata.TopRebarString.Length > 1) ? xdata.TopRebarString[1] ?? "-" : "-";
-                        botRebar = (xdata.BotRebarString != null && xdata.BotRebarString.Length > 1) ? xdata.BotRebarString[1] ?? "-" : "-";
-                        stirrup = (xdata.StirrupString != null && xdata.StirrupString.Length > 1) ? xdata.StirrupString[1] ?? "-" : "-";
-                        width = xdata.Width;
-                        height = xdata.SectionHeight;
+                        // Ưu tiên lấy từ XData nếu đã chạy detect
+                        // Nếu chưa, dùng heuristic đơn giản: Width >= 300 là Girder
+                        isGirder = xdata.Width >= 300;
                     }
 
-                    // GroupKey = [IsGirder]_[Dir]_[WxH]_[Top]_[Bot]_[Stirrup]
-                    string groupKey = $"{(isGirder ? "G" : "B")}_{(isXDir ? "X" : "Y")}_{width:F0}x{height:F0}_{topRebar}_{botRebar}_{stirrup}";
-
-                    beamsData.Add((id, mid, isGirder, isXDir, groupKey, width, height, topRebar, botRebar, stirrup));
+                    allBeams.Add((id, mid, isGirder, isXDir, xdata, levelZ));
                 }
             });
 
-            // Gom nhóm theo GroupKey
-            var groups = beamsData.GroupBy(b => b.GroupKey).ToList();
-            WriteMessage($"Gom được {groups.Count} nhóm dầm.");
-
-            // Xác định "dầm đại diện" cho mỗi nhóm (theo góc bắt đầu)
-            // SortCorner: 0=TL, 1=TR, 2=BL, 3=BR
-            // SortDirection: 0=Horizontal (X first), 1=Vertical (Y first)
-            bool sortYDesc = settings.SortCorner <= 1; // Top = Y lớn trước
-            bool sortXDesc = settings.SortCorner == 1 || settings.SortCorner == 3; // Right = X lớn trước
-            bool priorityX = settings.SortDirection == 0;
-
-            Func<Point3d, Point3d, int> comparePoints = (a, b) =>
-            {
-                double tolerance = 500; // tolerance để nhóm thành hàng/cột
-
-                if (priorityX)
-                {
-                    // Horizontal: so sánh Y trước (để phân hàng), nếu cùng hàng thì so sánh X
-                    double yA = Math.Round(a.Y / tolerance);
-                    double yB = Math.Round(b.Y / tolerance);
-                    if (Math.Abs(yA - yB) > 0.1)
-                        return sortYDesc ? -yA.CompareTo(yB) : yA.CompareTo(yB);
-                    return sortXDesc ? -a.X.CompareTo(b.X) : a.X.CompareTo(b.X);
-                }
-                else
-                {
-                    // Vertical: so sánh X trước (để phân cột), nếu cùng cột thì so sánh Y
-                    double xA = Math.Round(a.X / tolerance);
-                    double xB = Math.Round(b.X / tolerance);
-                    if (Math.Abs(xA - xB) > 0.1)
-                        return sortXDesc ? -xA.CompareTo(xB) : xA.CompareTo(xB);
-                    return sortYDesc ? -a.Y.CompareTo(b.Y) : a.Y.CompareTo(b.Y);
-                }
-            };
-
-            // Sắp xếp nhóm theo dầm đại diện (dầm có tọa độ ưu tiên nhất trong nhóm)
-            var sortedGroups = groups
-                .Select(g => new
-                {
-                    Group = g,
-                    Representative = g.OrderBy(b => 0, Comparer<int>.Create((_, __) => 0))
-                                      .First() // Tìm dầm đứng "đầu tiên" theo thứ tự sort
-                })
-                .OrderBy(x => x.Group.First().IsGirder ? 0 : 1) // Girder trước Beam
-                .ThenBy(x => 0, Comparer<int>.Create((_, __) => 0))
-                .ToList();
-
-            // Re-sort groups properly using the representative
-            sortedGroups = groups
-                .Select(g =>
-                {
-                    var sorted = g.ToList();
-                    sorted.Sort((a, b) => comparePoints(a.Mid, b.Mid));
-                    return new { Group = g, Rep = sorted.First().Mid, IsGirder = g.First().IsGirder };
-                })
-                .OrderBy(x => x.IsGirder ? 0 : 1)
-                .ThenBy(x => x.Rep, Comparer<Point3d>.Create((a, b) => comparePoints(a, b)))
-                .Select(x => new { Group = x.Group, Representative = x.Group.First() })
-                .ToList();
-
-            // === SMART NAMING: Group by Story using Z coordinate ===
-            // Get first beam's Z to determine story (all beams in a group are at same Z)
-            var groupsByStory = sortedGroups
-                .GroupBy(g =>
-                {
-                    var firstBeam = g.Group.First();
-                    return Math.Round(firstBeam.Mid.Z / 100) * 100; // Round to 100mm
-                })
-                .OrderBy(s => s.Key);
+            // 2. Xử lý từng tầng (Level Z)
+            var beamsByLevel = allBeams.GroupBy(b => b.LevelZ).OrderBy(g => g.Key);
 
             UsingTransaction(tr =>
             {
                 var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
 
-                foreach (var storyGroup in groupsByStory)
+                foreach (var levelGroup in beamsByLevel)
                 {
-                    double levelZ = storyGroup.Key;
+                    double currentZ = levelGroup.Key;
+                    WriteMessage($"\n--- Đang xử lý Tầng Z={currentZ:F0} ---");
 
-                    // Get story config for this Z level (from DtsSettings)
-                    var storyConfig = DtsSettings.Instance.GetStoryConfig(levelZ);
+                    // Config naming cho tầng này
+                    var storyConfig = DtsSettings.Instance.GetStoryConfig(currentZ);
                     string beamPrefix = storyConfig?.BeamPrefix ?? "B";
                     string girderPrefix = storyConfig?.GirderPrefix ?? "G";
                     string suffix = storyConfig?.Suffix ?? "";
                     int startIndex = storyConfig?.StartIndex ?? 1;
 
-                    int girderCount = startIndex, beamCount = startIndex;
+                    // Tách Dầm chính / Dầm phụ để đặt tên riêng
+                    var girders = levelGroup.Where(b => b.IsGirder).ToList();
+                    var beams = levelGroup.Where(b => !b.IsGirder).ToList();
 
-                    foreach (var group in storyGroup)
+                    // Hàm xử lý đặt tên cho một danh sách dầm (Generic)
+                    void ProcessList(List<(ObjectId Id, Point3d Mid, bool IsGirder, bool IsXDir, BeamResultData Data, double LevelZ)> list, string prefix)
                     {
-                        bool isGirder = group.Group.First().IsGirder;
-                        string prefix = isGirder ? girderPrefix : beamPrefix;
-                        int number = isGirder ? girderCount++ : beamCount++;
-                        string beamName = $"{prefix}{number}{suffix}";
+                        if (list.Count == 0) return;
 
-                        // Sort beams within group theo thứ tự
-                        var sortedMembers = group.Group.ToList();
-                        sortedMembers.Sort((a, b) => comparePoints(a.Mid, b.Mid));
+                        // BƯỚC QUAN TRỌNG: SORT KHÔNG GIAN (Scanline Sort)
+                        // Để đơn giản và chuẩn xác, ta dùng thuật toán Row-Binning (gom hàng)
+                        // Binning: Các dầm có Y chênh lệch < 500mm coi như cùng 1 hàng.
 
-                        foreach (var beam in sortedMembers)
+                        double binTolerance = 500.0;
+
+                        var sortedList = list.OrderByDescending(b => Math.Round(b.Mid.Y / binTolerance)) // Gom hàng Y trước (từ trên xuống)
+                                             .ThenBy(b => b.Mid.X) // Trong cùng hàng, sort X tăng dần (từ trái qua)
+                                             .ToList();
+
+                        // Danh sách Assigned Types để Filter Re-use (WxH + Steel)
+                        // Key: Identifier String -> Value: Assigned Number
+                        var assignedTypes = new Dictionary<string, int>();
+                        int nextNumber = startIndex;
+
+                        foreach (var item in sortedList)
                         {
-                            var curve = tr.GetObject(beam.Id, OpenMode.ForWrite) as Curve;
-                            if (curve == null) continue;
+                            // Tạo Key định danh để so sánh giống nhau
+                            string w = item.Data?.Width.ToString("F0") ?? "0";
+                            string h = item.Data?.SectionHeight.ToString("F0") ?? "0";
 
-                            Point3d pStart = curve.StartPoint;
-                            Point3d pEnd = curve.EndPoint;
-                            LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, beamName, LabelPosition.MiddleBottom);
+                            // Lấy string thép (nếu null thì là "-")
+                            string top = (item.Data?.TopRebarString != null && item.Data.TopRebarString.Length > 1) ? item.Data.TopRebarString[1] ?? "-" : "-";
+                            string bot = (item.Data?.BotRebarString != null && item.Data.BotRebarString.Length > 1) ? item.Data.BotRebarString[1] ?? "-" : "-";
+                            string stir = (item.Data?.StirrupString != null && item.Data.StirrupString.Length > 1) ? item.Data.StirrupString[1] ?? "-" : "-";
+
+                            // Key để gom nhóm: WxH_Top_Bot_Stir
+                            string typeKey = $"{w}x{h}_{top.Trim()}_{bot.Trim()}_{stir.Trim()}";
+
+                            int number;
+                            if (assignedTypes.ContainsKey(typeKey))
+                            {
+                                // Đã có dầm giống hệt -> Dùng lại số cũ
+                                number = assignedTypes[typeKey];
+                            }
+                            else
+                            {
+                                // Chưa có -> Cấp số mới
+                                number = nextNumber++;
+                                assignedTypes[typeKey] = number;
+                            }
+
+                            string fullName = $"{prefix}{number}{suffix}";
+
+                            // Vẽ Label và Cập nhật XData
+                            var curve = tr.GetObject(item.Id, OpenMode.ForWrite) as Curve;
+                            if (curve != null)
+                            {
+                                if (item.Data != null)
+                                {
+                                    item.Data.SapElementName = fullName; // Update name in XData
+                                    XDataUtils.UpdateElementData(curve, item.Data, tr);
+                                }
+
+                                Point3d pStart = curve.StartPoint;
+                                Point3d pEnd = curve.EndPoint;
+
+                                LabelPlotter.PlotLabel(btr, tr, pStart, pEnd, fullName, LabelPosition.MiddleBottom);
+                            }
                         }
                     }
 
-                    WriteMessage($"  Story Z={levelZ:F0}mm: {girderCount - startIndex} Girder, {beamCount - startIndex} Beam");
+                    // Chạy đặt tên cho Girder và Beam riêng
+                    ProcessList(girders, girderPrefix);
+                    ProcessList(beams, beamPrefix);
                 }
             });
 
-            WriteSuccess($"Đã đặt tên theo StoryConfigs. Dùng Settings → Naming để cấu hình prefix/suffix theo tầng.");
-            WriteMessage($"Quy tắc: Corner={settings.SortCorner}, Direction={(settings.SortDirection == 0 ? "Horizontal" : "Vertical")}");
+            WriteSuccess("✅ Đã đặt tên dầm theo thứ tự không gian và gom nhóm (Scanline Sort).");
         }
 
         [CommandMethod("DTS_REBAR_EXPORT_SAP")]
