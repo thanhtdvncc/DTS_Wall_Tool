@@ -2337,7 +2337,9 @@ namespace DTS_Engine.Commands
                                 CenterX = cx,
                                 CenterY = cy,
                                 Width = w,
-                                Depth = d
+                                Depth = d,
+                                // Capture Z elevation for story filtering
+                                Elevation = ent.Bounds.HasValue ? ent.Bounds.Value.MinPoint.Z : 0
                             });
                         }
                         catch { }
@@ -2482,7 +2484,8 @@ namespace DTS_Engine.Commands
 
             WriteMessage($"Đã gom thành {groups.Count} nhóm dầm.");
 
-            // 4. Tạo BeamGroup cho mỗi nhóm
+            // 4. Tạo BeamGroup cho mỗi nhóm (with GAP DETECTION / Chain Splitting)
+            const double GAP_TOLERANCE = 500; // mm - Max gap before splitting chain
             var beamGroups = new List<BeamGroup>();
 
             // Dictionary to track group index per Level
@@ -2492,22 +2495,27 @@ namespace DTS_Engine.Commands
             foreach (var group in groups)
             {
                 var firstItem = group.First().Value;
+                double z = firstItem.LevelZ;
+                bool isXDir = firstItem.IsXDir;
+                string prefix = firstItem.IsGirder ? "G" : "B";
+                string direction = isXDir ? "X" : "Y";
 
-                var memberIds = group.Select(m => m.Key).ToList();
+                // Sort members by position (along beam axis)
+                var sortedMembers = group
+                    .OrderBy(m => isXDir ? m.Value.Mid.X : m.Value.Mid.Y)
+                    .ToList();
 
-                // Collect BeamData for CreateManualBeamGroup
-                var beamDataList = new List<Core.Data.BeamGeometry>();
-
+                // Collect all BeamGeometry with Transaction
+                var allBeamGeos = new List<(ObjectId Id, Core.Data.BeamGeometry Geo)>();
                 UsingTransaction(tr =>
                 {
-                    foreach (var id in memberIds)
+                    foreach (var member in sortedMembers)
                     {
-                        var curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
+                        var curve = tr.GetObject(member.Key, OpenMode.ForRead) as Curve;
                         if (curve == null) continue;
 
                         var xdata = XDataUtils.ReadElementData(curve) as BeamResultData;
-
-                        beamDataList.Add(new Core.Data.BeamGeometry
+                        var geo = new Core.Data.BeamGeometry
                         {
                             Handle = curve.Handle.ToString(),
                             Name = xdata?.SapElementName ?? curve.Handle.ToString(),
@@ -2515,33 +2523,69 @@ namespace DTS_Engine.Commands
                             StartY = curve.StartPoint.Y,
                             EndX = curve.EndPoint.X,
                             EndY = curve.EndPoint.Y,
-                            StartZ = curve.StartPoint.Z, // Important for Level capture
+                            StartZ = curve.StartPoint.Z,
                             EndZ = curve.EndPoint.Z,
                             Width = xdata?.Width ?? 0,
                             Height = xdata?.SectionHeight ?? 0
-                        });
+                        };
+                        allBeamGeos.Add((member.Key, geo));
                     }
                 });
 
-                if (beamDataList.Count == 0) continue;
+                if (allBeamGeos.Count == 0) continue;
 
-                // Manage Index per Level
-                double z = firstItem.LevelZ;
-                if (!levelIndices.ContainsKey(z)) levelIndices[z] = 1;
-                int currentIndex = levelIndices[z]++;
+                // === CHAIN SPLITTING LOGIC ===
+                var chains = new List<List<Core.Data.BeamGeometry>>();
+                var currentChain = new List<Core.Data.BeamGeometry>();
+                Core.Data.BeamGeometry prevBeam = null;
 
-                // Generate Group Name
-                string prefix = firstItem.IsGirder ? "G" : "B";
-                string direction = firstItem.IsXDir ? "X" : "Y";
-                string groupName = $"{prefix}{currentIndex}_{direction}";
+                foreach (var (id, geo) in allBeamGeos)
+                {
+                    if (prevBeam != null)
+                    {
+                        // Calculate gap between prevBeam End and current beam Start
+                        // For X-Dir: compare X coordinate; for Y-Dir: compare Y coordinate
+                        double prevEnd = isXDir ? Math.Max(prevBeam.StartX, prevBeam.EndX) : Math.Max(prevBeam.StartY, prevBeam.EndY);
+                        double currStart = isXDir ? Math.Min(geo.StartX, geo.EndX) : Math.Min(geo.StartY, geo.EndY);
+                        double gap = currStart - prevEnd;
 
-                // Create BeamGroup (this also calls CalculateBarSegmentsForGroup)
-                var beamGroup = CreateManualBeamGroup(groupName, beamDataList);
+                        // If gap > tolerance, start new chain
+                        if (gap > GAP_TOLERANCE)
+                        {
+                            if (currentChain.Count > 0)
+                            {
+                                chains.Add(currentChain);
+                                currentChain = new List<Core.Data.BeamGeometry>();
+                            }
+                        }
+                    }
 
-                // Explicitly set LevelZ for the group
-                beamGroup.LevelZ = z;
+                    currentChain.Add(geo);
+                    prevBeam = geo;
+                }
 
-                beamGroups.Add(beamGroup);
+                // Add last chain
+                if (currentChain.Count > 0)
+                {
+                    chains.Add(currentChain);
+                }
+
+                // === CREATE BEAM GROUP FOR EACH CHAIN ===
+                foreach (var chain in chains)
+                {
+                    if (!levelIndices.ContainsKey(z)) levelIndices[z] = 1;
+                    int currentIndex = levelIndices[z]++;
+
+                    string groupName = $"{prefix}{currentIndex}_{direction}";
+
+                    // Create BeamGroup (this also calls CalculateBarSegmentsForGroup)
+                    var beamGroup = CreateManualBeamGroup(groupName, chain);
+
+                    // Explicitly set LevelZ for the group
+                    beamGroup.LevelZ = z;
+
+                    beamGroups.Add(beamGroup);
+                }
             }
 
             // 5. Merge với existing groups và lưu vào NOD (INCREMENTAL - không xóa data cũ)

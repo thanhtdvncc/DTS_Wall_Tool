@@ -254,9 +254,19 @@ namespace DTS_Engine.Core.Algorithms
         public static void DetectSupports(BeamGroup group, List<BeamGeometry> chain, List<SupportGeometry> allSupports)
         {
             const double NODE_HIT_TOLERANCE = 50; // mm - Vùng hit test tại node
+            const double STORY_Z_TOLERANCE = 2000; // mm - Max Z difference for same-story support
 
             var foundSupports = new List<SupportData>();
             var processedPositions = new HashSet<double>();
+
+            // Get beam chain Z-level (average Start Z)
+            double beamZ = chain.Count > 0 ? chain.Average(b => b.StartZ) : 0;
+
+            // === FILTER SUPPORTS BY Z-LEVEL ===
+            // Only consider supports within STORY_Z_TOLERANCE of beam Z
+            var filteredSupports = allSupports
+                .Where(s => Math.Abs(s.Elevation - beamZ) < STORY_Z_TOLERANCE)
+                .ToList();
 
             // Điểm gốc của chain (để tính Position)
             double originX = chain.First().StartX;
@@ -294,7 +304,7 @@ namespace DTS_Engine.Core.Algorithms
                 if (processedPositions.Contains(roundedPos)) continue;
 
                 // STEP 1: Check Column/Wall hit
-                var hitSupport = allSupports.FirstOrDefault(s =>
+                var hitSupport = filteredSupports.FirstOrDefault(s =>
                     Distance(s.CenterX, s.CenterY, node.X, node.Y) < NODE_HIT_TOLERANCE + s.Width / 2 &&
                     (s.Type?.ToUpper() == "COLUMN" || s.Type?.ToUpper() == "WALL"));
 
@@ -315,7 +325,7 @@ namespace DTS_Engine.Core.Algorithms
                 }
 
                 // STEP 2: Check Girder hit (different beam crossing this node)
-                var hitGirder = allSupports.FirstOrDefault(s =>
+                var hitGirder = filteredSupports.FirstOrDefault(s =>
                     Distance(s.CenterX, s.CenterY, node.X, node.Y) < NODE_HIT_TOLERANCE + 200 &&
                     s.Type?.ToUpper() == "BEAM");
 
