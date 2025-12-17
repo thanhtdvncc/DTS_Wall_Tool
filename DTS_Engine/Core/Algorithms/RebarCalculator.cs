@@ -214,22 +214,18 @@ namespace DTS_Engine.Core.Algorithms
             // 1. Cover từ Settings
             double cover = settings.Beam?.CoverSide ?? 25;
 
-            // 2. Đường kính đai: Parse từ StirrupBarRange, lấy đường kính NHỎ NHẤT trong list
-            // VD: "8-10" → [8, 10] → chọn 8 (bảo thủ - bề rộng khả dụng lớn nhất)
-            var inventory = settings.General?.AvailableDiameters ?? new List<int> { 6, 8, 10, 12 };
-            var stirrupDiameters = DiameterParser.ParseRange(settings.Beam?.StirrupBarRange ?? "8-10", inventory);
-            // Lấy đường kính đai nhỏ nhất (hoặc default 8mm)
-            double stirrupDia = stirrupDiameters.Count > 0 ? stirrupDiameters.Min() : 8;
+            // 2. Đường kính đai: Dùng EstimatedStirrupDiameter từ Settings (không parse nữa)
+            double stirrupDia = settings.Beam?.EstimatedStirrupDiameter ?? 10;
 
             // 3. UsableWidth = B - 2×Cover - 2×StirrupDia
             double usableWidth = beamWidth - (2 * cover) - (2 * stirrupDia);
 
             if (usableWidth < barDiameter) return 0; // Dầm quá bé
 
-            // 4. Khoảng hở: Dùng MinClearSpacing đã có trong settings
-            // spacing = max(barDiameter, MinClearSpacing)
+            // 4. Khoảng hở: max(barDiameter, MinClearSpacing, 1.33*AggregateSize)
             double minClearSpacing = settings.Beam?.MinClearSpacing ?? 30;
-            double reqClearance = Math.Max(barDiameter, minClearSpacing);
+            double aggregateSpacing = (settings.Beam?.AggregateSize ?? 20) * 1.33;
+            double reqClearance = Math.Max(barDiameter, Math.Max(minClearSpacing, aggregateSpacing));
 
             // 5. Công thức: n = (W + s) / (d + s)
             double val = (usableWidth + reqClearance) / (barDiameter + reqClearance);

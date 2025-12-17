@@ -54,7 +54,8 @@ namespace DTS_Engine.Core.Data
         }
 
         /// <summary>
-        /// Load settings từ file, tạo mới nếu không tồn tại
+        /// Load settings từ file, tạo mới nếu không tồn tại hoặc file lỗi
+        /// An toàn: Nếu file bị corrupt, tự động tạo mới và save lại
         /// </summary>
         public static DtsSettings Load()
         {
@@ -63,11 +64,32 @@ namespace DTS_Engine.Core.Data
                 if (File.Exists(_settingsPath))
                 {
                     string json = File.ReadAllText(_settingsPath);
-                    return JsonConvert.DeserializeObject<DtsSettings>(json) ?? new DtsSettings();
+                    var loaded = JsonConvert.DeserializeObject<DtsSettings>(json);
+                    if (loaded != null)
+                    {
+                        return loaded;
+                    }
+                    // File exists but NULL after deserialize = corrupt
+                    System.Diagnostics.Debug.WriteLine("[DtsSettings] WARNING: Settings file corrupt, creating default...");
                 }
             }
-            catch { }
-            return new DtsSettings();
+            catch (System.Exception ex)
+            {
+                // File corrupt or IO error - log and create default
+                System.Diagnostics.Debug.WriteLine($"[DtsSettings] ERROR loading settings: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine("[DtsSettings] Creating default settings...");
+            }
+
+            // Create fresh default settings and save immediately
+            var defaultSettings = new DtsSettings();
+            try
+            {
+                defaultSettings.Save();
+                System.Diagnostics.Debug.WriteLine("[DtsSettings] Default settings saved successfully.");
+            }
+            catch { /* Ignore save errors */ }
+
+            return defaultSettings;
         }
 
         /// <summary>
@@ -144,6 +166,21 @@ namespace DTS_Engine.Core.Data
             if (Beam.MaxLayers <= 0)
             {
                 error = "Số lớp thép tối đa (MaxLayers) phải > 0";
+                return false;
+            }
+            if (Beam.MinClearSpacing <= 0)
+            {
+                error = "Khoảng hở tịnh tối thiểu (MinClearSpacing) phải > 0";
+                return false;
+            }
+            if (Beam.EstimatedStirrupDiameter <= 0)
+            {
+                error = "Đường kính đai ước tính (EstimatedStirrupDiameter) phải > 0";
+                return false;
+            }
+            if (Beam.AggregateSize <= 0)
+            {
+                error = "Đường kính cốt liệu (AggregateSize) phải > 0";
                 return false;
             }
 
@@ -255,6 +292,19 @@ namespace DTS_Engine.Core.Data
         /// Khoảng hở tịnh tối thiểu cố định (mm) - dùng khi UseBarDiameterForSpacing = false
         /// </summary>
         public int MinClearSpacing { get; set; } = 30;
+
+        /// <summary>
+        /// Đường kính thép đai ước tính (mm) để tính toán số thanh tối đa.
+        /// Dùng trong công thức: W_usable = B - 2×Cover - 2×EstimatedStirrupDiameter
+        /// Options: 6, 8, 10, 12
+        /// </summary>
+        public int EstimatedStirrupDiameter { get; set; } = 10;
+
+        /// <summary>
+        /// Đường kính cốt liệu lớn nhất (mm).
+        /// Theo tiêu chuẩn: min_spacing >= 1.33 × AggregateSize
+        /// </summary>
+        public int AggregateSize { get; set; } = 20;
 
         /// <summary>
         /// Sử dụng đường kính thép để tính khoảng hở tối thiểu

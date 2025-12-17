@@ -15,8 +15,10 @@ namespace DTS_Engine.Commands
 {
     public class RebarCommands : CommandBase
     {
-        [CommandMethod("DTS_REBAR_SAP_RESULT")]
-        public void DTS_REBAR_SAP_RESULT()
+        /// <summary>
+        /// [INTERNAL] Import kết quả từ SAP2000 - được gọi bởi DTS_REBAR_IMPORT_SAP
+        /// </summary>
+        private void ImportSapResultInternal()
         {
             WriteMessage("=== REBAR: LẤY KẾT QUẢ TỪ SAP2000 ===");
 
@@ -354,8 +356,8 @@ namespace DTS_Engine.Commands
         {
             WriteMessage("=== IMPORT SAP + AUTO GROUP ===");
 
-            // Bước 1: Import dữ liệu từ SAP (gọi command hiện có)
-            DTS_REBAR_SAP_RESULT();
+            // Bước 1: Import dữ liệu từ SAP (gọi internal method)
+            ImportSapResultInternal();
 
             // Bước 2: Tự động gom nhóm các dầm vừa import
             WriteMessage("\n→ Đang tự động gom nhóm dầm...");
@@ -736,10 +738,10 @@ namespace DTS_Engine.Commands
             WriteMessage($"Quy tắc: Corner={settings.SortCorner}, Direction={(settings.SortDirection == 0 ? "Horizontal" : "Vertical")}");
         }
 
-        [CommandMethod("DTS_REBAR_UPDATE")]
-        public void DTS_REBAR_UPDATE()
+        [CommandMethod("DTS_REBAR_EXPORT_SAP")]
+        public void DTS_REBAR_EXPORT_SAP()
         {
-            WriteMessage("=== REBAR: CẬP NHẬT THÉP VỀ SAP2000 ===");
+            WriteMessage("=== REBAR: XUẤT THÉP VỀ SAP2000 ===");
 
             // 1. Check Connection
             if (!SapUtils.IsConnected)
