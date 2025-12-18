@@ -71,6 +71,22 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public string LoadPattern { get; set; } = "DL";
 
+        /// <summary>
+        /// Support tại Joint I (Start): 1 = có cột/tường, 0 = đầu thừa (FreeEnd)
+        /// </summary>
+        public int SupportI { get; set; } = 1;
+
+        /// <summary>
+        /// Support tại Joint J (End): 1 = có cột/tường, 0 = đầu thừa (FreeEnd)
+        /// </summary>
+        public int SupportJ { get; set; } = 1;
+
+        /// <summary>
+        /// Tên trục lưới nằm trên (VD: "A", "1"). 
+        /// Quy tắc Girder: 1 cột + có AxisName = Girder
+        /// </summary>
+        public string AxisName { get; set; }
+
         #endregion
 
         #region ILoadBearing Implementation
@@ -141,7 +157,10 @@ namespace DTS_Engine.Core.Data
                 ConcreteGrade = ConcreteGrade,
                 BeamType = BeamType,
                 UnitWeight = UnitWeight,
-                LoadPattern = LoadPattern
+                LoadPattern = LoadPattern,
+                SupportI = SupportI,
+                SupportJ = SupportJ,
+                AxisName = AxisName
             };
 
             // Clone Loads (ILoadBearing)
@@ -165,9 +184,14 @@ namespace DTS_Engine.Core.Data
             if (Length.HasValue) dict["xLength"] = Length.Value;
             if (!string.IsNullOrEmpty(Material)) dict["xMaterial"] = Material;
             if (!string.IsNullOrEmpty(ConcreteGrade)) dict["xConcreteGrade"] = ConcreteGrade;
+            dict["xSupport_I"] = SupportI;
+            dict["xSupport_J"] = SupportJ;
+            if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
             if (!string.IsNullOrEmpty(BeamType)) dict["xBeamType"] = BeamType;
             dict["xUnitWeight"] = UnitWeight;
             if (!string.IsNullOrEmpty(LoadPattern)) dict["xLoadPattern"] = LoadPattern;
+            dict["xSupport_I"] = SupportI;
+            dict["xSupport_J"] = SupportJ;
 
             // Serialize Loads (ILoadBearing)
             if (Loads != null && Loads.Count > 0)
@@ -201,6 +225,9 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xBeamType", out var bt)) BeamType = bt?.ToString();
             if (dict.TryGetValue("xUnitWeight", out var uw)) UnitWeight = ConvertToDouble(uw) ?? 25.0;
             if (dict.TryGetValue("xLoadPattern", out var lp)) LoadPattern = lp?.ToString();
+            if (dict.TryGetValue("xSupport_I", out var si)) SupportI = System.Convert.ToInt32(si);
+            if (dict.TryGetValue("xSupport_J", out var sj)) SupportJ = System.Convert.ToInt32(sj);
+            if (dict.TryGetValue("xOnAxis", out var oa)) AxisName = oa?.ToString();
 
             // Deserialize Loads (ILoadBearing)
             if (dict.TryGetValue("xLoads", out var loadsJson))

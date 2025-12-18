@@ -97,6 +97,23 @@ namespace DTS_Engine.Core.Data
         public string BeamType { get; set; } = "Beam";
 
         /// <summary>
+        /// Support tại đầu I (Start): 1=cột/tường, 0=dầm khác/tự do
+        /// Dùng để nhận diện Girder: 2 cột = Girder
+        /// </summary>
+        public int SupportI { get; set; } = 0;
+
+        /// <summary>
+        /// Support tại đầu J (End): 1=cột/tường, 0=dầm khác/tự do
+        /// </summary>
+        public int SupportJ { get; set; } = 0;
+
+        /// <summary>
+        /// Tên trục lưới nằm trên (VD: "A", "1").
+        /// Quy tắc Girder: 1 cột + có AxisName = Girder
+        /// </summary>
+        public string AxisName { get; set; }
+
+        /// <summary>
         /// Tên Group mà dầm này thuộc về (VD: "G2-B1").
         /// Dùng để khôi phục Group khi mở lại bản vẽ.
         /// </summary>
@@ -154,6 +171,10 @@ namespace DTS_Engine.Core.Data
             // Grouping Info
             if (!string.IsNullOrEmpty(BeamType)) dict["BeamType"] = BeamType;
             if (!string.IsNullOrEmpty(BelongToGroup)) dict["BelongToGroup"] = BelongToGroup;
+            // Support Info (for Girder detection)
+            dict["SupportI"] = SupportI;
+            dict["SupportJ"] = SupportJ;
+            if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
             return dict;
         }
 
@@ -188,6 +209,15 @@ namespace DTS_Engine.Core.Data
             // Grouping Info
             if (dict.TryGetValue("BeamType", out var bt)) BeamType = bt?.ToString();
             if (dict.TryGetValue("BelongToGroup", out var btg)) BelongToGroup = btg?.ToString();
+            // Support Info
+            if (dict.TryGetValue("SupportI", out var si)) SupportI = Convert.ToInt32(si);
+            else if (dict.TryGetValue("xSupport_I", out var xsi)) SupportI = Convert.ToInt32(xsi);
+
+            if (dict.TryGetValue("SupportJ", out var sj)) SupportJ = Convert.ToInt32(sj);
+            else if (dict.TryGetValue("xSupport_J", out var xsj)) SupportJ = Convert.ToInt32(xsj);
+
+            if (dict.TryGetValue("xOnAxis", out var xoa)) AxisName = xoa?.ToString();
+            else if (dict.TryGetValue("OnAxis", out var oa)) AxisName = oa?.ToString();
         }
 
         private double[] ConvertToDoubleArray(object obj)

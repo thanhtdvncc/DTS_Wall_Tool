@@ -56,5 +56,11 @@ namespace DTS_Engine.Core.Data
 
         /// <summary>Direction: "X" if mostly horizontal, "Y" if mostly vertical</summary>
         public string Direction => Math.Abs(EndX - StartX) > Math.Abs(EndY - StartY) ? "X" : "Y";
+
+        /// <summary>Support at Joint I (Start): 1 = có cột/tường, 0 = FreeEnd</summary>
+        public int SupportI { get; set; } = 1;
+
+        /// <summary>Support at Joint J (End): 1 = có cột/tường, 0 = FreeEnd</summary>
+        public int SupportJ { get; set; } = 1;
     }
 }

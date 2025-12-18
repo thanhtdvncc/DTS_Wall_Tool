@@ -508,7 +508,7 @@ namespace DTS_Engine.Commands
                 // User Request: Beam "None" -> Color 8
                 int colorIndex = f.IsBeam ? 2 : 3;
                 string secName = f.Section?.Trim() ?? "";
-                
+
                 bool isNone = false;
                 if (f.IsBeam && string.Equals(secName, "None", StringComparison.OrdinalIgnoreCase))
                 {
@@ -523,26 +523,51 @@ namespace DTS_Engine.Commands
 
                 ObjectId id = btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
-                
+
                 if (isNone)
                 {
                     // Double check to prevent ByLayer override logic from elsewhere
-                    line.ColorIndex = 8; 
+                    line.ColorIndex = 8;
                 }
 
-                // FIX4: Phân loại Data
+                // FIX4: Phân loại Data - SỬ DỤNG WIDTH/HEIGHT TỪ SAP API
                 ElementData elemData;
                 if (f.IsBeam)
                 {
-                    elemData = new BeamData { SectionName = f.Section, Length = f.Length2D, BeamType = "Main" };
+                    var beamData = new BeamData
+                    {
+                        SectionName = f.Section,
+                        Length = f.Length2D,
+                        // FIX: Dùng Width/Height từ SAP PropFrame.GetRectangle (đã đọc trong GetAllFramesGeometry)
+                        Width = f.Width,    // t2 từ SAP
+                        Height = f.Height,  // t3 từ SAP (Section depth)
+                        Material = string.IsNullOrEmpty(f.Material) ? "Concrete" : f.Material,
+                        ConcreteGrade = f.ConcreteGrade,
+                        BeamType = "Main", // TODO: Detect Girder vs Beam based on connectivity
+                        // SOURCE-BASED SUPPORT DETECTION: Ghi support info từ SAP
+                        SupportI = f.HasSupportI ? 1 : 0,
+                        SupportJ = f.HasSupportJ ? 1 : 0,
+                        AxisName = f.AxisName, // Ghi tên trục vào XData. Girder = 1 cột + có AxisName
+                    };
+                    elemData = beamData;
                 }
                 else
                 {
-                    elemData = new ColumnData { SectionName = f.Section, Material = "Concrete" };
+                    elemData = new ColumnData
+                    {
+                        SectionName = f.Section,
+                        Material = string.IsNullOrEmpty(f.Material) ? "Concrete" : f.Material,
+                        Width = f.Width,
+                        Height = f.Height,
+                    };
                 }
 
-                elemData.BaseZ = Math.Min(f.Z1, f.Z2);
-                elemData.Height = Math.Abs(f.Z2 - f.Z1);
+                // FIX: Round to avoid floating point artifacts like 11699.999999998
+                elemData.BaseZ = Math.Round(Math.Min(f.Z1, f.Z2));
+                // FIX: Height cho ElementData là section height, KHÔNG PHẢI chiều cao cột/độ chênh Z
+                // Với dầm: không cần set lại, BeamData.Height đã set ở trên
+                // Với cột: Height ở đây là chiều cao cột (từ Z1 đến Z2)
+                if (!f.IsBeam) elemData.Height = Math.Round(Math.Abs(f.Z2 - f.Z1));
 
                 // Link Origin
                 if (!string.IsNullOrEmpty(originHandle)) elemData.OriginHandle = originHandle;
@@ -606,16 +631,38 @@ namespace DTS_Engine.Commands
                 ObjectId lineId = btr.AppendEntity(line);
                 tr.AddNewlyCreatedDBObject(line, true);
 
-                // Gán Data
+                // Gán Data - SỬ DỤNG WIDTH/HEIGHT TỪ SAP API
                 ElementData elemData;
                 if (frame.IsBeam)
-                    elemData = new BeamData { SectionName = frame.Section, Length = frame.Length2D, BeamType = "Main" };
+                {
+                    elemData = new BeamData
+                    {
+                        SectionName = frame.Section,
+                        Length = frame.Length2D,
+                        Width = frame.Width,
+                        Height = frame.Height,
+                        Material = string.IsNullOrEmpty(frame.Material) ? "Concrete" : frame.Material,
+                        ConcreteGrade = frame.ConcreteGrade,
+                        BeamType = "Main",
+                        SapFrameName = frame.Name
+                    };
+                }
                 else
-                    elemData = new ColumnData { SectionName = frame.Section, Material = "Concrete" };
+                {
+                    elemData = new ColumnData
+                    {
+                        SectionName = frame.Section,
+                        Material = string.IsNullOrEmpty(frame.Material) ? "Concrete" : frame.Material,
+                        Width = frame.Width,
+                        Height = frame.Height,
+                    };
+                }
 
-                elemData.BaseZ = frame.Z1; //3D dung Z thuc
-                elemData.Height = Math.Abs(frame.Z2 - frame.Z1);
+                // FIX: Round to avoid floating point artifacts
+                elemData.BaseZ = Math.Round(frame.Z1); //3D dung Z thuc
+                if (!frame.IsBeam) elemData.Height = Math.Round(Math.Abs(frame.Z2 - frame.Z1)); // Cột: Height = chiều cao cột
                 if (!string.IsNullOrEmpty(originHandle)) elemData.OriginHandle = originHandle;
+                elemData.SapFrameName = frame.Name;
 
                 XDataUtils.WriteElementData(tr.GetObject(lineId, OpenMode.ForWrite), elemData, tr);
 

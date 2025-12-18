@@ -272,6 +272,11 @@ namespace DTS_Engine.Core.Data
         public bool HasConsole { get; set; } = false;
 
         /// <summary>
+        /// True if this is a temporary single-beam group (not from grouping, just for viewer preview)
+        /// </summary>
+        public bool IsSingleBeam { get; set; } = false;
+
+        /// <summary>
         /// Tổng chiều dài dải dầm (m)
         /// </summary>
         public double TotalLength { get; set; }

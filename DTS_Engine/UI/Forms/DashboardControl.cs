@@ -68,10 +68,12 @@ namespace DTS_Engine.UI.Forms
                 var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
                 await _webView.EnsureCoreWebView2Async(env);
 
-                // 2. Configure WebView settings
-                _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-                _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+                // 2. Configure WebView settings - SECURITY
+                _webView.CoreWebView2.Settings.AreDevToolsEnabled = false;           // Disable F12 DevTools
+                _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false; // Disable right-click menu
+                _webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false; // Disable Ctrl+U, Ctrl+Shift+I
+                _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;            // Hide status bar
+                _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;          // Disable Ctrl+scroll zoom
 
                 // 3. Register message handler
                 _webView.WebMessageReceived += WebView_MessageReceived;
@@ -119,6 +121,7 @@ namespace DTS_Engine.UI.Forms
                     // Trick Windows into thinking user is dragging title bar
                     ReleaseCapture();
                     SendMessage(parentForm.Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+                    // Position will be tracked by DashboardPalette.SyncTimer after drag ends
                 }
                 return;
             }

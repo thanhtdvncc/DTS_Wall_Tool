@@ -253,130 +253,90 @@ namespace DTS_Engine.Core.Algorithms
         /// </summary>
         public static void DetectSupports(BeamGroup group, List<BeamGeometry> chain, List<SupportGeometry> allSupports)
         {
-            const double NODE_HIT_TOLERANCE = 50; // mm - Vùng hit test tại node
-
-            // Use configurable StoryTolerance from DtsSettings (default 500mm)
-            // User can adjust for split-level houses via Settings UI
-            double storyZTolerance = DtsSettings.Instance.StoryTolerance;
+            // === SOURCE-BASED SUPPORT DETECTION ===
+            // Đọc SupportI/SupportJ từ XData của từng beam trong chain
+            // Không phụ thuộc vào circles nên robust hơn
 
             var foundSupports = new List<SupportData>();
-            var processedPositions = new HashSet<double>();
-
-            // Get beam chain Z-level (average Start Z)
-            double beamZ = chain.Count > 0 ? chain.Average(b => b.StartZ) : 0;
-
-            // === FILTER SUPPORTS BY Z-LEVEL ===
-            // Only consider supports within storyZTolerance of beam Z
-            var filteredSupports = allSupports
-                .Where(s => Math.Abs(s.Elevation - beamZ) < storyZTolerance)
-                .ToList();
-
-            // Điểm gốc của chain (để tính Position)
-            double originX = chain.First().StartX;
-            double originY = chain.First().StartY;
-
-            // ===== COLLECT ALL NODES =====
-            var nodes = new List<(double X, double Y, double Position, bool IsStart)>();
             double cumLen = 0;
 
-            foreach (var beam in chain)
+            for (int i = 0; i < chain.Count; i++)
             {
-                // Add start node
-                nodes.Add((beam.StartX, beam.StartY, cumLen, true));
+                var beam = chain[i];
+
+                // Check Start (I) of beam
+                // Chỉ thêm support nếu là beam đầu tiên HOẶC beam này có SupportI = 1
+                if (i == 0)
+                {
+                    // First beam: check SupportI
+                    if (beam.SupportI == 1)
+                    {
+                        foundSupports.Add(new SupportData
+                        {
+                            Position = cumLen,
+                            Type = SupportType.Column,
+                            SupportId = $"C{foundSupports.Count + 1}",
+                            Width = 400 // Default column width
+                        });
+                    }
+                    else
+                    {
+                        // FreeEnd at start
+                        foundSupports.Add(new SupportData
+                        {
+                            Position = cumLen,
+                            Type = SupportType.FreeEnd,
+                            SupportId = "FE_Start",
+                            Width = 0
+                        });
+                        group.HasConsole = true;
+                    }
+                }
+
                 cumLen += beam.Length / 1000.0; // mm to m
-                // Add end node
-                nodes.Add((beam.EndX, beam.EndY, cumLen, false));
-            }
 
-            // Remove duplicate nodes (internal joints)
-            var uniqueNodes = new List<(double X, double Y, double Position)>();
-            foreach (var node in nodes)
-            {
-                bool isDuplicate = uniqueNodes.Any(n =>
-                    Distance(n.X, n.Y, node.X, node.Y) < NODE_HIT_TOLERANCE);
-                if (!isDuplicate)
+                // Check End (J) of beam
+                // Thêm support tại END nếu SupportJ = 1 (internal joint hoặc end)
+                if (beam.SupportJ == 1)
                 {
-                    uniqueNodes.Add((node.X, node.Y, node.Position));
-                }
-            }
-
-            // ===== CHECK EACH UNIQUE NODE =====
-            foreach (var node in uniqueNodes)
-            {
-                double roundedPos = Math.Round(node.Position * 100) / 100;
-                if (processedPositions.Contains(roundedPos)) continue;
-
-                // STEP 1: Check Column/Wall hit
-                var hitSupport = filteredSupports.FirstOrDefault(s =>
-                    Distance(s.CenterX, s.CenterY, node.X, node.Y) < NODE_HIT_TOLERANCE + s.Width / 2 &&
-                    (s.Type?.ToUpper() == "COLUMN" || s.Type?.ToUpper() == "WALL"));
-
-                if (hitSupport != null)
-                {
-                    // Found Column/Wall at this node
                     foundSupports.Add(new SupportData
                     {
-                        SupportId = hitSupport.Name ?? $"S{foundSupports.Count + 1}",
-                        Type = hitSupport.Type?.ToUpper() == "WALL" ? SupportType.Wall : SupportType.Column,
-                        Width = hitSupport.Width,
-                        Position = node.Position,
-                        GridName = hitSupport.GridName ?? "",
-                        EntityHandle = hitSupport.Handle
+                        Position = cumLen,
+                        Type = SupportType.Column,
+                        SupportId = $"C{foundSupports.Count + 1}",
+                        Width = 400
                     });
-                    processedPositions.Add(roundedPos);
-                    continue;
                 }
-
-                // STEP 2: Check Girder hit (different beam crossing this node)
-                var hitGirder = filteredSupports.FirstOrDefault(s =>
-                    Distance(s.CenterX, s.CenterY, node.X, node.Y) < NODE_HIT_TOLERANCE + 200 &&
-                    s.Type?.ToUpper() == "BEAM");
-
-                if (hitGirder != null)
+                else if (i == chain.Count - 1)
                 {
-                    // Found Girder support at this node
+                    // Last beam with no support at end = FreeEnd
                     foundSupports.Add(new SupportData
                     {
-                        SupportId = $"G{foundSupports.Count + 1}",
-                        Type = SupportType.Beam,
-                        Width = hitGirder.Width,
-                        Position = node.Position,
-                        GridName = "",
-                        EntityHandle = hitGirder.Handle
-                    });
-                    processedPositions.Add(roundedPos);
-                    continue;
-                }
-
-                // STEP 3: Nothing found = FreeEnd
-                // Only mark FreeEnd at chain endpoints (first and last nodes)
-                bool isChainEndpoint =
-                    Math.Abs(node.Position) < 0.01 ||
-                    Math.Abs(node.Position - group.TotalLength) < 0.01;
-
-                if (isChainEndpoint)
-                {
-                    foundSupports.Add(new SupportData
-                    {
-                        SupportId = node.Position < 0.01 ? "FE_Start" : "FE_End",
+                        Position = cumLen,
                         Type = SupportType.FreeEnd,
-                        Width = 0,
-                        Position = node.Position
+                        SupportId = "FE_End",
+                        Width = 0
                     });
-                    processedPositions.Add(roundedPos);
                     group.HasConsole = true;
                 }
-                // Internal joints without support = just structural joints, not supports
+                // Else: internal joint without support = skip (no support between spans)
             }
 
-            // Sort by position
-            foundSupports = foundSupports.OrderBy(s => s.Position).ToList();
+            // Remove duplicate supports at same position (tolerance 0.05m)
+            var uniqueSupports = new List<SupportData>();
+            foreach (var supp in foundSupports.OrderBy(s => s.Position))
+            {
+                if (!uniqueSupports.Any(u => Math.Abs(u.Position - supp.Position) < 0.05))
+                {
+                    uniqueSupports.Add(supp);
+                }
+            }
 
             // Index supports
-            for (int i = 0; i < foundSupports.Count; i++)
-                foundSupports[i].SupportIndex = i;
+            for (int i = 0; i < uniqueSupports.Count; i++)
+                uniqueSupports[i].SupportIndex = i;
 
-            group.Supports = foundSupports;
+            group.Supports = uniqueSupports;
         }
 
         private static SupportType ConvertSupportType(string type)

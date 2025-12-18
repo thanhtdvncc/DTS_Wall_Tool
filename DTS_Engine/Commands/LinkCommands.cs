@@ -465,35 +465,43 @@ namespace DTS_Engine.Commands
 
                 VisualUtils.ClearAll();
 
-                // Bước 1: Chọn Con
-                var peoChild = new PromptEntityOptions("\n1. Chọn phần tử CON cần gỡ liên kết");
-                var resChild = Ed.GetEntity(peoChild);
-                if (resChild.Status != PromptStatus.OK) return;
+                // Bước 1: Chọn nhiều phần tử CON
+                WriteMessage("\n1. Chọn các phần tử CON cần gỡ liên kết:");
+                var childIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE,CIRCLE");
+                if (childIds.Count == 0) return;
 
-                VisualUtils.HighlightObject(resChild.ObjectId, 6); // Magenta
+                WriteMessage($"   Đã chọn {childIds.Count} phần tử con.");
+                VisualUtils.HighlightObjects(childIds, 6); // Magenta
 
-                // Bước 2: Xác định các cha hiện tại
-                var parents = new List<ObjectId>();
+                // Bước 2: Xác định tất cả các cha chung (để tô màu)
+                var allParents = new HashSet<ObjectId>();
                 UsingTransaction(tr =>
                 {
-                    var handles = XDataUtils.GetAllParentHandles(tr.GetObject(resChild.ObjectId, OpenMode.ForRead));
-                    foreach (var h in handles)
+                    foreach (ObjectId childId in childIds)
                     {
-                        var pid = AcadUtils.GetObjectIdFromHandle(h);
-                        if (pid != ObjectId.Null) parents.Add(pid);
+                        if (childId.IsErased) continue;
+                        var obj = SafeGetObject(tr, childId, OpenMode.ForRead);
+                        if (obj == null) continue;
+
+                        var handles = XDataUtils.GetAllParentHandles(obj);
+                        foreach (var h in handles)
+                        {
+                            var pid = AcadUtils.GetObjectIdFromHandle(h);
+                            if (pid != ObjectId.Null) allParents.Add(pid);
+                        }
                     }
                 });
 
-                if (parents.Count == 0)
+                if (allParents.Count == 0)
                 {
-                    WriteMessage("Phần tử này chưa có liên kết nào.");
+                    WriteMessage("Không có phần tử nào có liên kết.");
                     VisualUtils.ClearAll();
                     return;
                 }
 
                 // Tô sáng các cha
-                VisualUtils.HighlightObjects(parents, 2); // Yellow
-                WriteMessage($"Phần tử đang liên kết với {parents.Count} đối tượng (đang tô vàng).");
+                VisualUtils.HighlightObjects(allParents.ToList(), 2); // Yellow
+                WriteMessage($"Các phần tử đang liên kết với {allParents.Count} đối tượng cha (đang tô vàng).");
 
                 // Bước 3: Chọn Cha cần gỡ
                 var peoParent = new PromptEntityOptions("\n2. Chọn đối tượng CHA muốn gỡ bỏ:");
@@ -501,40 +509,35 @@ namespace DTS_Engine.Commands
 
                 if (resParent.Status == PromptStatus.OK)
                 {
-                    bool success = false;
+                    int successCount = 0;
+                    int failCount = 0;
                     string parentHandle = resParent.ObjectId.Handle.ToString();
-                    string promotedParent = null;
 
                     UsingTransaction(tr =>
                     {
-                        var childObj = tr.GetObject(resChild.ObjectId, OpenMode.ForWrite);
-                        var childData = XDataUtils.ReadElementData(childObj);
-
-                        // Kiem tra xem co promote Reference len Primary khong
-                        if (childData != null && childData.OriginHandle == parentHandle)
+                        foreach (ObjectId childId in childIds)
                         {
-                            if (childData.ReferenceHandles != null && childData.ReferenceHandles.Count > 0)
+                            if (childId.IsErased) continue;
+                            var childObj = SafeGetObject(tr, childId, OpenMode.ForWrite);
+                            if (childObj == null)
                             {
-                                promotedParent = childData.ReferenceHandles[0];
+                                failCount++;
+                                continue;
                             }
-                        }
 
-                        // Goi ham Atomic 2-Way
-                        success = XDataUtils.UnregisterLink(childObj, parentHandle, tr);
+                            // Gọi hàm Atomic 2-Way
+                            bool success = XDataUtils.UnregisterLink(childObj, parentHandle, tr);
+                            if (success)
+                                successCount++;
+                            else
+                                failCount++;
+                        }
                     });
 
-                    if (success)
-                    {
-                        WriteSuccess($"Đã gỡ liên kết với Cha [{parentHandle}].");
-                        if (!string.IsNullOrEmpty(promotedParent))
-                        {
-                            WriteInfo($"Đã chuyển Reference [{promotedParent}] lên làm Cha chính.");
-                        }
-                    }
-                    else
-                    {
-                        WriteError("Không tìm thấy liên kết giữa 2 đối tượng này.");
-                    }
+                    if (successCount > 0)
+                        WriteSuccess($"Đã gỡ liên kết {successCount} phần tử với Cha [{parentHandle}].");
+                    if (failCount > 0)
+                        WriteMessage($"  {failCount} phần tử không có liên kết với Cha này.");
                 }
 
                 VisualUtils.ClearAll();

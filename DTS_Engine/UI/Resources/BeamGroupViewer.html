@@ -3,546 +3,1347 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>DTS Rebar Dashboard</title>
+    <title>DTS Beam Group Viewer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- DTS Canvas Engine -->
+    <script src="DtsCanvas.js"></script>
+    <script src="BeamCanvas.js"></script>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
-                        slate: { 850: '#1e293b', 900: '#0f172a' },
-                        sky: { 500: '#0ea5e9' },
-                    },
-                    fontFamily: {
-                        mono: ['"Consolas"', '"Menlo"', '"Monaco"', 'monospace'],
-                        sans: ['"Inter"', '"Segoe UI"', 'sans-serif']
+                        primary: '#3b82f6',
+                        accent: '#f59e0b',
+                        danger: '#ef4444',
+                        success: '#22c55e'
                     }
                 }
             }
         }
     </script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-
-        /* Custom Scrollbar */
         ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #f1f5f9;
+            width: 6px;
+            height: 6px;
         }
 
         ::-webkit-scrollbar-thumb {
             background: #cbd5e1;
-            border-radius: 4px;
+            border-radius: 3px;
         }
 
-        ::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
+        .span-row.highlighted {
+            background: rgba(59, 130, 246, 0.15) !important;
         }
 
-        .dt-cell {
-            position: relative;
+        .span-row:hover {
+            background: rgba(59, 130, 246, 0.08);
         }
 
-        .dt-input {
-            background: transparent;
-            width: 100%;
-            text-align: center;
-            font-weight: 600;
-            border: none;
+        .span-row.selected {
+            background: rgba(34, 197, 94, 0.15);
+        }
+
+        .toast {
+            animation: slideUp 0.3s ease, fadeOut 2.5s 0.5s forwards;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translate(-50%, 100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translate(-50%, 0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+            }
+        }
+
+        input[type="text"]:focus {
             outline: none;
-        }
-
-        .dt-input:focus {
-            background: #fff;
-            box-shadow: 0 0 0 2px #3b82f6 inset;
-            border-radius: 2px;
-        }
-
-        .status-badge {
-            font-size: 10px;
-            padding: 1px 4px;
-            border-radius: 4px;
-            font-weight: 700;
-        }
-
-        /* Canvas Grid Background */
-        .canvas-bg {
-            background-color: #f8fafc;
-            background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
-            background-size: 20px 20px;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
         }
     </style>
 </head>
 
-<body class="bg-slate-100 h-screen flex flex-col text-slate-800 text-sm overflow-hidden">
+<body class="bg-slate-100 text-slate-800 font-sans text-sm h-screen flex flex-col overflow-hidden">
 
-    <!-- TOP BAR -->
-    <header class="flex-none bg-slate-900 text-white shadow-lg z-50 h-12 flex items-center justify-between px-4">
-        <div class="flex items-center gap-4">
-            <div class="flex items-center gap-2">
-                <i class="fa-solid fa-cube text-sky-500 text-lg"></i>
-                <span class="font-bold tracking-wide">DTS</span>
-                <span class="text-slate-400 text-xs uppercase tracking-wider border-l border-slate-700 pl-2 ml-1">Rebar
-                    Engine</span>
+    <!-- HEADER -->
+    <header class="flex-none bg-slate-900 text-white shadow-md z-50">
+        <div class="px-4 py-2 flex justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <i class="fa-solid fa-layer-group text-amber-500 text-xl"></i>
+                <h1 class="text-lg font-bold">DTS Rebar Viewer</h1>
             </div>
 
-            <!-- Group Navigator -->
-            <div class="flex items-center bg-slate-800 rounded p-0.5 ml-4">
-                <button onclick="prevGroup()" class="px-2 hover:text-sky-400 transition"><i
-                        class="fa-solid fa-chevron-left"></i></button>
+            <div class="flex items-center gap-3">
+                <button class="nav-btn px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded" onclick="prevGroup()">
+                    <i class="fa-solid fa-chevron-left"></i>
+                </button>
                 <select id="groupSelect" onchange="loadGroup(this.value)"
-                    class="bg-transparent border-none text-xs font-medium px-2 py-1 outline-none w-48 text-center cursor-pointer"></select>
-                <button onclick="nextGroup()" class="px-2 hover:text-sky-400 transition"><i
-                        class="fa-solid fa-chevron-right"></i></button>
+                    class="bg-slate-800 border border-slate-600 text-white px-3 py-1 rounded min-w-[180px]"></select>
+                <button class="nav-btn px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded" onclick="nextGroup()">
+                    <i class="fa-solid fa-chevron-right"></i>
+                </button>
             </div>
-        </div>
 
-        <!-- Toolbar -->
-        <div class="flex items-center gap-3">
-            <div class="flex items-center bg-slate-800 rounded px-2 py-1 gap-2">
-                <span class="text-xs text-slate-400">Design:</span>
+            <div class="flex items-center gap-2">
+                <label class="text-xs text-slate-400">Phương án:</label>
                 <select id="optionSelect" onchange="selectOption(this.value)"
-                    class="bg-transparent text-xs outline-none w-32"></select>
-                <button id="lockBtn" onclick="lockDesign()" class="text-sky-500 hover:text-white transition"><i
-                        class="fa-solid fa-lock"></i></button>
+                    class="bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded text-xs"></select>
+                <button id="lockBtn" onclick="lockDesign()" title="Chốt phương án này làm Official Design"
+                    class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs flex items-center gap-1">
+                    <i class="fa-solid fa-lock"></i> Chốt
+                </button>
+                <span id="lockStatus" class="text-xs text-green-400 hidden">
+                    <i class="fa-solid fa-check-circle"></i> Đã chốt
+                </span>
             </div>
 
-            <div class="h-6 w-px bg-slate-700"></div>
+            <!-- Material Grades: Read-only display from settings -->
+            <div class="flex items-center gap-3 text-xs">
+                <span class="text-slate-400">BT: <span id="concreteDisplay"
+                        class="text-cyan-400 font-medium">B25</span></span>
+                <span class="text-slate-400">Thép: <span id="steelDisplay"
+                        class="text-orange-400 font-medium">CB400</span></span>
+            </div>
 
-            <button onclick="toggleHighlightMode()" id="highlightBtn"
-                class="text-slate-400 hover:text-white text-xs flex items-center gap-1 transition">
-                <i class="fa-regular fa-eye"></i> Highlight CAD
-            </button>
+            <div class="flex gap-2 items-center">
+                <!-- Quick Calc Button -->
+                <button onclick="quickCalc()" title="Tính thép nhanh cho group này"
+                    class="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs flex items-center gap-1">
+                    <i class="fa-solid fa-calculator"></i> Tính thép
+                </button>
+                <!-- Highlight CAD Toggle -->
+                <label class="flex items-center gap-1 text-xs cursor-pointer">
+                    <span class="text-slate-400">Highlight</span>
+                    <div class="relative">
+                        <input type="checkbox" id="highlightToggle" class="sr-only peer"
+                            onchange="toggleHighlightMode(this.checked)">
+                        <div class="w-8 h-4 bg-slate-600 rounded-full peer-checked:bg-blue-500 transition-colors"></div>
+                        <div
+                            class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full peer-checked:translate-x-4 transition-transform">
+                        </div>
+                    </div>
+                </label>
+                <button class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs"
+                    onclick="copyFormat()"><i class="fa-solid fa-paintbrush"></i></button>
+            </div>
         </div>
     </header>
 
-    <!-- METRICS DASHBOARD -->
-    <div class="flex-none bg-white border-b border-slate-200 px-6 py-3 flex items-center justify-between">
-        <div class="flex gap-8">
-            <div class="flex flex-col">
-                <span class="text-[10px] text-slate-400 uppercase font-bold">Backbone</span>
-                <span id="metricBackbone" class="font-bold text-slate-700 text-lg leading-tight">-</span>
-            </div>
-            <div class="flex flex-col">
-                <span class="text-[10px] text-slate-400 uppercase font-bold">Total Steel</span>
-                <span id="metricWeight" class="font-bold text-slate-700 text-lg leading-tight">-</span>
-            </div>
-            <div class="flex flex-col">
-                <span class="text-[10px] text-slate-400 uppercase font-bold">Efficiency</span>
-                <span id="metricScore" class="font-bold text-emerald-600 text-lg leading-tight">-</span>
-            </div>
-            <div class="flex flex-col">
-                <span class="text-[10px] text-slate-400 uppercase font-bold">Waste</span>
-                <span id="metricWaste" class="font-bold text-amber-600 text-lg leading-tight">-</span>
-            </div>
-        </div>
-
-        <div id="warningsContainer" class="flex gap-2"></div>
-    </div>
-
-    <!-- MAIN CONTENT GRID -->
+    <!-- MAIN -->
     <main class="flex-1 flex flex-col overflow-hidden">
-        <!-- CANVAS -->
-        <div class="flex-none h-[220px] canvas-bg relative border-b border-slate-200 overflow-hidden"
+        <!-- CANVAS CONTAINER - Expanded to fill available space -->
+        <div class="flex-1 bg-white border-b border-slate-200 overflow-x-auto overflow-y-hidden relative"
             id="canvasContainer">
-            <canvas id="beamCanvas"></canvas>
-            <!-- Overlay Controls -->
-            <div class="absolute top-2 right-2 bg-white/90 backdrop-blur rounded shadow p-1 flex gap-1 z-10">
-                <button onclick="fitView()" class="p-1 hover:bg-slate-100 rounded text-slate-600" title="Fit to View"><i
-                        class="fa-solid fa-expand"></i></button>
+            <canvas id="beamCanvas" height="360"></canvas>
+            <!-- View Mode Toggle: Mode 1 = Section, Mode 2 = Long Rebar, Mode 3 = Shear-Web Bar -->
+            <div class="absolute top-2 right-2 flex gap-1">
+                <button onclick="setCanvasMode('section')" id="modeSection"
+                    class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500">Section</button>
+                <button onclick="setCanvasMode('long')" id="modeLong"
+                    class="px-2 py-1 bg-blue-600 text-white text-[10px] rounded hover:bg-blue-500">Long Rebar</button>
+                <button onclick="setCanvasMode('shear')" id="modeShear"
+                    class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500">Shear-Web</button>
             </div>
         </div>
 
-        <!-- ENGINEERING DATA GRID -->
-        <div class="flex-1 overflow-auto bg-slate-50 p-4">
-            <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                <table class="w-full text-xs border-collapse">
-                    <thead class="bg-slate-100 text-slate-500 font-semibold sticky top-0 z-10 shadow-sm">
-                        <tr>
-                            <th rowspan="2" class="p-3 text-left w-16 border-r border-slate-200 bg-slate-100">Span</th>
-                            <th rowspan="2" class="p-3 text-center w-20 border-r border-slate-200 bg-slate-100">
-                                Section<br><span class="text-[10px] font-normal">(mm)</span></th>
-                            <th colspan="3"
-                                class="p-2 text-center border-r border-slate-200 border-b bg-red-50 text-red-600">TOP
-                                REINFORCEMENT</th>
-                            <th colspan="3"
-                                class="p-2 text-center border-r border-slate-200 border-b bg-blue-50 text-blue-600">
-                                BOTTOM REINFORCEMENT</th>
-                            <th rowspan="2" class="p-3 text-center w-24 bg-slate-100">Stirrups</th>
-                        </tr>
-                        <tr>
-                            <!-- TOP headers -->
-                            <th class="p-2 w-32 border-r border-slate-200 bg-red-50/50">Left Support</th>
-                            <th class="p-2 w-32 border-r border-slate-200 bg-red-50/50">Mid Span</th>
-                            <th class="p-2 w-32 border-r border-slate-200 bg-red-50/50">Right Support</th>
-                            <!-- BOT headers -->
-                            <th class="p-2 w-32 border-r border-slate-200 bg-blue-50/50">Left Support</th>
-                            <th class="p-2 w-32 border-r border-slate-200 bg-blue-50/50">Mid Span</th>
-                            <th class="p-2 w-32 border-r border-slate-200 bg-blue-50/50">Right Support</th>
-                        </tr>
-                    </thead>
-                    <tbody id="gridBody" class="divide-y divide-slate-100"></tbody>
-                </table>
+        <!-- METRICS BAR -->
+        <div
+            class="flex-none bg-slate-50 border-b border-slate-200 px-4 py-2 flex items-center gap-6 text-xs flex-wrap">
+            <div class="flex items-center gap-2">
+                <span class="text-slate-500">Backbone:</span>
+                <span class="font-bold text-blue-600" id="metricBackbone">-</span>
             </div>
+            <div class="flex items-center gap-2">
+                <span class="text-slate-500">As:</span>
+                <span class="font-bold" id="metricAs">-</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-slate-500">Waste:</span>
+                <span class="font-bold" id="metricWaste">-</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-slate-500">Weight:</span>
+                <span class="font-bold" id="metricWeight">-</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-slate-500">Score:</span>
+                <span class="font-bold text-green-600" id="metricScore">-</span>
+            </div>
+            <div id="warningsContainer" class="flex gap-2"></div>
         </div>
+
+        <!-- COLLAPSIBLE TABLE SECTION -->
+        <div id="tablePanel"
+            class="flex-none bg-slate-50 border-t border-slate-300 transition-all duration-300 ease-in-out max-h-[300px] overflow-hidden">
+            <!-- Toggle Button -->
+            <button onclick="toggleTablePanel()"
+                class="w-full py-1 bg-slate-200 hover:bg-slate-300 flex items-center justify-center gap-2 text-xs text-slate-600">
+                <i id="tablePanelIcon" class="fa-solid fa-chevron-down"></i>
+                <span id="tablePanelLabel">Bảng chi tiết nhịp</span>
+            </button>
+            <div id="tablePanelContent" class="p-3 overflow-auto max-h-[260px]">
+                <div class="flex items-center gap-3 mb-2">
+                    <label class="flex items-center gap-1 text-xs">
+                        <input type="checkbox" id="autoApply" checked class="w-3.5 h-3.5">
+                        Auto Apply
+                    </label>
+                    <button class="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded text-xs"
+                        onclick="selectAllSpans()">Select All</button>
+                    <button class="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded text-xs"
+                        onclick="selectNoneSpans()">Select None</button>
+                    <div class="ml-auto text-xs text-slate-500">
+                        <span id="groupInfo">-</span>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded border border-slate-200 overflow-hidden">
+                    <table class="w-full text-xs">
+                        <thead class="bg-slate-100 sticky top-0">
+                            <tr>
+                                <th class="p-1 text-left w-14" rowspan="2">Nhịp</th>
+                                <th class="p-1 text-center w-8" rowspan="2">✓</th>
+                                <th class="p-1 text-center w-10" rowspan="2">L(m)</th>
+                                <th class="p-1 text-center w-12" rowspan="2">b×h</th>
+                                <th class="p-1 text-center w-8" rowspan="2">Lớp</th>
+                                <th colspan="3" class="p-1 text-center bg-red-50 text-red-700 text-[10px]">THÉP TRÊN
+                                </th>
+                                <th colspan="3" class="p-1 text-center bg-blue-50 text-blue-700 text-[10px]">THÉP DƯỚI
+                                </th>
+                                <th colspan="3" class="p-1 text-center bg-slate-100 text-[10px]">ĐAI</th>
+                                <th class="p-1 text-center w-12" rowspan="2">Sidebar</th>
+                            </tr>
+                            <tr class="text-[10px] text-slate-500">
+                                <th class="p-1 bg-red-50">Gối T</th>
+                                <th class="p-1 bg-red-50">Giữa</th>
+                                <th class="p-1 bg-red-50">Gối P</th>
+                                <th class="p-1 bg-blue-50">Gối T</th>
+                                <th class="p-1 bg-blue-50">Giữa</th>
+                                <th class="p-1 bg-blue-50">Gối P</th>
+                                <th class="p-1">L1</th>
+                                <th class="p-1">Mid</th>
+                                <th class="p-1">L2</th>
+                            </tr>
+                        </thead>
+                        <tbody id="spanTableBody"></tbody>
+                    </table>
+                </div>
+
+                <div class="mt-3 flex items-center gap-3">
+                    <label class="text-xs text-slate-500">Stirrup pattern:</label>
+                    <input type="text" id="stirrupPattern" value="d8a100/150/100"
+                        class="border border-slate-300 rounded px-2 py-1 text-xs w-32">
+                    <button class="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded text-xs"
+                        onclick="applyStirrupPattern()">
+                        Apply to Active
+                    </button>
+                </div>
+            </div> <!-- End tablePanelContent -->
+        </div> <!-- End tablePanel -->
     </main>
 
-    <!-- FOOTER ACTIONS -->
-    <footer
-        class="flex-none bg-white border-t border-slate-200 px-6 py-3 flex justify-between items-center z-20 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
-        <div class="flex items-center gap-3">
-            <div class="flex items-center gap-2 text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
-                <i class="fa-solid fa-circle-info"></i>
-                <span id="groupInfo">Total: -</span>
-            </div>
-            <!-- Legend -->
-            <div class="flex items-center gap-2 text-[10px] ml-4">
-                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>OK</span>
-                <span class="flex items-center gap-1"><span
-                        class="w-2 h-2 rounded-full bg-red-500"></span>Missing</span>
-                <span class="flex items-center gap-1"><span
-                        class="w-2 h-2 rounded-full bg-amber-500"></span>Excess</span>
-            </div>
+    <!-- FOOTER -->
+    <footer class="flex-none bg-white border-t border-slate-200 px-4 py-2 flex justify-between items-center">
+        <div class="flex gap-2">
+            <button class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-xs font-medium" onclick="doSave()">
+                <i class="fa-solid fa-save mr-1"></i>Save
+            </button>
+            <button class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-xs font-medium"
+                onclick="doExport()">
+                <i class="fa-solid fa-file-export mr-1"></i>Export
+            </button>
+            <button class="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-xs font-medium"
+                onclick="doImport()">
+                <i class="fa-solid fa-file-import mr-1"></i>Import
+            </button>
         </div>
-
-        <div class="flex gap-3">
-            <button onclick="doCancel()"
-                class="px-4 py-2 rounded text-slate-600 font-medium hover:bg-slate-100 transition text-xs">Cancel</button>
-            <button onclick="applyToDrawing()"
-                class="px-6 py-2 rounded bg-sky-600 hover:bg-sky-500 text-white font-bold shadow-md shadow-sky-200 transition text-xs flex items-center gap-2">
-                <i class="fa-solid fa-check"></i> Apply to Drawing
+        <div class="flex gap-2">
+            <button class="px-3 py-1.5 bg-slate-300 hover:bg-slate-400 rounded text-xs font-medium"
+                onclick="doCancel()">
+                Cancel
+            </button>
+            <button class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold"
+                onclick="applyToDrawing()">
+                <i class="fa-solid fa-check mr-1"></i>Apply to Drawing
             </button>
         </div>
     </footer>
 
-    <!-- JAVASCRIPT LOGIC -->
     <script>
-        // --- DATA STATE ---
+        // Data from C#
         const data = __DATA_JSON__;
-        let currentGroup = null;
         let currentGroupIndex = 0;
+        let currentGroup = null;
+        let highlightedSpanIndex = -1;
         let spanBounds = [];
-        let highlightMode = false;
 
-        // --- CONSTANTS ---
-        const BAR_AREAS = {
-            6: 0.28, 8: 0.50, 10: 0.79, 12: 1.13, 14: 1.54,
-            16: 2.01, 18: 2.54, 20: 3.14, 22: 3.80, 25: 4.91,
-            28: 6.16, 30: 7.07, 32: 8.04
-        };
-        // Rebar regex: "2D20", "2d20", "2T20"
-        const REBAR_REGEX = /^(\d+)[DT](\d+)$/i;
+        // RELATIVE SIZING: Min span width, max canvas width scaled
+        const MIN_SPAN_WIDTH = 80;
+        const MAX_CANVAS_WIDTH = 1600;
+        const CANVAS_PADDING = 30;
+        const BEAM_HEIGHT = 80; // Increased for rebar display
 
-        // --- INITIALIZATION ---
-        function init() {
-            populateGroupSelect();
-            if (data.groups?.length > 0) loadGroup(0);
+        // HIGHLIGHT MODE & TRANSPARENCY STATE
+        let highlightModeEnabled = false;
 
-            // Listen for window resize to refit canvas
-            window.addEventListener('resize', () => {
-                requestAnimationFrame(renderCanvas);
-            });
+        // CANVAS MODE: 'section' | 'long' | 'shear'
+        let canvasMode = 'long';
+
+        // CANVAS INTERACTION STATE
+        let canvasZoom = 1.0;
+        let canvasPanX = 0;
+        let canvasPanY = 0;
+        let canvasDragging = false;
+        let canvasLastX = 0;
+        let canvasLastY = 0;
+        // spanBounds is declared at line 296
+
+        // TABLE PANEL STATE
+        let tablePanelCollapsed = false;
+
+        function toggleTablePanel() {
+            tablePanelCollapsed = !tablePanelCollapsed;
+            const panel = document.getElementById('tablePanel');
+            const icon = document.getElementById('tablePanelIcon');
+            const content = document.getElementById('tablePanelContent');
+
+            if (tablePanelCollapsed) {
+                panel.classList.remove('max-h-[300px]');
+                panel.classList.add('max-h-[32px]');
+                content.classList.add('hidden');
+                icon.classList.remove('fa-chevron-down');
+                icon.classList.add('fa-chevron-up');
+            } else {
+                panel.classList.remove('max-h-[32px]');
+                panel.classList.add('max-h-[300px]');
+                content.classList.remove('hidden');
+                icon.classList.remove('fa-chevron-up');
+                icon.classList.add('fa-chevron-down');
+            }
         }
 
-        // --- GROUP LOADING ---
+        function setCanvasMode(mode) {
+            canvasMode = mode;
+            // Toggle active state for 3 buttons
+            const btnSection = document.getElementById('modeSection');
+            const btnLong = document.getElementById('modeLong');
+            const btnShear = document.getElementById('modeShear');
+
+            btnSection.classList.toggle('bg-blue-600', mode === 'section');
+            btnSection.classList.toggle('bg-slate-600', mode !== 'section');
+            btnLong.classList.toggle('bg-blue-600', mode === 'long');
+            btnLong.classList.toggle('bg-slate-600', mode !== 'long');
+            btnShear.classList.toggle('bg-blue-600', mode === 'shear');
+            btnShear.classList.toggle('bg-slate-600', mode !== 'shear');
+
+            renderCanvas();
+        }
+
+        function autoLockOnEdit() {
+            // When user manually edits, mark span as user-edited
+            if (currentGroup && highlightedSpanIndex >= 0) {
+                const span = currentGroup.Spans[highlightedSpanIndex];
+                if (span) span._userEdited = true;
+            }
+        }
+
+        function toggleHighlightMode(enabled) {
+            highlightModeEnabled = enabled;
+            if (enabled) {
+                // Immediately set 80% transparent when toggle ON
+                window.chrome.webview.postMessage('SET_OPACITY|0.2');
+                showToast('✓ Highlight mode ON - form 80% trong suốt');
+            } else {
+                // Reset to full opacity when toggle OFF
+                window.chrome.webview.postMessage('SET_OPACITY|1.0');
+                showToast('Highlight mode OFF');
+            }
+        }
+
+        function init() {
+            // Sync material grades from DtsSettings to read-only display
+            if (data.settings) {
+                const concreteDisp = document.getElementById('concreteDisplay');
+                const steelDisp = document.getElementById('steelDisplay');
+                if (concreteDisp && data.settings.ConcreteGradeName) {
+                    concreteDisp.textContent = data.settings.ConcreteGradeName;
+                }
+                if (steelDisp && data.settings.SteelGradeName) {
+                    // Map CB400-V to CB400, etc.
+                    const grade = data.settings.SteelGradeName.replace('-V', '');
+                    steelDisp.textContent = grade;
+                }
+            }
+
+            // Initialize canvas interaction system (inline, no external dependency)
+            const canvas = document.getElementById('beamCanvas');
+            if (canvas) {
+                // Click to select span
+                canvas.addEventListener('click', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
+                    const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
+                    for (let i = 0; i < spanBounds.length; i++) {
+                        const b = spanBounds[i];
+                        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+                            highlightSpan(i);
+                            const row = document.querySelector(`[data-span-index="${i}"]`);
+                            if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            break;
+                        }
+                    }
+                });
+
+                // Hover to highlight span
+                canvas.addEventListener('mousemove', (e) => {
+                    if (canvasDragging) {
+                        const dx = e.clientX - canvasLastX;
+                        const dy = e.clientY - canvasLastY;
+                        canvasPanX += dx;
+                        canvasPanY += dy;
+                        canvasLastX = e.clientX;
+                        canvasLastY = e.clientY;
+                        renderCanvas();
+                    } else {
+                        const rect = canvas.getBoundingClientRect();
+                        const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
+                        const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
+                        let found = -1;
+                        for (let i = 0; i < spanBounds.length; i++) {
+                            const b = spanBounds[i];
+                            if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+                                found = i;
+                                break;
+                            }
+                        }
+                        if (found !== highlightedSpanIndex) {
+                            highlightedSpanIndex = found;
+                            renderCanvas();
+                            renderTable();
+                        }
+                    }
+                });
+
+                // Middle click or Alt+click to start pan
+                canvas.addEventListener('mousedown', (e) => {
+                    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+                        canvasDragging = true;
+                        canvasLastX = e.clientX;
+                        canvasLastY = e.clientY;
+                        canvas.style.cursor = 'grabbing';
+                        e.preventDefault();
+                    }
+                });
+
+                canvas.addEventListener('mouseup', () => {
+                    canvasDragging = false;
+                    canvas.style.cursor = 'default';
+                });
+
+                canvas.addEventListener('mouseleave', () => {
+                    canvasDragging = false;
+                    canvas.style.cursor = 'default';
+                    highlightedSpanIndex = -1;
+                    renderCanvas();
+                    renderTable();
+                });
+
+                // Wheel to zoom
+                canvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    const newZoom = Math.max(0.5, Math.min(3, canvasZoom * delta));
+                    const rect = canvas.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+                    canvasPanX = mouseX - (mouseX - canvasPanX) * (newZoom / canvasZoom);
+                    canvasPanY = mouseY - (mouseY - canvasPanY) * (newZoom / canvasZoom);
+                    canvasZoom = newZoom;
+                    renderCanvas();
+                }, { passive: false });
+
+                // Double click to reset view
+                canvas.addEventListener('dblclick', () => {
+                    canvasZoom = 1.0;
+                    canvasPanX = 0;
+                    canvasPanY = 0;
+                    renderCanvas();
+                });
+
+                console.log('Canvas interaction system initialized');
+            }
+
+            // Handle view mode: 'groups' vs 'single'
+            if (data.mode === 'single' || !data.groups || data.groups.length === 0) {
+                // Single beam mode - show message in canvas
+                const canvas = document.getElementById('beamCanvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 600;
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(0, 0, 600, 360);
+                ctx.fillStyle = '#64748b';
+                ctx.font = '16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('📦 Dầm đơn chưa được gom nhóm', 300, 150);
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillText('Sử dụng lệnh DTS_REBAR_GROUP để gom dầm vào nhóm', 300, 180);
+                ctx.fillText('hoặc chọn phần tử thuộc nhóm để xem', 300, 200);
+
+                // Hide group controls
+                document.getElementById('groupSelect').style.display = 'none';
+                console.log('Single beam mode - no groups to display');
+                return;
+            }
+
+            populateGroupSelect();
+            if (data.groups && data.groups.length > 0) {
+                loadGroup(0);
+            }
+        }
+
         function populateGroupSelect() {
             const sel = document.getElementById('groupSelect');
             sel.innerHTML = '';
-            data.groups?.forEach((g, i) => {
+            if (!data.groups) return;
+            data.groups.forEach((g, i) => {
                 const opt = document.createElement('option');
                 opt.value = i;
-                opt.textContent = `${g.GroupName} (${g.GroupType === 'Girder' ? 'G' : 'B'})`;
+                opt.textContent = `${g.GroupName || 'Group ' + (i + 1)} (${g.Spans?.length || 0} nhịp)`;
                 sel.appendChild(opt);
             });
         }
 
-        function loadGroup(idx) {
-            currentGroupIndex = parseInt(idx);
+        function loadGroup(index) {
+            currentGroupIndex = parseInt(index);
             currentGroup = data.groups[currentGroupIndex];
             document.getElementById('groupSelect').value = currentGroupIndex;
 
             populateOptionSelect();
+            renderCanvas();
+            renderTable();
             updateMetrics();
             updateGroupInfo();
-            renderCanvas();
-            renderGrid();
+            loadMaterialSelects();
+            updateLockStatus();
         }
 
         function prevGroup() { if (currentGroupIndex > 0) loadGroup(currentGroupIndex - 1); }
         function nextGroup() { if (currentGroupIndex < data.groups.length - 1) loadGroup(currentGroupIndex + 1); }
 
-        // --- METRICS ---
-        function updateMetrics() {
-            if (!currentGroup) return;
-            const opt = currentGroup.BackboneOptions?.[currentGroup.SelectedBackboneIndex || 0];
-
-            document.getElementById('metricBackbone').textContent = opt ? opt.OptionName : '-';
-            document.getElementById('metricWeight').textContent = opt ? (opt.TotalSteelWeight?.toFixed(0) + ' kg') : '-';
-            document.getElementById('metricScore').textContent = opt ? opt.EfficiencyScore?.toFixed(0) : '-';
-            document.getElementById('metricWaste').textContent = opt ? (opt.WastePercentage?.toFixed(1) + '%') : '-';
-
-            // Warnings
-            const warnings = [];
-            if (currentGroup.HasStepChange) warnings.push({ t: 'Step Change', c: 'bg-amber-100 text-amber-700' });
-            if (currentGroup.RequiresSplice) warnings.push({ t: 'Splice', c: 'bg-blue-100 text-blue-700' });
-
-            document.getElementById('warningsContainer').innerHTML = warnings.map(w =>
-                `<span class="px-2 py-1 rounded text-xs font-bold ${w.c}">${w.t}</span>`
-            ).join('');
-        }
-
-        function updateGroupInfo() {
-            if (!currentGroup) return;
-            document.getElementById('groupInfo').textContent = `Length: ${currentGroup.TotalLength?.toFixed(1)}m | Beams: ${currentGroup.EntityHandles?.length}`;
-        }
-
-        // --- CANVAS RENDERING (Auto Scale) ---
-        function renderCanvas() {
-            if (!currentGroup?.Spans) return;
-            const cvs = document.getElementById('beamCanvas');
-            const ctx = cvs.getContext('2d');
-            const container = document.getElementById('canvasContainer');
-
-            cvs.width = container.clientWidth;
-            cvs.height = container.clientHeight;
-
-            const W = cvs.width;
-            const H = cvs.height;
-            const PADDING_X = 50;
-            const PADDING_Y = 60;
-
-            // Clear
-            ctx.clearRect(0, 0, W, H);
-
-            // Scale calc
-            const totalLen = currentGroup.TotalLength;
-            if (totalLen <= 0) return;
-
-            const scalePxPerM = (W - 2 * PADDING_X) / totalLen;
-            const beamH = 60; // Fixed visual height
-            const beamY = H / 2 - beamH / 2;
-
-            let currentX = PADDING_X;
-            spanBounds = [];
-
-            currentGroup.Spans.forEach((span, i) => {
-                const w = span.Length * scalePxPerM;
-
-                // Draw Beam Body
-                ctx.fillStyle = '#e2e8f0';
-                ctx.strokeStyle = '#94a3b8';
-                ctx.lineWidth = 1;
-                ctx.fillRect(currentX, beamY, w, beamH);
-                ctx.strokeRect(currentX, beamY, w, beamH);
-
-                // Draw Rebar (Schematic)
-                drawRebarSchematic(ctx, currentX, beamY, w, beamH, span);
-
-                // Supports
-                ctx.fillStyle = '#475569';
-                ctx.beginPath();
-                ctx.moveTo(currentX, beamY + beamH);
-                ctx.lineTo(currentX - 5, beamY + beamH + 10);
-                ctx.lineTo(currentX + 5, beamY + beamH + 10);
-                ctx.fill();
-
-                // Labels
-                ctx.fillStyle = '#1e293b';
-                ctx.font = 'bold 12px Inter';
-                ctx.textAlign = 'center';
-                ctx.fillText(span.SpanId, currentX + w / 2, beamY + beamH / 2 + 4);
-
-                // Dimensions
-                ctx.fillStyle = '#64748b';
-                ctx.font = '10px Inter';
-                ctx.fillText(`${span.Length.toFixed(2)}m`, currentX + w / 2, beamY - 8);
-
-                // Store Map
-                spanBounds.push({ x: currentX, w: w, idx: i });
-
-                currentX += w;
-            });
-
-            // Last support
-            ctx.fillStyle = '#475569';
-            ctx.beginPath();
-            ctx.moveTo(currentX, beamY + beamH);
-            ctx.lineTo(currentX - 5, beamY + beamH + 10);
-            ctx.lineTo(currentX + 5, beamY + beamH + 10);
-            ctx.fill();
-        }
-
-        function drawRebarSchematic(ctx, x, y, w, h, span) {
-            // Simplified red/blue lines
-            const topY = y + 10;
-            const botY = y + h - 10;
-
-            // Top
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x + w, topY); ctx.stroke();
-
-            // Bot
-            ctx.strokeStyle = '#3b82f6';
-            ctx.beginPath(); ctx.moveTo(x, botY); ctx.lineTo(x + w, botY); ctx.stroke();
-        }
-
-        // --- GRID RENDERING (The Core) ---
-        function renderGrid() {
-            const tbody = document.getElementById('gridBody');
-            tbody.innerHTML = '';
-
-            currentGroup.Spans.forEach((span, i) => {
-                // Determine Row State
-                const tr = document.createElement('tr');
-                tr.className = 'hover:bg-slate-50 transition-colors group ' + (i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50');
-
-                // Cells
-                let html = `
-                    <td class="p-3 font-bold text-slate-700 border-r border-slate-100">${span.SpanId}</td>
-                    <td class="p-3 text-center text-slate-600 border-r border-slate-100 font-mono text-xs">
-                        ${Math.round(span.Width)}x${Math.round(span.Height)}
-                    </td>
-                `;
-
-                // --- TOP REBAR (3 positions) ---
-                const pos = [0, 2, 4]; // Left, Mid, Right
-                pos.forEach(p => {
-                    const reqArea = span.As_Top?.[p] || 0;
-                    const rebarStr = span.TopRebar?.[0]?.[p] || '';
-                    html += renderRebarCell(i, 'Top', p, reqArea, rebarStr, 'bg-red-50/30');
-                });
-
-                // --- BOT REBAR (3 positions) ---
-                pos.forEach(p => {
-                    const reqArea = span.As_Bot?.[p] || 0;
-                    const rebarStr = span.BotRebar?.[0]?.[p] || '';
-                    html += renderRebarCell(i, 'Bot', p, reqArea, rebarStr, 'bg-blue-50/30');
-                });
-
-                // --- STIRRUPS ---
-                html += `<td class="p-2 border-l border-slate-200">
-                    <input type="text" value="${span.Stirrup?.[0] || ''}" onchange="updateStirrup(${i}, this.value)"
-                    class="w-full text-center text-[10px] text-slate-500 bg-transparent outline-none border border-transparent focus:border-blue-300 rounded">
-                </td>`;
-
-                tr.innerHTML = html;
-                tbody.appendChild(tr);
-            });
-        }
-
-        function renderRebarCell(spanIdx, type, pos, req, str, bgClass) {
-            // Calc Provided
-            const prov = calculateRebarArea(str);
-            const ratio = req > 0 ? (prov / req) : 1.0;
-            const isMissing = prov < req && req > 0.1;
-            const isExcess = prov > req * 1.5 && prov > 2.0; // Avoid alerting small bars
-
-            // Status Color
-            let statusColor = 'text-slate-400';
-            let statusIcon = '';
-            if (isMissing) { statusColor = 'text-red-500'; statusIcon = '<i class="fa-solid fa-triangle-exclamation"></i>'; }
-            else if (isExcess) { statusColor = 'text-amber-500'; statusIcon = '<i class="fa-solid fa-arrow-up"></i>'; }
-            else if (req > 0) { statusColor = 'text-emerald-500'; statusIcon = '<i class="fa-solid fa-check"></i>'; }
-
-            return `
-                <td class="p-2 border-r border-slate-100 ${bgClass} dt-cell align-top">
-                    <div class="flex flex-col items-center gap-1">
-                        <!-- Input -->
-                        <input type="text" value="${str}" 
-                            onchange="updateRebar(${spanIdx}, '${type}', ${pos}, this.value)"
-                            class="dt-input font-mono text-sm ${isMissing ? 'text-red-600 font-bold' : 'text-slate-700'}">
-                        
-                        <!-- Mini Stats -->
-                        <div class="flex items-center justify-between w-full px-2 mt-1">
-                            <div class="flex flex-col items-start leading-none">
-                                <span class="text-[9px] text-slate-400 uppercase tracking-tighter">Req</span>
-                                <span class="text-[10px] font-bold text-slate-600">${req.toFixed(2)}</span>
-                            </div>
-                            
-                            <div class="${statusColor} text-[10px]">${statusIcon}</div>
-
-                            <div class="flex flex-col items-end leading-none">
-                                <span class="text-[9px] text-slate-400 uppercase tracking-tighter">Prov</span>
-                                <span class="text-[10px] font-bold ${isMissing ? 'text-red-600' : 'text-slate-600'}">${prov.toFixed(2)}</span>
-                            </div>
-                        </div>
-                    </div>
-                </td>
-            `;
-        }
-
-        // --- MATH HELPERS ---
-        function calculateRebarArea(str) {
-            // str ex: "3D20", "2d18+1d20"
-            if (!str) return 0;
-            let total = 0;
-            // Split by +
-            const parts = str.split('+');
-            parts.forEach(p => {
-                const match = p.trim().match(REBAR_REGEX);
-                if (match) {
-                    const count = parseInt(match[1]);
-                    const dia = parseInt(match[2]);
-                    if (BAR_AREAS[dia]) total += count * BAR_AREAS[dia];
-                }
-            });
-            return total;
-        }
-
-        // --- INTERACTIONS ---
-        function updateRebar(spanIdx, type, pos, val) {
-            const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
-            if (!currentGroup.Spans[spanIdx][arr]) currentGroup.Spans[spanIdx][arr] = [[], [], []];
-            if (!currentGroup.Spans[spanIdx][arr][0]) currentGroup.Spans[spanIdx][arr][0] = [];
-            currentGroup.Spans[spanIdx][arr][0][pos] = val;
-
-            // Re-render only that cell? For now full render
-            renderGrid();
-            renderCanvas();
-        }
-
         function populateOptionSelect() {
-            // Reuse logic from old viewer for options
             const sel = document.getElementById('optionSelect');
             sel.innerHTML = '';
-            if (currentGroup.BackboneOptions) {
-                currentGroup.BackboneOptions.forEach((opt, i) => {
-                    const el = document.createElement('option');
-                    el.value = i;
-                    el.textContent = opt.OptionName || `Option ${i + 1}`;
-                    sel.appendChild(el);
+            if (!currentGroup?.BackboneOptions) {
+                sel.innerHTML = '<option>No options</option>';
+                return;
+            }
+
+            // Nếu có SelectedDesign, thêm vào đầu dropdown với ⭐
+            if (currentGroup.SelectedDesign) {
+                const lockedOpt = document.createElement('option');
+                lockedOpt.value = 'locked';
+                const isInvalid = currentGroup.SelectedDesign.IsValid === false;
+                lockedOpt.textContent = `⭐ Phương án CHỐT ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang dùng)'}`;
+                if (isInvalid) lockedOpt.style.color = '#ef4444';
+                sel.appendChild(lockedOpt);
+            }
+
+            // Thêm các phương án máy đề xuất
+            currentGroup.BackboneOptions.forEach((opt, i) => {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `${opt.OptionName || 'Option ' + (i + 1)} - D${opt.BackboneDiameter || '?'}${i === 0 ? ' (Best)' : ''}`;
+                sel.appendChild(option);
+            });
+
+            // Chọn SelectedDesign nếu có, không thì chọn theo index
+            sel.value = currentGroup.SelectedDesign ? 'locked' : (currentGroup.SelectedBackboneIndex || 0);
+        }
+
+        function selectOption(index) {
+            currentGroup.SelectedBackboneIndex = parseInt(index);
+
+            // Populate span rebar from selected backbone option
+            const opt = currentGroup.BackboneOptions?.[index];
+            if (opt) {
+                const backbone = `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`;
+                const botBackbone = `${opt.BackboneCount_Bot}D${opt.BackboneDiameter}`;
+                currentGroup.Spans.forEach(span => {
+                    // Only update if not manually edited
+                    if (!span._userEdited) {
+                        if (!span.TopRebar) span.TopRebar = [[], [], []];
+                        if (!span.BotRebar) span.BotRebar = [[], [], []];
+                        span.TopRebar[0][0] = backbone;
+                        span.TopRebar[0][2] = backbone;
+                        span.TopRebar[0][4] = backbone;
+                        span.BotRebar[0][0] = botBackbone;
+                        span.BotRebar[0][2] = botBackbone;
+                        span.BotRebar[0][4] = botBackbone;
+                    }
                 });
+            }
+
+            updateMetrics();
+            renderCanvas();
+            renderTable();
+        }
+
+        // ===== SELECTED DESIGN (Phương án Chốt) =====
+        function lockDesign() {
+            if (!currentGroup) return;
+
+            const selectedIdx = currentGroup.SelectedBackboneIndex || 0;
+            const option = currentGroup.BackboneOptions?.[selectedIdx];
+
+            if (!option) {
+                showToast('⚠️ Không có phương án để chốt!', 'error');
+                return;
+            }
+
+            // Clone option vào SelectedDesign
+            currentGroup.SelectedDesign = JSON.parse(JSON.stringify(option));
+            currentGroup.LockedAt = new Date().toISOString();
+            currentGroup.LockedBy = 'User';
+
+            updateLockStatus();
+            showToast('🔒 Đã CHỐT phương án làm Official Design!', 'success');
+
+            // Notify C# để save
+            window.chrome.webview?.postMessage('LOCK_DESIGN|' + currentGroupIndex);
+        }
+
+        function unlockDesign() {
+            if (!currentGroup) return;
+
+            if (!confirm('Bạn có chắc muốn HỦY CHỐT? Phương án đã lưu sẽ bị xóa.')) return;
+
+            currentGroup.SelectedDesign = null;
+            currentGroup.LockedAt = null;
+            currentGroup.LockedBy = null;
+
+            updateLockStatus();
+            showToast('🔓 Đã hủy chốt phương án.', 'info');
+
+            window.chrome.webview?.postMessage('UNLOCK_DESIGN|' + currentGroupIndex);
+        }
+
+        // ===== QUICK CALC (Tính thép nhanh) =====
+        function quickCalc() {
+            if (!currentGroup) {
+                showToast('⚠️ Không có group để tính!', 'error');
+                return;
+            }
+
+            showToast('⏳ Đang tính thép...', 'info');
+
+            // Send message to C# to run rebar calculation
+            window.chrome.webview?.postMessage('QUICK_CALC|' + currentGroupIndex);
+        }
+
+        function updateLockStatus() {
+            const lockBtn = document.getElementById('lockBtn');
+            const lockStatus = document.getElementById('lockStatus');
+
+            if (!lockBtn || !lockStatus) return;
+
+            const isLocked = currentGroup?.SelectedDesign != null;
+            const isInvalid = currentGroup?.SelectedDesign?.IsValid === false;
+
+            if (isLocked) {
+                lockBtn.innerHTML = '<i class="fa-solid fa-unlock"></i> Hủy chốt';
+                lockBtn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
+                lockBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
+                lockBtn.onclick = unlockDesign;
+
+                // Show status with warning if invalid
+                if (isInvalid) {
+                    lockStatus.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> THIẾU THÉP!';
+                    lockStatus.classList.remove('hidden', 'text-green-400');
+                    lockStatus.classList.add('text-red-500', 'font-bold');
+                } else {
+                    lockStatus.innerHTML = '<i class="fa-solid fa-check-circle"></i> Đã chốt';
+                    lockStatus.classList.remove('hidden', 'text-red-500', 'font-bold');
+                    lockStatus.classList.add('text-green-400');
+                }
+            } else {
+                lockBtn.innerHTML = '<i class="fa-solid fa-lock"></i> Chốt';
+                lockBtn.classList.add('bg-amber-600', 'hover:bg-amber-500');
+                lockBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
+                lockBtn.onclick = lockDesign;
+                lockStatus.classList.add('hidden');
             }
         }
 
-        function selectOption(val) {
-            // Logic to switch option
-            // Update spans rebar from option...
-            // For brevity, skipping full implementation here, assume similar to old viewer
-            // Ideally we copy Backbone to Spans here using JS
+        // ===== AUTO-LOCK ON MANUAL EDIT =====
+        // Gọi hàm này khi User chỉnh sửa thủ công (diameter, count, cut, etc.)
+        function autoLockOnEdit() {
+            if (!currentGroup) return;
+
+            // Nếu chưa có SelectedDesign, auto-lock ngay
+            if (!currentGroup.SelectedDesign) {
+                lockDesign();
+                showToast('🔒 Auto-lock: Phương án đã được chốt tự động khi sửa tay!', 'info');
+            }
+            // Đánh dấu đã sửa thủ công
+            currentGroup.IsManuallyEdited = true;
         }
 
-        function applyToDrawing() {
-            window.chrome.webview?.postMessage('APPLY_DRAWING|' + JSON.stringify(currentGroup));
+        // Wrapper để gọi khi bất kỳ edit nào xảy ra
+        function onManualEdit(spanIndex, field, value) {
+            // Thực hiện edit...
+            console.log(`Manual edit: span ${spanIndex}, ${field} = ${value}`);
+
+            // Auto-lock
+            autoLockOnEdit();
+
+            // Update UI
+            renderCanvas();
+            renderTable();
         }
 
-        function doCancel() {
-            window.chrome.webview?.postMessage('CANCEL');
+        function updateGroupInfo() {
+            const info = document.getElementById('groupInfo');
+            if (!currentGroup) { info.textContent = '-'; return; }
+            const totalL = currentGroup.TotalLength?.toFixed(2) || '-';
+            const beamCount = currentGroup.EntityHandles?.length || 0;
+            info.textContent = `Tổng: ${totalL}m | ${beamCount} dầm | ${currentGroup.Spans?.length || 0} nhịp`;
         }
 
-        // Start
-        window.onload = init;
+        function updateMetrics() {
+            if (!currentGroup) return;
+            const opt = currentGroup.BackboneOptions?.[currentGroup.SelectedBackboneIndex || 0];
+            if (opt) {
+                document.getElementById('metricBackbone').textContent = opt.OptionName || '-';
+                document.getElementById('metricAs').textContent = `${opt.As_Backbone_Top?.toFixed(1) || 0} cm²`;
+                document.getElementById('metricWaste').textContent = `${opt.WastePercentage?.toFixed(1) || 0}%`;
+                document.getElementById('metricWeight').textContent = `${opt.TotalSteelWeight?.toFixed(0) || 0} kg`;
+                document.getElementById('metricScore').textContent = opt.EfficiencyScore?.toFixed(0) || '-';
+            }
 
+            // Warnings
+            const warnings = [];
+            if (currentGroup.HasStepChange) warnings.push({ icon: '⚠️', text: 'Giật cấp', cls: 'bg-amber-100 text-amber-700' });
+            if (currentGroup.RequiresSplice) warnings.push({ icon: '🔗', text: 'Nối thép', cls: 'bg-blue-100 text-blue-700' });
+            if (currentGroup.HasConsole) warnings.push({ icon: '📐', text: 'Console', cls: 'bg-purple-100 text-purple-700' });
+
+            document.getElementById('warningsContainer').innerHTML = warnings
+                .map(w => `<span class="px-2 py-0.5 rounded text-[10px] font-bold ${w.cls}">${w.icon} ${w.text}</span>`).join('');
+        }
+
+        // ============ CANVAS RENDERING (RELATIVE LENGTHS) ============
+        function renderCanvas() {
+            const canvas = document.getElementById('beamCanvas');
+            const ctx = canvas.getContext('2d');
+
+            if (!currentGroup?.Spans?.length) {
+                canvas.width = 400;
+                ctx.fillStyle = '#f8fafc';
+                ctx.fillRect(0, 0, 400, 180);
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('Không có dữ liệu nhịp', 200, 90);
+                return;
+            }
+
+            spanBounds = [];
+            const spans = currentGroup.Spans;
+
+            // Calculate relative widths (use sqrt for better visual scaling)
+            const lengths = spans.map(s => s.Length || 1);
+            const maxLen = Math.max(...lengths);
+            const minLen = Math.min(...lengths);
+
+            // Scale: each span gets width proportional to its length, but with min/max limits
+            const availableWidth = MAX_CANVAS_WIDTH - CANVAS_PADDING * 2 - spans.length * 10;
+            const totalLen = lengths.reduce((a, b) => a + b, 0);
+
+            let totalWidth = CANVAS_PADDING * 2;
+            const spanWidths = lengths.map(len => {
+                const ratio = len / totalLen;
+                const w = Math.max(MIN_SPAN_WIDTH, ratio * availableWidth);
+                totalWidth += w + 10; // +10 for support gap
+                return w;
+            });
+
+            canvas.width = Math.min(totalWidth, MAX_CANVAS_WIDTH);
+            const height = 180;
+
+            // Clear with light background
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, 0, canvas.width, height);
+
+            let x = CANVAS_PADDING;
+            const beamY = 60;
+
+            // Draw beams
+            spans.forEach((span, i) => {
+                const w = spanWidths[i];
+
+                // Support symbol
+                if (i === 0) {
+                    drawSupport(ctx, x, beamY);
+                    x += 5;
+                }
+
+                // Store bounds
+                spanBounds.push({ x, y: beamY, width: w, height: BEAM_HEIGHT, index: i });
+
+                // Draw beam segment
+                const isHighlighted = i === highlightedSpanIndex;
+                ctx.fillStyle = isHighlighted ? '#dbeafe' : '#e2e8f0';
+                ctx.strokeStyle = isHighlighted ? '#3b82f6' : '#64748b';
+                ctx.lineWidth = isHighlighted ? 2 : 1;
+                ctx.fillRect(x, beamY, w, BEAM_HEIGHT);
+                ctx.strokeRect(x, beamY, w, BEAM_HEIGHT);
+
+                // Draw rebar lines
+                drawRebarLines(ctx, x, beamY, w, span);
+
+                // Span label
+                ctx.fillStyle = '#1e293b';
+                ctx.font = 'bold 11px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(span.SpanId, x + w / 2, beamY + BEAM_HEIGHT / 2 + 4);
+
+                // Dimension
+                ctx.fillStyle = '#64748b';
+                ctx.font = '10px sans-serif';
+                ctx.fillText(`${(span.Length || 0).toFixed(2)}m`, x + w / 2, beamY + BEAM_HEIGHT + 12);
+                ctx.fillText(`${span.Width || 0}×${span.Height || 0}`, x + w / 2, beamY - 5);
+
+                x += w;
+
+                // Support between spans
+                drawSupport(ctx, x, beamY);
+                x += 10;
+            });
+
+            // Scroll to highlighted span
+            if (highlightedSpanIndex >= 0 && spanBounds[highlightedSpanIndex]) {
+                const bound = spanBounds[highlightedSpanIndex];
+                const container = document.getElementById('canvasContainer');
+                const scrollTarget = bound.x - container.clientWidth / 2 + bound.width / 2;
+                container.scrollTo({ left: scrollTarget, behavior: 'smooth' });
+            }
+        }
+
+        function drawSupport(ctx, x, y) {
+            ctx.fillStyle = '#475569';
+            ctx.beginPath();
+            ctx.moveTo(x, y + BEAM_HEIGHT);
+            ctx.lineTo(x - 6, y + BEAM_HEIGHT + 15);
+            ctx.lineTo(x + 6, y + BEAM_HEIGHT + 15);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawRebarLines(ctx, x, y, w, span) {
+            const topY = y + 12;
+            const botY = y + BEAM_HEIGHT - 12;
+            const midX = x + w / 2;
+
+            // Draw backbone (continuous lines)
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]);
+
+            // Top backbone (red)
+            ctx.beginPath();
+            ctx.moveTo(x + 3, topY);
+            ctx.lineTo(x + w - 3, topY);
+            ctx.stroke();
+
+            // Bottom backbone (blue)
+            ctx.strokeStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.moveTo(x + 3, botY);
+            ctx.lineTo(x + w - 3, botY);
+            ctx.stroke();
+
+            // MODE-SPECIFIC RENDERING
+            if (canvasMode === 'long') {
+                // LONG REBAR MODE - Show As_req/As_prov and rebar text at 6 positions
+                ctx.font = 'bold 9px sans-serif';
+                ctx.textAlign = 'center';
+
+                const positions = [
+                    { pos: 'L', xOff: 0.15 },
+                    { pos: 'M', xOff: 0.50 },
+                    { pos: 'R', xOff: 0.85 }
+                ];
+
+                // Top rebar values (above span)
+                ctx.fillStyle = '#dc2626'; // red
+                positions.forEach(p => {
+                    const pX = x + w * p.xOff;
+                    const asReq = span.AsReq?.Top?.[p.pos] || 0;
+                    const asProv = span.AsProv?.Top?.[p.pos] || 0;
+                    const rebarText = span.TopRebar?.[0]?.[p.pos === 'L' ? 0 : p.pos === 'M' ? 2 : 4] || '';
+
+                    // Draw circle marker
+                    ctx.beginPath();
+                    ctx.arc(pX, topY, 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // As values text - show both req and prov
+                    if (asReq > 0 || rebarText) {
+                        ctx.fillStyle = asProv >= asReq ? '#16a34a' : '#dc2626';
+                        const label = rebarText ? `${rebarText}` : `${asReq.toFixed(0)}`;
+                        const subLabel = asReq > 0 ? `(${asReq.toFixed(0)})` : '';
+                        ctx.fillText(label, pX, topY - 8);
+                        if (!rebarText && asReq > 0) {
+                            ctx.font = '7px sans-serif';
+                            ctx.fillStyle = '#94a3b8';
+                            ctx.fillText('req', pX, topY - 18);
+                            ctx.font = 'bold 9px sans-serif';
+                        }
+                        ctx.fillStyle = '#dc2626';
+                    }
+                });
+
+                // Bottom rebar values (below span)
+                ctx.fillStyle = '#2563eb'; // blue
+                positions.forEach(p => {
+                    const pX = x + w * p.xOff;
+                    const asReq = span.AsReq?.Bot?.[p.pos] || 0;
+                    const asProv = span.AsProv?.Bot?.[p.pos] || 0;
+                    const rebarText = span.BotRebar?.[0]?.[p.pos === 'L' ? 0 : p.pos === 'M' ? 2 : 4] || '';
+
+                    // Draw circle marker
+                    ctx.beginPath();
+                    ctx.arc(pX, botY, 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // As values text
+                    if (asReq > 0 || rebarText) {
+                        ctx.fillStyle = asProv >= asReq ? '#16a34a' : '#2563eb';
+                        const label = rebarText ? `${rebarText}` : `${asReq.toFixed(0)}`;
+                        ctx.fillText(label, pX, botY + 14);
+                        if (!rebarText && asReq > 0) {
+                            ctx.font = '7px sans-serif';
+                            ctx.fillStyle = '#94a3b8';
+                            ctx.fillText('req', pX, botY + 24);
+                            ctx.font = 'bold 9px sans-serif';
+                        }
+                        ctx.fillStyle = '#2563eb';
+                    }
+                });
+            } else if (canvasMode === 'shear') {
+                // SHEAR/WEB BAR MODE - Show stirrup layout as vertical lines
+                const stirrups = span.Stirrup || [];
+                ctx.strokeStyle = '#6b7280';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([]);
+
+                // Draw vertical stirrup lines across span (simplified representation)
+                const zones = [
+                    { start: 0, end: 0.25, spacing: stirrups[0] },   // L1 zone
+                    { start: 0.25, end: 0.75, spacing: stirrups[1] }, // Mid zone
+                    { start: 0.75, end: 1.0, spacing: stirrups[2] }   // L2 zone
+                ];
+
+                zones.forEach(zone => {
+                    const spacing = zone.spacing ? parseFloat(zone.spacing.match(/a(\d+)/)?.[1] || '150') : 150;
+                    const dia = zone.spacing ? parseFloat(zone.spacing.match(/d(\d+)/)?.[1] || '8') : 8;
+                    const zoneStart = x + w * zone.start;
+                    const zoneEnd = x + w * zone.end;
+                    const zoneWidth = zoneEnd - zoneStart;
+                    const numStirrups = Math.max(2, Math.floor(zoneWidth / (spacing / 10))); // Scale for display
+
+                    ctx.strokeStyle = dia >= 10 ? '#475569' : '#94a3b8';
+                    ctx.lineWidth = dia >= 10 ? 1.5 : 1;
+
+                    for (let i = 0; i <= numStirrups; i++) {
+                        const sx = zoneStart + (zoneWidth / numStirrups) * i;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, topY - 2);
+                        ctx.lineTo(sx, botY + 2);
+                        ctx.stroke();
+                    }
+                });
+
+                // Show stirrup text labels
+                ctx.font = '8px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#475569';
+                if (stirrups[0]) ctx.fillText(stirrups[0], x + w * 0.125, y + BEAM_HEIGHT + 25);
+                if (stirrups[1]) ctx.fillText(stirrups[1], x + w * 0.5, y + BEAM_HEIGHT + 25);
+                if (stirrups[2]) ctx.fillText(stirrups[2], x + w * 0.875, y + BEAM_HEIGHT + 25);
+            } else {
+                // SECTION mode - draw addon bars (dashed) like before
+                const topRebar = span.TopRebar?.[0];
+                const botRebar = span.BotRebar?.[0];
+
+                ctx.setLineDash([4, 2]);
+                ctx.lineWidth = 1.5;
+
+                if (topRebar?.[0]) {
+                    ctx.strokeStyle = '#f97316';
+                    ctx.beginPath();
+                    ctx.moveTo(x + 3, topY + 4);
+                    ctx.lineTo(x + w * 0.3, topY + 4);
+                    ctx.stroke();
+                }
+                if (topRebar?.[4]) {
+                    ctx.strokeStyle = '#f97316';
+                    ctx.beginPath();
+                    ctx.moveTo(x + w * 0.7, topY + 4);
+                    ctx.lineTo(x + w - 3, topY + 4);
+                    ctx.stroke();
+                }
+            }
+
+            ctx.setLineDash([]);
+        }
+
+        // ============ TABLE RENDERING (LAYER-BASED) ============
+        function renderTable() {
+            const tbody = document.getElementById('spanTableBody');
+            tbody.innerHTML = '';
+
+            if (!currentGroup?.Spans) return;
+
+            // Get MaxLayers from settings (default 2)
+            const maxLayers = data.settings?.MaxLayers || 2;
+
+            currentGroup.Spans.forEach((span, spanIdx) => {
+                // Create n rows for each span (n = maxLayers)
+                for (let layer = 0; layer < maxLayers; layer++) {
+                    const tr = document.createElement('tr');
+                    const isFirstRow = layer === 0;
+                    tr.className = `span-row border-b border-slate-100 ${span.IsActive === false ? 'opacity-40' : ''} ${spanIdx === highlightedSpanIndex ? 'highlighted' : ''}`;
+                    tr.dataset.spanIndex = spanIdx;
+
+                    // Mouse events for sync
+                    tr.addEventListener('mouseenter', () => highlightSpan(spanIdx));
+                    tr.addEventListener('mouseleave', clearHighlight);
+
+                    // First row shows span info with rowspan, other rows only show layer data
+                    if (isFirstRow) {
+                        tr.innerHTML = `
+                            <td class="p-1 font-medium" rowspan="${maxLayers}">${span.SpanId}</td>
+                            <td class="p-1 text-center" rowspan="${maxLayers}">
+                                <input type="checkbox" ${span.IsActive !== false ? 'checked' : ''} 
+                                    onchange="toggleSpanActive(${spanIdx}, this.checked)" class="w-3 h-3">
+                            </td>
+                            <td class="p-1 text-center text-slate-600 text-[10px]" rowspan="${maxLayers}">${(span.Length || 0).toFixed(2)}</td>
+                            <td class="p-1 text-center text-slate-500 text-[10px]" rowspan="${maxLayers}">${span.Width || 0}×${span.Height || 0}</td>
+                            <td class="p-1 text-center text-xs font-bold ${layer === 0 ? 'bg-slate-200' : 'bg-slate-100'}">${layer + 1}</td>
+                            ${renderLayerRebarInputs(spanIdx, span, 'Top', layer)}
+                            ${renderLayerRebarInputs(spanIdx, span, 'Bot', layer)}
+                            ${renderStirrupInputs(spanIdx, span, maxLayers)}
+                            <td class="p-1" rowspan="${maxLayers}">
+                                <input type="text" value="${span.SideBar || ''}" 
+                                    onchange="updateSideBar(${spanIdx}, this.value)"
+                                    placeholder="2D12"
+                                    class="w-12 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px]">
+                            </td>
+                        `;
+                    } else {
+                        tr.innerHTML = `
+                            <td class="p-1 text-center text-xs font-bold ${layer === 0 ? 'bg-slate-200' : 'bg-slate-100'}">${layer + 1}</td>
+                            ${renderLayerRebarInputs(spanIdx, span, 'Top', layer)}
+                            ${renderLayerRebarInputs(spanIdx, span, 'Bot', layer)}
+                        `;
+                    }
+
+                    tbody.appendChild(tr);
+                }
+            });
+        }
+
+        // Render rebar inputs for a specific layer
+        function renderLayerRebarInputs(spanIndex, span, type, layer) {
+            const rebarData = type === 'Top' ? span.TopRebar : span.BotRebar;
+            const layerData = rebarData?.[layer] || [];
+            const bgClass = type === 'Top' ? 'bg-red-50' : 'bg-blue-50';
+            let html = '';
+            const positions = [0, 2, 4]; // Left(Gối T), Mid(Giữa), Right(Gối P)
+            const posNames = ['L', 'M', 'R'];
+
+            positions.forEach((pos, idx) => {
+                const val = layerData[pos] || '';
+                const asReq = span.AsReq?.[type]?.[posNames[idx]] || 0;
+                const asProv = span.AsProv?.[type]?.[posNames[idx]] || 0;
+                const isUnder = asProv > 0 && asProv < asReq;
+
+                html += `<td class="p-0.5 ${bgClass}">
+                    <input type="text" value="${val}" 
+                        onchange="updateLayerRebar(${spanIndex}, '${type}', ${layer}, ${pos}, this.value)"
+                        placeholder=""
+                        title="As_req: ${asReq > 0 ? asReq.toFixed(1) : '-'} / As_prov: ${asProv > 0 ? asProv.toFixed(1) : '-'}"
+                        class="w-10 border ${isUnder ? 'border-red-400 bg-red-50' : 'border-slate-200'} rounded px-0.5 py-0.5 text-center text-[10px] bg-white">
+                </td>`;
+            });
+            return html;
+        }
+
+        // Render 3 stirrup input cells (L1, Mid, L2) with rowspan
+        function renderStirrupInputs(spanIndex, span, maxLayers) {
+            let html = '';
+            const positions = [0, 1, 2]; // L1, Mid, L2
+            const placeholders = ['d8a100', 'd8a150', 'd8a100'];
+
+            positions.forEach((pos) => {
+                const val = span.Stirrup?.[pos] || '';
+                html += `<td class="p-0.5" rowspan="${maxLayers}">
+                    <input type="text" value="${val}" 
+                        onchange="updateStirrup(${spanIndex}, ${pos}, this.value)"
+                        placeholder="${placeholders[pos]}"
+                        class="w-12 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px]">
+                </td>`;
+            });
+            return html;
+        }
+
+        // Update rebar value for a specific layer
+        function updateLayerRebar(spanIndex, type, layer, pos, value) {
+            const span = currentGroup.Spans[spanIndex];
+            const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
+
+            // Initialize layers if needed
+            if (!span[arr]) span[arr] = [];
+            while (span[arr].length <= layer) span[arr].push([]);
+            if (!span[arr][layer]) span[arr][layer] = [];
+
+            span[arr][layer][pos] = value;
+
+            // Mark as user edited
+            autoLockOnEdit();
+
+            // Auto apply to subsequent spans
+            if (document.getElementById('autoApply').checked) {
+                for (let i = spanIndex + 1; i < currentGroup.Spans.length; i++) {
+                    if (currentGroup.Spans[i].IsActive !== false) {
+                        const s = currentGroup.Spans[i];
+                        if (!s[arr]) s[arr] = [];
+                        while (s[arr].length <= layer) s[arr].push([]);
+                        if (!s[arr][layer]) s[arr][layer] = [];
+                        s[arr][layer][pos] = value;
+                    }
+                }
+                renderTable();
+            }
+            renderCanvas();
+        }
+
+        // ============ DATA UPDATE FUNCTIONS ============
+        function toggleSpanActive(index, active) {
+            currentGroup.Spans[index].IsActive = active;
+            renderTable();
+        }
+
+        function updateRebar(spanIndex, type, pos, value) {
+            const span = currentGroup.Spans[spanIndex];
+            const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
+            if (!span[arr]) span[arr] = [[], [], []];
+            if (!span[arr][0]) span[arr][0] = [];
+            span[arr][0][pos] = value;
+
+            // ===== AUTO-LOCK: Tự động chốt khi sửa tay =====
+            autoLockOnEdit();
+
+            // Auto apply
+            if (document.getElementById('autoApply').checked) {
+                for (let i = spanIndex + 1; i < currentGroup.Spans.length; i++) {
+                    if (currentGroup.Spans[i].IsActive !== false) {
+                        if (!currentGroup.Spans[i][arr]) currentGroup.Spans[i][arr] = [[], [], []];
+                        if (!currentGroup.Spans[i][arr][0]) currentGroup.Spans[i][arr][0] = [];
+                        currentGroup.Spans[i][arr][0][pos] = value;
+                    }
+                }
+                renderTable();
+            }
+            renderCanvas();
+        }
+
+        function updateStirrup(spanIndex, pos, value) {
+            const span = currentGroup.Spans[spanIndex];
+            if (!span.Stirrup) span.Stirrup = [];
+            span.Stirrup[pos] = value;
+
+            // ===== AUTO-LOCK: Tự động chốt khi sửa tay =====
+            autoLockOnEdit();
+        }
+
+        function updateSideBar(spanIndex, value) {
+            currentGroup.Spans[spanIndex].SideBar = value;
+
+            // ===== AUTO-LOCK: Tự động chốt khi sửa tay =====
+            autoLockOnEdit();
+        }
+
+        function selectAllSpans() {
+            currentGroup.Spans.forEach(s => s.IsActive = true);
+            renderTable();
+        }
+
+        function selectNoneSpans() {
+            currentGroup.Spans.forEach(s => s.IsActive = false);
+            renderTable();
+        }
+
+        function applyStirrupPattern() {
+            const pattern = document.getElementById('stirrupPattern').value;
+            const parts = pattern.replace(/[a-zA-Z]/g, '').split('/');
+            const dia = pattern.match(/d(\d+)/)?.[1] || '8';
+
+            currentGroup.Spans.forEach(span => {
+                if (span.IsActive !== false) {
+                    span.Stirrup = [
+                        `d${dia}a${parts[0] || 100}`,
+                        `d${dia}a${parts[1] || 150}`,
+                        `d${dia}a${parts[2] || 100}`
+                    ];
+                }
+            });
+            renderTable();
+            showToast('✓ Đã apply stirrup pattern');
+        }
+
+        // ============ HIGHLIGHT & SYNC ============
+        function highlightSpan(index) {
+            highlightedSpanIndex = index;
+            document.querySelectorAll('.span-row').forEach((tr, i) => {
+                tr.classList.toggle('highlighted', i === index);
+            });
+            renderCanvas();
+
+            // AUTO HIGHLIGHT IN CAD: send handles to C#
+            const span = currentGroup?.Spans?.[index];
+            if (span?.Segments?.length > 0) {
+                const handles = span.Segments.map(s => s.EntityHandle).filter(h => h);
+                if (handles.length > 0) {
+                    window.chrome.webview.postMessage('HIGHLIGHT|' + JSON.stringify(handles));
+                }
+            }
+        }
+
+        function clearHighlight() {
+            highlightedSpanIndex = -1;
+            document.querySelectorAll('.span-row').forEach(tr => tr.classList.remove('highlighted'));
+            renderCanvas();
+        }
+
+        // ============ MATERIAL GRADE SELECTION ============
+        function setGroupConcrete(grade) {
+            if (currentGroup) {
+                currentGroup.ConcreteGrade = grade;
+                showToast(`✓ Đã chọn bê tông ${grade}`);
+            }
+        }
+
+        function setGroupSteel(grade) {
+            if (currentGroup) {
+                currentGroup.SteelGrade = grade;
+                showToast(`✓ Đã chọn thép ${grade}`);
+            }
+        }
+
+        function loadMaterialSelects() {
+            const concreteSelect = document.getElementById('concreteGradeSelect');
+            const steelSelect = document.getElementById('steelGradeSelect');
+
+            if (currentGroup?.ConcreteGrade) {
+                concreteSelect.value = currentGroup.ConcreteGrade;
+            }
+            if (currentGroup?.SteelGrade) {
+                steelSelect.value = currentGroup.SteelGrade;
+            }
+        }
+
+        // ============ CAD INTEGRATION ============
+        function highlightInCAD() {
+            if (!currentGroup?.EntityHandles?.length) {
+                showToast('⚠️ Không có dầm để highlight');
+                return;
+            }
+            // Send message to C# to highlight beams
+            window.chrome.webview.postMessage('HIGHLIGHT|' + JSON.stringify(currentGroup.EntityHandles));
+            showToast('✓ Đã highlight ' + currentGroup.EntityHandles.length + ' dầm trên CAD');
+        }
+
+        // ============ COPY FORMAT ============
+        let copyFormatMode = false;
+        let copySourceSpan = null;
+
+        function copyFormat() {
+            copyFormatMode = true;
+            copySourceSpan = null;
+            document.body.style.cursor = 'crosshair';
+            showToast('Click nhịp nguồn để copy format...');
+        }
+
+        // ============ ACTIONS ============
+        function doSave() { window.chrome.webview.postMessage('SAVE|' + JSON.stringify(data)); }
+        function doExport() { window.chrome.webview.postMessage('EXPORT'); }
+        function doImport() { window.chrome.webview.postMessage('IMPORT'); }
+        function doCancel() { window.chrome.webview.postMessage('CANCEL'); }
+        function applyToDrawing() { window.chrome.webview.postMessage('APPLY|' + JSON.stringify(data)); }
+
+        // ============ TOAST ============
+        function showToast(msg) {
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = 'toast fixed bottom-16 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-2 rounded shadow-lg text-sm z-50';
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // ============ CANVAS EVENTS ============
+        document.getElementById('beamCanvas').addEventListener('click', function (e) {
+            const rect = this.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            for (const bound of spanBounds) {
+                if (x >= bound.x && x <= bound.x + bound.width && y >= bound.y && y <= bound.y + bound.height) {
+                    if (copyFormatMode) {
+                        if (!copySourceSpan) {
+                            copySourceSpan = currentGroup.Spans[bound.index];
+                            showToast('Chọn nhịp đích...');
+                        } else {
+                            const dest = currentGroup.Spans[bound.index];
+                            dest.TopRebar = JSON.parse(JSON.stringify(copySourceSpan.TopRebar || []));
+                            dest.BotRebar = JSON.parse(JSON.stringify(copySourceSpan.BotRebar || []));
+                            dest.Stirrup = [...(copySourceSpan.Stirrup || [])];
+                            copyFormatMode = false;
+                            document.body.style.cursor = 'default';
+                            renderTable();
+                            showToast('✓ Copied format to ' + dest.SpanId);
+                        }
+                    } else {
+                        // Scroll table to row
+                        const row = document.querySelector(`tr[data-span-index="${bound.index}"]`);
+                        if (row) {
+                            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            highlightSpan(bound.index);
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+
+        // Init
+        init();
     </script>
 </body>
 

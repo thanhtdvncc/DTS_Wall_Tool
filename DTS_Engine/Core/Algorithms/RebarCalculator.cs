@@ -636,9 +636,10 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
-        /// Tính thép cho cả BeamGroup theo tiêu chuẩn đa quốc gia
-        /// Top và Bot tính riêng biệt, đường kính đồng nhất cho dải dầm
+        /// [DEPRECATED] Tính thép cho cả BeamGroup theo tiêu chuẩn đa quốc gia
+        /// ⚠️ Sử dụng CalculateProposalsForGroup thay thế! Method này dùng MAX thay vì per-span As_req.
         /// </summary>
+        [System.Obsolete("Use CalculateProposalsForGroup instead. This method uses MAX instead of per-span As_req.")]
         public static BeamGroupSolution SolveBeamGroup(BeamGroup group, DtsSettings settings)
         {
             if (group?.Spans == null || group.Spans.Count == 0)
@@ -860,27 +861,43 @@ namespace DTS_Engine.Core.Algorithms
             int minBarsPerLayer = settings.Beam?.MinBarsPerLayer ?? 2;
             int maxLayers = settings.Beam?.MaxLayers ?? 2;
 
+            // DEBUG: Log key values
+            System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] Group: {group.GroupName}, Width={beamWidth}, Height={beamHeight}");
+            System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] AllowedDias count: {allowedDias.Count}, Values: [{string.Join(",", allowedDias)}]");
+            System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] Spans: Group has {group.Spans?.Count ?? 0}, spanResults has {spanResults.Count}");
+
             // 2. VÒNG LẶP THỬ NGHIỆM (SIMULATION LOOP)
+            int scenariosTried = 0;
+            int validScenarios = 0;
+
             foreach (int backboneDia in allowedDias)
             {
                 int maxBarsL1 = GetMaxBarsPerLayer(beamWidth, backboneDia, settings);
                 int startBars = minBarsPerLayer;
                 int endBars = Math.Min(maxBarsL1, minBarsPerLayer + 2); // Thử backbone từ Min đến Min+2
 
+                System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] D{backboneDia}: maxBarsL1={maxBarsL1}, startBars={startBars}, endBars={endBars}");
+
                 for (int bbCount = startBars; bbCount <= endBars; bbCount++)
                 {
+                    scenariosTried++;
                     var sol = SolveScenario(group, spanResults, backboneDia, bbCount, maxBarsL1, beamWidth, settings);
 
                     if (sol.IsValid)
                     {
+                        validScenarios++;
                         solutions.Add(sol);
                     }
                 }
             }
 
+            System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] Total scenarios tried: {scenariosTried}, Valid: {validScenarios}");
+
             // 3. CHẤM ĐIỂM & CHỌN LỌC (RANKING)
             var rankedSolutions = solutions.OrderByDescending(s => s.EfficiencyScore).ToList();
             var finalProposals = PruneSimilarSolutions(rankedSolutions);
+
+            System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] Final proposals count: {finalProposals.Count}");
 
             return finalProposals.Take(3).ToList();
         }

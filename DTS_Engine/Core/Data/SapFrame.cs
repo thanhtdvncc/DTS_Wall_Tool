@@ -42,6 +42,42 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public string Story { get; set; } = "";
 
+        /// <summary>
+        /// Section width (mm) - từ SAP PropFrame.GetRectangle (t2)
+        /// </summary>
+        public double Width { get; set; }
+
+        /// <summary>
+        /// Section height/depth (mm) - từ SAP PropFrame.GetRectangle (t3)
+        /// </summary>
+        public double Height { get; set; }
+
+        /// <summary>
+        /// Material name từ SAP
+        /// </summary>
+        public string Material { get; set; } = "";
+
+        /// <summary>
+        /// Concrete grade (VD: "C30", "B25") 
+        /// </summary>
+        public string ConcreteGrade { get; set; } = "";
+
+        /// <summary>
+        /// Joint I (Start) có cột/tường đi qua không
+        /// </summary>
+        public bool HasSupportI { get; set; } = true;
+
+        /// <summary>
+        /// Joint J (End) có cột/tường đi qua không
+        /// </summary>
+        public bool HasSupportJ { get; set; } = true;
+
+        /// <summary>
+        /// Tên trục lưới nằm trên (VD: "A", "1", "Testing"). 
+        /// Nếu null hoặc empty => không nằm trên trục.
+        /// </summary>
+        public string AxisName { get; set; }
+
         #region Computed Properties
 
         /// <summary>

@@ -255,7 +255,10 @@ namespace DTS_Engine.Core.Utils
 
             if (count == 0 || frameNames == null) return listFrames;
 
-            // BƯỚC 2: Duyệt danh sách tên và tra cứu tọa độ
+            // BƯỚC 2: Cache section properties để tránh đọc lặp lại
+            var sectionCache = new Dictionary<string, (double Width, double Height, string Material)>();
+
+            // BƯỚC 3: Duyệt danh sách tên và tra cứu tọa độ + section
             foreach (var name in frameNames)
             {
                 string p1Name = "", p2Name = "";
@@ -264,20 +267,160 @@ namespace DTS_Engine.Core.Utils
                 if (ret != 0) continue;
 
                 // Tra cứu từ RAM (tức thì)
-                if (pointMap.TryGetValue(p1Name, out var pt1) && pointMap.TryGetValue(p2Name, out var pt2))
+                if (!pointMap.TryGetValue(p1Name, out var pt1) || !pointMap.TryGetValue(p2Name, out var pt2))
+                    continue;
+
+                var frame = new SapFrame
                 {
-                    listFrames.Add(new SapFrame
+                    Name = name,
+                    StartPt = new Point2D(pt1.X, pt1.Y),
+                    EndPt = new Point2D(pt2.X, pt2.Y),
+                    Z1 = pt1.Z,
+                    Z2 = pt2.Z
+                };
+
+                // BƯỚC 4: Đọc Section Name từ SAP API
+                string propName = "", sAuto = "";
+                if (model.FrameObj.GetSection(name, ref propName, ref sAuto) == 0)
+                {
+                    frame.Section = propName;
+
+                    // Kiểm tra trong cache trước
+                    if (sectionCache.TryGetValue(propName, out var cached))
                     {
-                        Name = name,
-                        StartPt = new Point2D(pt1.X, pt1.Y),
-                        EndPt = new Point2D(pt2.X, pt2.Y),
-                        Z1 = pt1.Z,
-                        Z2 = pt2.Z
-                    });
+                        frame.Width = cached.Width;
+                        frame.Height = cached.Height;
+                        frame.Material = cached.Material;
+                    }
+                    else
+                    {
+                        // BƯỚC 5: Đọc kích thước từ PropFrame.GetRectangle
+                        string matProp = "";
+                        double t3 = 0, t2 = 0; // t3=Depth/Height, t2=Width
+                        int color = -1;
+                        string notes = "", guid = "";
+
+                        if (model.PropFrame.GetRectangle(propName, ref propName, ref matProp, ref t3, ref t2, ref color, ref notes, ref guid) == 0)
+                        {
+                            // FIX: Round to avoid floating point artifacts like 400.00000001
+                            frame.Width = Math.Round(t2);
+                            frame.Height = Math.Round(t3);
+                            frame.Material = matProp;
+
+                            // Parse concrete grade từ material name (VD: "C30", "B25")
+                            if (!string.IsNullOrEmpty(matProp))
+                            {
+                                frame.ConcreteGrade = ExtractConcreteGrade(matProp);
+                            }
+
+                            // Cache để không cần đọc lại (với giá trị đã làm tròn)
+                            sectionCache[propName] = (Math.Round(t2), Math.Round(t3), matProp);
+                        }
+                        else
+                        {
+                            // Log nếu không phải tiết diện chữ nhật
+                            System.Diagnostics.Debug.WriteLine($"[SAP WARN] '{propName}' is not Rectangle section");
+                        }
+                    }
                 }
+                listFrames.Add(frame);
+            }
+
+            // === PHASE 1: SUPPORT DETECTION & AXIS IDENTIFICATION ===
+            // Load Grids using existing method
+            var allGrids = GetGridLines();
+
+            // X-Grids
+            var xGrids = allGrids
+                .Where(g => string.Equals(g.Orientation, "X", StringComparison.OrdinalIgnoreCase))
+                .Select(g => (g.Name, g.Coordinate))
+                .ToList();
+
+            // Y-Grids
+            var yGrids = allGrids
+                .Where(g => string.Equals(g.Orientation, "Y", StringComparison.OrdinalIgnoreCase))
+                .Select(g => (g.Name, g.Coordinate))
+                .ToList();
+
+            // === PHASE 2: PROCESS FRAMES ===
+            var columns = listFrames.Where(f => f.IsVertical).ToList();
+            var beams = listFrames.Where(f => !f.IsVertical).ToList();
+
+            const double JOINT_TOLERANCE = 200; // mm 
+
+            foreach (var beam in beams)
+            {
+                // Check Joint I (Start)
+                beam.HasSupportI = columns.Any(col =>
+                    Math.Abs(col.StartPt.X - beam.StartPt.X) < JOINT_TOLERANCE &&
+                    Math.Abs(col.StartPt.Y - beam.StartPt.Y) < JOINT_TOLERANCE &&
+                    IsZWithinColumn(beam.Z1, col.Z1, col.Z2));
+
+                // Check Joint J (End)
+                beam.HasSupportJ = columns.Any(col =>
+                    Math.Abs(col.StartPt.X - beam.EndPt.X) < JOINT_TOLERANCE &&
+                    Math.Abs(col.StartPt.Y - beam.EndPt.Y) < JOINT_TOLERANCE &&
+                    IsZWithinColumn(beam.Z2, col.Z1, col.Z2));
+
+                // Check AxisName (Nằm trên trục)
+                // Determine Axis Name based on Grid Lines
+                double cx = (beam.StartPt.X + beam.EndPt.X) / 2.0;
+                double cy = (beam.StartPt.Y + beam.EndPt.Y) / 2.0;
+                double dx = Math.Abs(beam.EndPt.X - beam.StartPt.X);
+                double dy = Math.Abs(beam.EndPt.Y - beam.StartPt.Y);
+                const double AXIS_TOLERANCE = 100; // mm
+
+                string foundAxis = null;
+
+                // Case 1: Vertical (Parallel to Y) -> Constant X
+                if (dy > dx && dx < AXIS_TOLERANCE)
+                {
+                    double xVal = beam.StartPt.X;
+                    if (xGrids != null)
+                    {
+                        var match = xGrids.FirstOrDefault(g => Math.Abs(g.Coordinate - xVal) < AXIS_TOLERANCE);
+                        if (match.Name != null) foundAxis = match.Name;
+                    }
+                }
+                // Case 2: Horizontal (Parallel to X) -> Constant Y
+                else if (dx > dy && dy < AXIS_TOLERANCE)
+                {
+                    double yVal = beam.StartPt.Y;
+                    if (yGrids != null)
+                    {
+                        var match = yGrids.FirstOrDefault(g => Math.Abs(g.Coordinate - yVal) < AXIS_TOLERANCE);
+                        if (match.Name != null) foundAxis = match.Name;
+                    }
+                }
+
+                beam.AxisName = foundAxis;
             }
 
             return listFrames;
+        }
+
+        // LoadGrids removed - using SapUtils.GetGridLines() instead
+
+        /// <summary>
+        /// Kiểm tra beam Z có nằm trong phạm vi cột không (cột phải đi qua cao độ dầm)
+        /// </summary>
+        private static bool IsZWithinColumn(double beamZ, double colZ1, double colZ2)
+        {
+            double minZ = Math.Min(colZ1, colZ2);
+            double maxZ = Math.Max(colZ1, colZ2);
+            return beamZ >= minZ - 100 && beamZ <= maxZ + 100; // tolerance 100mm
+        }
+
+        /// <summary>
+        /// Extract concrete grade từ material name (VD: "Concrete_C30" -> "C30")
+        /// </summary>
+        private static string ExtractConcreteGrade(string materialName)
+        {
+            if (string.IsNullOrEmpty(materialName)) return "";
+
+            // Pattern: C30, B25, M300, etc.
+            var match = System.Text.RegularExpressions.Regex.Match(materialName, @"([CMB]?\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return match.Success ? match.Value.ToUpper() : "";
         }
 
         public static SapFrame GetFrameGeometry(string frameName)

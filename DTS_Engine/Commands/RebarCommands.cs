@@ -39,12 +39,17 @@ namespace DTS_Engine.Commands
                 return;
             }
 
-            // 2. Ask Display Mode
+            // 2. Select Frames on Screen FIRST (cho phép chọn trước khi hỏi chế độ)
+            var ed = AcadUtils.Ed;
+            WriteMessage("\nChọn các đường Dầm (Frame) để lấy nội lực: ");
+            var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
+            if (selectedIds.Count == 0) return;
+
+            // 3. Ask Display Mode AFTER selection
             // 0 = Combined (Flex + Torsion) - Default
             // 1 = Flex only (Thép dọc chịu uốn)
             // 2 = Torsion only (Thép xoắn)
             // 3 = Stirrup/Web (Thép đai/Sườn)
-            var ed = AcadUtils.Ed;
             var pIntOpt = new PromptIntegerOptions("\nChọn chế độ hiển thị [0=Tổng hợp | 1=Thép dọc | 2=Thép xoắn | 3=Thép Đai/Sườn]: ");
             pIntOpt.AllowNone = true;
             pIntOpt.DefaultValue = 0;
@@ -58,12 +63,6 @@ namespace DTS_Engine.Commands
                 displayMode = pIntRes.Value;
             else if (pIntRes.Status != PromptStatus.None)
                 return; // User cancelled
-
-            // 3. Select Frames on Screen
-            // 3. Select Frames on Screen
-            WriteMessage("\nChọn các đường Dầm (Frame) để lấy nội lực: ");
-            var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
-            if (selectedIds.Count == 0) return;
 
             // 4. Clear old rebar labels on layer "dts_rebar_text"
             WriteMessage("Đang xóa label cũ...");
@@ -329,21 +328,6 @@ namespace DTS_Engine.Commands
                 WriteMessage($"   Đã đổi màu {changed}/{insufficientCount} dầm.");
             }
             // === END Sync Highlight ===
-
-            // === AUTO-GROUP: Tự động gom nhóm sau khi import ===
-            // Ngăn user chạy Viewer với dầm rời rạc
-            if (successCount > 0)
-            {
-                WriteMessage("\n→ Đang tự động gom nhóm dầm...");
-                try
-                {
-                    DTS_AUTO_GROUP();
-                }
-                catch (System.Exception exGroup)
-                {
-                    WriteMessage($"   Lỗi gom nhóm: {exGroup.Message}");
-                }
-            }
         }
 
         /// <summary>
@@ -354,16 +338,12 @@ namespace DTS_Engine.Commands
         [CommandMethod("DTS_REBAR_IMPORT_SAP")]
         public void DTS_REBAR_IMPORT_SAP()
         {
-            WriteMessage("=== IMPORT SAP + AUTO GROUP ===");
+            WriteMessage("=== IMPORT KẾT QUẢ THIẾT KẾ TỪ SAP2000 ===");
 
-            // Bước 1: Import dữ liệu từ SAP (gọi internal method)
+            // Chỉ import dữ liệu từ SAP, KHÔNG auto group
             ImportSapResultInternal();
 
-            // Bước 2: Tự động gom nhóm các dầm vừa import
-            WriteMessage("\n→ Đang tự động gom nhóm dầm...");
-            DTS_AUTO_GROUP();
-
-            WriteSuccess("✅ Đã import dữ liệu SAP và gom nhóm tự động!");
+            WriteSuccess("✅ Đã import dữ liệu SAP!");
         }
 
         /// <summary>
@@ -862,11 +842,35 @@ namespace DTS_Engine.Commands
                     // Fix: Làm tròn Z để phân tầng (Tolerance 100mm)
                     double levelZ = Math.Round(mid.Z / 100.0) * 100.0;
 
-                    // [CONFIGURABLE] Nhận diện Girder dựa trên GirderMinWidth setting
+                    // === GIRDER DETECTION (COLUMN + AXIS BASED) ===
+                    // Rule 1: Dầm có cột ở 2 đầu => Girder (chắc chắn)
+                    // Rule 2: Dầm có cột ở 1 đầu + nằm trên trục => Girder
+                    // Rule 3: Còn lại => Beam (dầm phụ)
                     bool isGirder = false;
                     if (xdata != null)
                     {
-                        isGirder = xdata.Width >= girderThreshold;
+                        int columnCount = (xdata.SupportI == 1 ? 1 : 0) + (xdata.SupportJ == 1 ? 1 : 0);
+
+                        if (columnCount == 2)
+                        {
+                            // 2 cột ở 2 đầu => chắc chắn Girder
+                            isGirder = true;
+                        }
+                        else if (columnCount == 1 && !string.IsNullOrEmpty(xdata.AxisName))
+                        {
+                            // 1 cột + nằm trên trục (có tên trục) => Girder
+                            isGirder = true;
+                        }
+                        else
+                        {
+                            // 0 cột, hoặc 1 cột nhưng không có tên trục => Beam
+                            isGirder = false;
+                        }
+                    }
+                    else
+                    {
+                        // Không có XData => default Beam
+                        isGirder = false;
                     }
 
                     allBeams.Add((id, mid, isGirder, isXDir, xdata, levelZ));
@@ -1285,8 +1289,13 @@ namespace DTS_Engine.Commands
         {
             WriteMessage("=== REBAR: CHUYỂN ĐỔI CHẾ ĐỘ HIỂN THỊ ===");
 
-            // Chọn chế độ hiển thị (Updated per spec)
+            // 1. Select Objects FIRST
             var ed = AcadUtils.Ed;
+            WriteMessage("\nChọn các đường Dầm cần hiển thị: ");
+            var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
+            if (selectedIds.Count == 0) return;
+
+            // 2. Chọn chế độ hiển thị AFTER selection
             var pIntOpt = new PromptIntegerOptions("\nChọn chế độ hiển thị [0=Thép dọc | 1=Đai/Sườn | 2=Dọc+Area | 3=Đai/Sườn+Area]: ");
             pIntOpt.AllowNone = true;
             pIntOpt.DefaultValue = 0;
@@ -1300,12 +1309,6 @@ namespace DTS_Engine.Commands
                 mode = pIntRes.Value;
             else if (pIntRes.Status != PromptStatus.None)
                 return;
-
-            // Select Frames
-            // 1. Select Objects
-            WriteMessage("\nChọn các đường Dầm cần hiển thị: ");
-            var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
-            if (selectedIds.Count == 0) return;
 
             // Clear existing labels for SELECTED beams only (refresh)
             var selectedHandles = selectedIds.Select(id => id.Handle.ToString()).ToList();
@@ -1415,17 +1418,17 @@ namespace DTS_Engine.Commands
                 var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE", true); // allowEmpty = true
 
                 var allGroups = GetOrCreateBeamGroups();
-                List<BeamGroup> filteredGroups;
+                var resultGroups = new List<BeamGroup>();
 
                 if (selectedIds.Count == 0)
                 {
                     // User nhấn Enter -> Xem tất cả groups
-                    filteredGroups = allGroups;
+                    resultGroups = allGroups;
                     WriteMessage($"Hiển thị tất cả {allGroups.Count} nhóm dầm.");
                 }
                 else
                 {
-                    // Filter groups chứa dầm đã chọn
+                    // Get selected handles
                     var selectedHandles = new HashSet<string>();
                     UsingTransaction(tr =>
                     {
@@ -1437,21 +1440,132 @@ namespace DTS_Engine.Commands
                         }
                     });
 
-                    filteredGroups = allGroups
+                    // Find handles that are already in groups
+                    var handlesInGroups = new HashSet<string>();
+                    foreach (var g in allGroups)
+                    {
+                        foreach (var h in g.EntityHandles)
+                            handlesInGroups.Add(h);
+                    }
+
+                    // === 1. GET GROUPS that contain selected beams ===
+                    var matchedGroups = allGroups
                         .Where(g => g.EntityHandles.Any(h => selectedHandles.Contains(h)))
                         .ToList();
+                    resultGroups.AddRange(matchedGroups);
 
-                    WriteMessage($"Tìm thấy {filteredGroups.Count} nhóm từ {selectedIds.Count} dầm đã chọn.");
-                }
+                    // === 2. CREATE TEMP GROUPS for ungrouped beams ===
+                    var ungroupedHandles = selectedHandles.Where(h => !handlesInGroups.Contains(h)).ToList();
 
-                if (filteredGroups.Count == 0)
-                {
-                    WriteMessage("Không có nhóm dầm nào. Chạy DTS_REBAR_GROUP_AUTO để tạo nhóm.");
-                    return;
+                    if (ungroupedHandles.Count > 0)
+                    {
+                        UsingTransaction(tr =>
+                        {
+                            foreach (var handle in ungroupedHandles)
+                            {
+                                try
+                                {
+                                    var objId = AcadUtils.GetObjectIdFromHandle(handle);
+                                    if (objId == ObjectId.Null) continue;
+
+                                    var ent = tr.GetObject(objId, OpenMode.ForRead);
+                                    var curve = ent as Curve;
+                                    if (curve == null) continue;
+
+                                    var length = curve.GetDistanceAtParameter(curve.EndParam) / 1000.0; // mm to m
+                                    var start = curve.StartPoint;
+                                    var end = curve.EndPoint;
+
+                                    // === READ REAL SECTION DATA FROM XDATA ===
+                                    var beamData = XDataUtils.ReadElementData<BeamData>(ent);
+                                    double width = beamData?.Width ?? 220;   // mm
+                                    double height = beamData?.Height ?? 400; // mm (Depth alias)
+                                    string sectionName = beamData?.SectionName ?? $"B{width}x{height}";
+
+                                    // === READ CALCULATED REBAR DATA FROM XDATA ===
+                                    var rebarInfo = XDataUtils.ReadRebarXData(ent);
+
+                                    // Parse rebar strings to populate SpanData arrays
+                                    // Format: "3D18" or "2D16+2D18" at 6 positions (Left, L/4, Mid, R/4, Right, Reserve)
+                                    var topRebar = new string[3, 6]; // 3 layers × 6 positions
+                                    var botRebar = new string[3, 6];
+                                    var stirrup = new string[3];     // 3 positions: Left, Mid, Right
+
+                                    if (!string.IsNullOrEmpty(rebarInfo?.TopRebar))
+                                    {
+                                        // Apply same rebar to all positions for single beam (simplified)
+                                        for (int i = 0; i < 6; i++) topRebar[0, i] = rebarInfo.TopRebar;
+                                    }
+                                    if (!string.IsNullOrEmpty(rebarInfo?.BotRebar))
+                                    {
+                                        for (int i = 0; i < 6; i++) botRebar[0, i] = rebarInfo.BotRebar;
+                                    }
+                                    if (!string.IsNullOrEmpty(rebarInfo?.Stirrup))
+                                    {
+                                        for (int i = 0; i < 3; i++) stirrup[i] = rebarInfo.Stirrup;
+                                    }
+
+                                    // Create real single-span BeamGroup with calculated rebar
+                                    var singleGroup = new BeamGroup
+                                    {
+                                        GroupName = $"[Đơn] {sectionName}",
+                                        Name = $"SINGLE_{handle}",
+                                        IsSingleBeam = true, // Mark as single beam (1 span)
+                                        EntityHandles = new List<string> { handle },
+                                        Width = width,
+                                        Height = height,
+                                        TotalLength = length,
+                                        Spans = new List<SpanData>
+                                        {
+                                            new SpanData
+                                            {
+                                                SpanId = "S1",
+                                                SpanIndex = 0,
+                                                Length = length,
+                                                ClearLength = Math.Max(0, length - 0.3), // ~30cm for supports
+                                                Width = width,
+                                                Height = height,
+                                                IsActive = true,
+                                                TopRebar = topRebar,
+                                                BotRebar = botRebar,
+                                                Stirrup = stirrup,
+                                                SideBar = rebarInfo?.SideBar,
+                                                Segments = new List<PhysicalSegment>
+                                                {
+                                                    new PhysicalSegment
+                                                    {
+                                                        EntityHandle = handle,
+                                                        Length = length,
+                                                        StartPoint = new double[] { start.X, start.Y },
+                                                        EndPoint = new double[] { end.X, end.Y },
+                                                        TopRebar = rebarInfo?.TopRebar,
+                                                        BotRebar = rebarInfo?.BotRebar,
+                                                        Stirrup = rebarInfo?.Stirrup
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        Supports = new List<SupportData>
+                                        {
+                                            new SupportData { SupportId = "C1", SupportIndex = 0, Type = SupportType.Column, Width = 300 },
+                                            new SupportData { SupportId = "C2", SupportIndex = 1, Type = SupportType.Column, Width = 300 }
+                                        }
+                                    };
+
+                                    resultGroups.Add(singleGroup);
+                                }
+                                catch { }
+                            }
+                        });
+
+                        WriteMessage($"Đã tạo {ungroupedHandles.Count} nhóm dầm đơn từ XData.");
+                    }
+
+                    WriteMessage($"Tổng cộng: {matchedGroups.Count} nhóm có sẵn + {ungroupedHandles.Count} dầm đơn = {resultGroups.Count} items.");
                 }
 
                 // Show viewer dialog as MODELESS
-                var dialog = new UI.Forms.BeamGroupViewerDialog(filteredGroups, ApplyBeamGroupResults);
+                var dialog = new UI.Forms.BeamGroupViewerDialog(resultGroups, ApplyBeamGroupResults);
                 Autodesk.AutoCAD.ApplicationServices.Application.ShowModelessDialog(dialog);
             }
             catch (System.Exception ex)
@@ -2201,6 +2315,7 @@ namespace DTS_Engine.Commands
                     string posName = pos == 0 ? "Left" : (pos == 1 ? "Mid" : "Right");
 
                     // --- XỬ LÝ TOP ---
+                    // Top sử dụng keys: _Top_Left (pos=0), _Top_Mid (pos=1), _Top_Right (pos=2)
                     string keyTop = $"{spanId}_Top_{posName}";
                     string topStr = backboneTop;
 
@@ -2218,7 +2333,9 @@ namespace DTS_Engine.Commands
                     data.TopAreaProv[pos] = RebarCalculator.ParseRebarArea(topStr);
 
                     // --- XỬ LÝ BOT ---
-                    string keyBot = $"{spanId}_Bot_{posName}";
+                    // FIX: Bot Mid-span rebar kéo suốt nhịp -> dùng _Bot_Mid cho tất cả vị trí
+                    // SolveScenario chỉ tạo _Bot_Mid (không tạo _Bot_Left/_Bot_Right riêng)
+                    string keyBot = $"{spanId}_Bot_Mid"; // ALWAYS use Mid key for Bot
                     string botStr = backboneBot;
 
                     if (sol.Reinforcements != null && sol.Reinforcements.TryGetValue(keyBot, out var specBot))
@@ -2857,19 +2974,48 @@ namespace DTS_Engine.Commands
                         var curve = tr.GetObject(member.Key, OpenMode.ForRead) as Curve;
                         if (curve == null) continue;
 
-                        var xdata = XDataUtils.ReadElementData(curve) as BeamResultData;
+                        // FIX: Handle both BeamData (from DTS_PLOT_FROM_SAP) and BeamResultData
+                        var elementData = XDataUtils.ReadElementData(curve);
+
+                        double width = 0, height = 0;
+                        int supportI = 1, supportJ = 1; // Default = has support
+                        string sapName = curve.Handle.ToString();
+
+                        if (elementData is BeamData beamData)
+                        {
+                            // BeamData từ DTS_PLOT_FROM_SAP: Width/Depth in mm
+                            width = beamData.Width ?? 0;
+                            height = beamData.Depth ?? 0;
+                            sapName = beamData.SapFrameName ?? sapName;
+                            // SOURCE-BASED SUPPORT: Read from XData
+                            supportI = beamData.SupportI;
+                            supportJ = beamData.SupportJ;
+                        }
+                        else if (elementData is BeamResultData resultData)
+                        {
+                            // BeamResultData từ DTS_REBAR_IMPORT_SAP: Width/SectionHeight in cm -> convert to mm
+                            width = resultData.Width > 0 ? resultData.Width * 10 : 0;
+                            height = resultData.SectionHeight > 0 ? resultData.SectionHeight * 10 : 0;
+                            sapName = resultData.SapElementName ?? sapName;
+                            // Default support for BeamResultData (can be extended to store support info)
+                            supportI = 1;
+                            supportJ = 1;
+                        }
+
                         var geo = new Core.Data.BeamGeometry
                         {
                             Handle = curve.Handle.ToString(),
-                            Name = xdata?.SapElementName ?? curve.Handle.ToString(),
+                            Name = sapName,
                             StartX = curve.StartPoint.X,
                             StartY = curve.StartPoint.Y,
                             EndX = curve.EndPoint.X,
                             EndY = curve.EndPoint.Y,
                             StartZ = curve.StartPoint.Z,
                             EndZ = curve.EndPoint.Z,
-                            Width = xdata?.Width ?? 0,
-                            Height = xdata?.SectionHeight ?? 0
+                            Width = width,
+                            Height = height,
+                            SupportI = supportI,
+                            SupportJ = supportJ
                         };
                         allBeamGeos.Add((member.Key, geo));
                     }

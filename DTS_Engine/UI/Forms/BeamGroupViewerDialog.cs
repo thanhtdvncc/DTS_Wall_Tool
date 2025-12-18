@@ -65,8 +65,14 @@ namespace DTS_Engine.UI.Forms
                 var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
                 await _webView.EnsureCoreWebView2Async(env);
 
-                _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+                // === SECURITY SETTINGS - Prevent user inspection ===
+                _webView.CoreWebView2.Settings.AreDevToolsEnabled = false;           // Disable F12 DevTools
+                _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false; // Disable right-click menu
+                _webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false; // Disable Ctrl+U, Ctrl+Shift+I, etc.
+                _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;          // Disable Ctrl+scroll zoom
+                _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;            // Hide status bar
+                _webView.CoreWebView2.Settings.IsBuiltInErrorPageEnabled = false;     // Hide error pages
+
                 _webView.WebMessageReceived += WebView_WebMessageReceived;
 
                 string html = LoadHtmlFromResource();
@@ -98,8 +104,26 @@ namespace DTS_Engine.UI.Forms
                 {
                     string html = reader.ReadToEnd();
 
-                    // Inject data
-                    var data = new { groups = _groups };
+                    // Inject data with settings
+                    var settings = DtsSettings.Instance;
+
+                    // Determine view mode: 'groups' if has groups, 'single' if single elements (no group)
+                    string viewMode = (_groups != null && _groups.Count > 0) ? "groups" : "single";
+
+                    var data = new
+                    {
+                        mode = viewMode,  // 'groups' or 'single'
+                        groups = _groups,
+                        settings = new
+                        {
+                            ConcreteGradeName = settings.General?.ConcreteGradeName ?? "B25",
+                            SteelGradeName = settings.General?.SteelGradeName ?? "CB400-V",
+                            SteelGradeMain = settings.General?.SteelGradeMain ?? 400,
+                            MaxLayers = settings.Beam?.MaxLayers ?? 2,
+                            MainBarRange = settings.Beam?.MainBarRange ?? "16-25",
+                            StirrupBarRange = settings.Beam?.StirrupBarRange ?? "8-10"
+                        }
+                    };
                     string json = JsonConvert.SerializeObject(data);
                     html = html.Replace("__DATA_JSON__", json);
 
@@ -208,7 +232,7 @@ namespace DTS_Engine.UI.Forms
                 return;
             }
 
-            // === REALTIME SAP SYNC: Auto-sync section when design is locked ===
+            // === LOCK_DESIGN: Just log, no SAP sync (separate command for that) ===
             if (message.StartsWith("LOCK_DESIGN|"))
             {
                 try
@@ -216,8 +240,8 @@ namespace DTS_Engine.UI.Forms
                     string idxStr = message.Substring(12);
                     if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
                     {
-                        var group = _groups[groupIndex];
-                        this.BeginInvoke(new Action(() => SyncSectionToSAP(group)));
+                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design locked for group {groupIndex}");
+                        // SAP sync removed - will have separate DTS_REBAR_SYNC_SAP command
                     }
                 }
                 catch { }
@@ -228,6 +252,40 @@ namespace DTS_Engine.UI.Forms
             {
                 // Optional: Could delete section or just log
                 System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design unlocked");
+                return;
+            }
+
+            // === QUICK_CALC: Request rebar calculation for current group ===
+            if (message.StartsWith("QUICK_CALC|"))
+            {
+                try
+                {
+                    string idxStr = message.Substring(11);
+                    if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
+                    {
+                        var group = _groups[groupIndex];
+                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Quick Calc requested for group {group.GroupName}");
+
+                        // Run calculation on UI thread
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            try
+                            {
+                                // Call rebar calculator (placeholder - needs proper implementation)
+                                MessageBox.Show($"Tính thép cho nhóm: {group.GroupName}\n" +
+                                    $"Số nhịp: {group.Spans?.Count ?? 0}\n\n" +
+                                    "Chức năng đang phát triển - sẽ gọi DTS_REBAR_RUN_DESIGN.",
+                                    "Quick Calc", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show("Lỗi tính thép: " + ex.Message, "Error",
+                                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            }
+                        }));
+                    }
+                }
+                catch { }
                 return;
             }
         }
