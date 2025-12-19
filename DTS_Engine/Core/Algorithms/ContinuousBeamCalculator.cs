@@ -102,8 +102,8 @@ namespace DTS_Engine.Core.Algorithms
             // Tính số thanh tối đa dựa theo bề rộng dầm
             // Công thức: (BeamWidth - 2*Cover - 2*StirrupDia) / (BarDia + ClearSpacing)
             double beamWidth = env.MinWidth; // mm
-            double cover = settings.Beam?.CoverSide ?? 40;
-            double stirrupDia = 10;
+            double cover = settings.Beam.CoverSide;
+            double stirrupDia = settings.Beam.EstimatedStirrupDiameter;
             double clearSpacing = settings.Beam?.MinClearSpacing ?? 30;
 
             // Tính As_min cấu tạo (thường 0.15% bxh cho dầm thường)
@@ -257,6 +257,10 @@ namespace DTS_Engine.Core.Algorithms
 
             // Efficiency Score: 100 - waste%, nhưng min 0
             solution.EfficiencyScore = Math.Max(0, 100 - solution.WastePercentage);
+
+            // Constructability + TotalScore (0-100)
+            solution.ConstructabilityScore = ConstructabilityScoring.CalculateScore(solution, group, settings);
+            solution.TotalScore = 0.6 * solution.EfficiencyScore + 0.4 * solution.ConstructabilityScore;
 
             // Cảnh báo nếu có step change
             if (group.HasStepChange)

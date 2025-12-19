@@ -1973,17 +1973,26 @@ namespace DTS_Engine.Commands
                     cumPos += span.Length;
                 }
 
-                double totalLengthMm = group.TotalLength * 1000;
+                double totalLengthMm = group.TotalLength > 0
+                    ? group.TotalLength * 1000
+                    : spanInfos.Sum(s => s.Length);
                 string groupType = group.GroupType?.ToUpperInvariant() ?? "BEAM";
 
-                // Get actual bar diameter from settings (NOT hardcode 20!)
-                var availableDiameters = settings.General?.AvailableDiameters;
-                int barDiameter = (availableDiameters != null && availableDiameters.Count > 0)
-                    ? availableDiameters.Max()  // Use largest available diameter
-                    : 20;  // Fallback only if no settings
+                // Resolve bar diameter + bars per layer from current design context
+                var design = group.SelectedDesign ?? group.BackboneOptions?.ElementAtOrDefault(group.SelectedBackboneIndex);
+                int barDiameter = design?.BackboneDiameter
+                    ?? settings.General?.AvailableDiameters?.DefaultIfEmpty().Max()
+                    ?? 0;
+                int barsPerLayerTop = Math.Max(2, design?.BackboneCount_Top ?? (settings.Beam?.MinBarsPerLayer ?? 2));
+                int barsPerLayerBot = Math.Max(2, design?.BackboneCount_Bot ?? (settings.Beam?.MinBarsPerLayer ?? 2));
 
-                // Calculate TOP bar segments
-                var topResult = algorithm.AutoCutBars(totalLengthMm, spanInfos, true, groupType);
+                // Material grades for anchorage/splice tables
+                string concreteGrade = !string.IsNullOrWhiteSpace(group.ConcreteGrade)
+                    ? group.ConcreteGrade
+                    : (settings.Anchorage?.ConcreteGrades?.FirstOrDefault() ?? settings.General?.ConcreteGradeName);
+                string steelGrade = !string.IsNullOrWhiteSpace(group.SteelGrade)
+                    ? group.SteelGrade
+                    : (settings.Anchorage?.SteelGrades?.FirstOrDefault() ?? settings.General?.SteelGradeName);
 
                 // Determine support types for hooks
                 var firstSupport = group.Supports?.FirstOrDefault();
@@ -1991,9 +2000,22 @@ namespace DTS_Engine.Commands
                 string startSupportType = SupportTypeToString(firstSupport?.Type ?? SupportType.FreeEnd);
                 string endSupportType = SupportTypeToString(lastSupport?.Type ?? SupportType.FreeEnd);
 
-                // Apply staggering and end anchorage WITH ACTUAL DIAMETER
-                algorithm.ApplyStaggering(topResult, barDiameter, 2);
-                algorithm.ApplyEndAnchorage(topResult, startSupportType, endSupportType, barDiameter);
+                // Ensure bar diameter has a sensible fallback
+                if (barDiameter <= 0)
+                    barDiameter = settings.General?.AvailableDiameters?.DefaultIfEmpty().Max() ?? 0;
+
+                // Calculate TOP bar segments
+                var topResult = algorithm.ProcessComplete(
+                    totalLengthMm,
+                    spanInfos,
+                    isTopBar: true,
+                    groupType: groupType,
+                    startSupportType: startSupportType,
+                    endSupportType: endSupportType,
+                    barDiameter: barDiameter,
+                    barsPerLayer: barsPerLayerTop,
+                    concreteGrade: concreteGrade,
+                    steelGrade: steelGrade);
 
                 // Convert to DTO for JSON
                 group.TopBarSegments = topResult.Segments.Select(s => new BarSegmentDto
@@ -2012,9 +2034,17 @@ namespace DTS_Engine.Commands
                 }).ToList();
 
                 // Calculate BOT bar segments WITH ACTUAL DIAMETER
-                var botResult = algorithm.AutoCutBars(totalLengthMm, spanInfos, false, groupType);
-                algorithm.ApplyStaggering(botResult, barDiameter, 2);
-                algorithm.ApplyEndAnchorage(botResult, startSupportType, endSupportType, barDiameter);
+                var botResult = algorithm.ProcessComplete(
+                    totalLengthMm,
+                    spanInfos,
+                    isTopBar: false,
+                    groupType: groupType,
+                    startSupportType: startSupportType,
+                    endSupportType: endSupportType,
+                    barDiameter: barDiameter,
+                    barsPerLayer: barsPerLayerBot,
+                    concreteGrade: concreteGrade,
+                    steelGrade: steelGrade);
 
                 group.BotBarSegments = botResult.Segments.Select(s => new BarSegmentDto
                 {
@@ -2128,7 +2158,7 @@ namespace DTS_Engine.Commands
 
                 // ===== CREATE 3 BACKBONE OPTIONS (Always regenerate for comparison) =====
                 // Luôn tạo lại ProposedDesigns để user có thể so sánh với SelectedDesign
-                group.BackboneOptions = GenerateBackboneOptions(groupRebarData, settings, group.Width, group.Height);
+                group.BackboneOptions = GenerateBackboneOptions(group, groupRebarData, settings);
 
                 if (!isLocked)
                 {
@@ -2243,25 +2273,42 @@ namespace DTS_Engine.Commands
         /// Option 2: Đường kính trung bình, cân bằng
         /// Option 3: Đường kính nhỏ, nhiều thanh (ưu tiên D20, D18)
         /// </summary>
-        private List<ContinuousBeamSolution> GenerateBackboneOptions(List<BeamResultData> rebarData, DtsSettings settings, double widthMm, double heightMm)
+        private List<ContinuousBeamSolution> GenerateBackboneOptions(BeamGroup group, List<BeamResultData> rebarData, DtsSettings settings)
         {
             var options = new List<ContinuousBeamSolution>();
-            var availableDiameters = settings.General?.AvailableDiameters ?? new List<int> { 16, 18, 20, 22, 25 };
+            var inventory = settings.General?.AvailableDiameters ?? new List<int>();
+            var availableDiameters = DiameterParser.ParseRange(settings.Beam?.MainBarRange ?? "", inventory);
+            if (settings.Beam?.PreferEvenDiameter == true)
+                availableDiameters = DiameterParser.FilterEvenDiameters(availableDiameters);
+            if (availableDiameters.Count == 0)
+                availableDiameters = inventory;
 
             // Tính tổng As yêu cầu max
             double maxAsTop = 0, maxAsBot = 0;
+            double torsionTopFactor = settings.Beam?.TorsionDist_TopBar ?? 0;
+            double torsionBotFactor = settings.Beam?.TorsionDist_BotBar ?? 0;
             foreach (var data in rebarData)
             {
                 for (int i = 0; i < 3; i++)
                 {
-                    maxAsTop = Math.Max(maxAsTop, data.TopArea[i] + data.TorsionArea[i] * 0.16);
-                    maxAsBot = Math.Max(maxAsBot, data.BotArea[i] + data.TorsionArea[i] * 0.16);
+                    maxAsTop = Math.Max(maxAsTop, data.TopArea[i] + data.TorsionArea[i] * torsionTopFactor);
+                    maxAsBot = Math.Max(maxAsBot, data.BotArea[i] + data.TorsionArea[i] * torsionBotFactor);
                 }
             }
 
             // Backbone diameters to try
-            var backboneDias = availableDiameters.Where(d => d >= 16 && d <= 25).OrderByDescending(d => d).ToList();
-            if (backboneDias.Count < 3) backboneDias = new List<int> { 22, 20, 18 };
+            var backboneDias = availableDiameters.OrderByDescending(d => d).ToList();
+            if (backboneDias.Count == 0) return options;
+
+            // Total length (m) from group data (no hardcode)
+            double totalLengthM = 0;
+            if (group != null)
+            {
+                if (group.TotalLength > 0)
+                    totalLengthM = group.TotalLength;
+                else if (group.Spans != null && group.Spans.Count > 0)
+                    totalLengthM = group.Spans.Sum(s => s.Length) / 1000.0;
+            }
 
             // Generate 3 options with different diameters
             for (int opt = 0; opt < 3 && opt < backboneDias.Count; opt++)
@@ -2285,10 +2332,20 @@ namespace DTS_Engine.Commands
                     As_Backbone_Top = nTop * asPerBar / 100.0, // cm²
                     As_Backbone_Bot = nBot * asPerBar / 100.0,
                     Description = opt == 0 ? "Phương án tối ưu" : (opt == 1 ? "Cân bằng" : "Tiết kiệm"),
-                    EfficiencyScore = 100 - opt * 15,
-                    WastePercentage = 5 + opt * 3,
-                    TotalSteelWeight = (nTop + nBot) * dia * dia * 0.00617 * (rebarData.Count * 6) // rough estimate
+                    TotalSteelWeight = totalLengthM > 0
+                        ? (nTop + nBot) * (0.00617 * dia * dia) * totalLengthM
+                        : 0
                 };
+
+                // Waste/Efficiency score (0-100) based on required/provided As proxy
+                double reqAvg = (maxAsTop + maxAsBot) / 2.0;
+                double provAvg = (solution.As_Backbone_Top + solution.As_Backbone_Bot) / 2.0;
+                solution.WastePercentage = reqAvg > 0 ? Math.Max(0, (provAvg - reqAvg) / reqAvg * 100.0) : 0;
+                solution.EfficiencyScore = Math.Max(0, 100 - solution.WastePercentage);
+
+                // Constructability + TotalScore (0-100)
+                solution.ConstructabilityScore = ConstructabilityScoring.CalculateScore(solution, group, settings);
+                solution.TotalScore = 0.6 * solution.EfficiencyScore + 0.4 * solution.ConstructabilityScore;
 
                 options.Add(solution);
             }

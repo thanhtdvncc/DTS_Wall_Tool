@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using DTS_Engine.Core.Algorithms;
 using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Engines;
 using DTS_Engine.Core.Utils;
@@ -263,31 +265,217 @@ namespace DTS_Engine.UI.Forms
                     string idxStr = message.Substring(11);
                     if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
                     {
-                        var group = _groups[groupIndex];
-                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Quick Calc requested for group {group.GroupName}");
-
-                        // Run calculation on UI thread
+                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Quick Calc requested for group index {groupIndex}");
                         this.BeginInvoke(new Action(() =>
                         {
-                            try
-                            {
-                                // Call rebar calculator (placeholder - needs proper implementation)
-                                MessageBox.Show($"Tính thép cho nhóm: {group.GroupName}\n" +
-                                    $"Số nhịp: {group.Spans?.Count ?? 0}\n\n" +
-                                    "Chức năng đang phát triển - sẽ gọi DTS_REBAR_RUN_DESIGN.",
-                                    "Quick Calc", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            }
-                            catch (Exception ex)
-                            {
-                                MessageBox.Show("Lỗi tính thép: " + ex.Message, "Error",
-                                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            }
+                            _ = RunQuickCalcAndRefreshAsync(groupIndex);
                         }));
                     }
                 }
                 catch { }
                 return;
             }
+        }
+
+        private async Task RunQuickCalcAndRefreshAsync(int groupIndex)
+        {
+            if (groupIndex < 0 || groupIndex >= (_groups?.Count ?? 0)) return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null)
+            {
+                await SendToastSimpleAsync("⚠️ Không tìm thấy AutoCAD document để tính.");
+                return;
+            }
+
+            try
+            {
+                var group = _groups[groupIndex];
+                if (group == null)
+                {
+                    await SendToastSimpleAsync("⚠️ Group không hợp lệ.");
+                    return;
+                }
+
+                var settings = DtsSettings.Instance;
+
+                List<BeamResultData> spanResults;
+                using (doc.LockDocument())
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    spanResults = ExtractSpanResultsForGroup(tr, group);
+                    tr.Commit();
+                }
+
+                if (spanResults == null || spanResults.Count == 0)
+                {
+                    await SendToastSimpleAsync("⚠️ Không đọc được nội lực/XData của dầm trong group.");
+                    return;
+                }
+
+                var proposals = RebarCalculator.CalculateProposalsForGroup(group, spanResults, settings);
+                if (proposals == null || proposals.Count == 0)
+                {
+                    await SendToastSimpleAsync("❌ Không thể tạo phương án.");
+                    return;
+                }
+
+                var errorSol = proposals.FirstOrDefault(p => p != null && p.IsValid == false);
+                if (errorSol != null)
+                {
+                    await SendToastSimpleAsync("❌ " + (errorSol.ValidationMessage ?? "Thiếu dữ liệu/không hợp lệ."));
+                    // Still update proposals so user can inspect
+                }
+
+                group.BackboneOptions = proposals;
+                group.SelectedBackboneIndex = 0;
+
+                // Update displayed span rebar text for preview (do not overwrite manual-modified spans)
+                var bestSolution = proposals.FirstOrDefault(p => p != null && p.IsValid);
+                if (bestSolution != null && group.IsDesignLocked == false)
+                {
+                    ApplySolutionToSpanData(group, bestSolution);
+                }
+
+                // Push updated group back to WebView
+                await SendGroupUpdatedToWebViewAsync(groupIndex, group);
+            }
+            catch (Exception ex)
+            {
+                await SendToastSimpleAsync("Lỗi tính thép: " + ex.Message);
+            }
+        }
+
+        private static List<BeamResultData> ExtractSpanResultsForGroup(Autodesk.AutoCAD.DatabaseServices.Transaction tr, BeamGroup group)
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var db = doc?.Database;
+            if (db == null || group == null) return new List<BeamResultData>();
+
+            // Prefer span-based mapping (1 result per span) to keep ordering deterministic
+            var handles = new List<string>();
+            if (group.Spans != null && group.Spans.Count > 0)
+            {
+                foreach (var span in group.Spans)
+                {
+                    var h = span?.Segments?.FirstOrDefault()?.EntityHandle;
+                    if (!string.IsNullOrWhiteSpace(h)) handles.Add(h);
+                }
+            }
+
+            // Fallback: use group.EntityHandles if span segments not populated
+            if (handles.Count == 0 && group.EntityHandles != null && group.EntityHandles.Count > 0)
+            {
+                handles.AddRange(group.EntityHandles.Where(h => !string.IsNullOrWhiteSpace(h)));
+            }
+
+            var results = new List<BeamResultData>();
+            foreach (var handle in handles)
+            {
+                try
+                {
+                    var objId = AcadUtils.GetObjectIdFromHandle(handle);
+                    if (objId == Autodesk.AutoCAD.DatabaseServices.ObjectId.Null) continue;
+
+                    var obj = tr.GetObject(objId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
+                    if (obj == null) continue;
+
+                    var data = XDataUtils.ReadElementData(obj) as BeamResultData;
+                    if (data != null)
+                    {
+                        results.Add(data);
+                        continue;
+                    }
+
+                    // Fallback: some drawings may store BeamData instead of BeamResultData
+                    var beamData = XDataUtils.ReadBeamData(obj);
+                    if (beamData != null)
+                    {
+                        results.Add(new BeamResultData
+                        {
+                            // BeamResultData uses cm for Width/SectionHeight in most pipelines
+                            Width = beamData.Width.HasValue ? (beamData.Width.Value / 10.0) : 0,
+                            SectionHeight = beamData.Height.HasValue ? (beamData.Height.Value / 10.0) : 0
+                        });
+                    }
+                }
+                catch
+                {
+                    // ignore individual beam failures
+                }
+            }
+
+            return results;
+        }
+
+        private static void ApplySolutionToSpanData(BeamGroup group, ContinuousBeamSolution sol)
+        {
+            if (group?.Spans == null || sol == null) return;
+
+            string backboneTop = $"{sol.BackboneCount_Top}D{sol.BackboneDiameter}";
+            string backboneBot = $"{sol.BackboneCount_Bot}D{sol.BackboneDiameter}";
+
+            foreach (var span in group.Spans)
+            {
+                if (span == null) continue;
+                if (span.IsManualModified) continue;
+
+                // Ensure arrays exist (Json.NET may hydrate as jagged arrays in UI, but here we keep the original 2D array)
+                if (span.TopRebar == null || span.TopRebar.GetLength(0) < 1 || span.TopRebar.GetLength(1) < 5)
+                    span.TopRebar = new string[3, 6];
+                if (span.BotRebar == null || span.BotRebar.GetLength(0) < 1 || span.BotRebar.GetLength(1) < 5)
+                    span.BotRebar = new string[3, 6];
+
+                string spanId = span.SpanId ?? "S?";
+
+                // TOP: Left/Mid/Right
+                string topLeft = backboneTop;
+                string topMid = backboneTop;
+                string topRight = backboneTop;
+                if (sol.Reinforcements != null)
+                {
+                    if (sol.Reinforcements.TryGetValue($"{spanId}_Top_Left", out var tL)) topLeft += $"+{tL.Count}D{tL.Diameter}";
+                    if (sol.Reinforcements.TryGetValue($"{spanId}_Top_Mid", out var tM)) topMid += $"+{tM.Count}D{tM.Diameter}";
+                    if (sol.Reinforcements.TryGetValue($"{spanId}_Top_Right", out var tR)) topRight += $"+{tR.Count}D{tR.Diameter}";
+                }
+
+                span.TopRebar[0, 0] = topLeft;
+                span.TopRebar[0, 2] = topMid;
+                span.TopRebar[0, 4] = topRight;
+
+                // BOT: use Mid key for all (existing convention)
+                string bot = backboneBot;
+                if (sol.Reinforcements != null && sol.Reinforcements.TryGetValue($"{spanId}_Bot_Mid", out var bM))
+                    bot += $"+{bM.Count}D{bM.Diameter}";
+
+                span.BotRebar[0, 0] = bot;
+                span.BotRebar[0, 2] = bot;
+                span.BotRebar[0, 4] = bot;
+            }
+        }
+
+        private async Task SendGroupUpdatedToWebViewAsync(int groupIndex, BeamGroup group)
+        {
+            try
+            {
+                if (_webView?.CoreWebView2 == null) return;
+                // Pass JSON as a safely-escaped JS string (then JS will JSON.parse it)
+                string json = JsonConvert.SerializeObject(group);
+                string jsStringLiteral = JsonConvert.SerializeObject(json);
+                await _webView.CoreWebView2.ExecuteScriptAsync($"onGroupUpdated({groupIndex}, {jsStringLiteral})");
+            }
+            catch { }
+        }
+
+        private async Task SendToastSimpleAsync(string message)
+        {
+            try
+            {
+                if (_webView?.CoreWebView2 == null) return;
+                string jsStringLiteral = JsonConvert.SerializeObject(message ?? string.Empty);
+                await _webView.CoreWebView2.ExecuteScriptAsync($"showToast({jsStringLiteral})");
+            }
+            catch { }
         }
 
         /// <summary>

@@ -153,6 +153,7 @@
     <Compile Include="Core\Algorithms\AngleAlgorithms.cs" />
     <Compile Include="Core\Algorithms\BeamGroupDetector.cs" />
     <Compile Include="Core\Algorithms\ContinuousBeamCalculator.cs" />
+    <Compile Include="Core\Algorithms\ConstructabilityScoring.cs" />
     <Compile Include="Core\Algorithms\DistanceAlgorithms.cs" />
     <Compile Include="Core\Algorithms\IntersectionAlgorithms.cs" />
     <Compile Include="Core\Algorithms\MergeAlgorithms.cs" />

@@ -464,6 +464,8 @@ namespace DTS_Engine.Core.Data
         // ===== METRICS =====
         public double TotalSteelWeight { get; set; }
         public double EfficiencyScore { get; set; }
+        public double ConstructabilityScore { get; set; }
+        public double TotalScore { get; set; }
         public double WastePercentage { get; set; }
 
         /// <summary>

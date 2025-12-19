@@ -248,12 +248,33 @@ namespace DTS_Engine.Core.Algorithms
         /// <param name="result">Kết quả từ AutoCutBars</param>
         /// <param name="barDiameter">Đường kính thép (mm)</param>
         /// <param name="barsPerLayer">Số thanh mỗi lớp</param>
-        public void ApplyStaggering(CuttingResult result, int barDiameter, int barsPerLayer = 2)
+        public void ApplyStaggering(
+            CuttingResult result,
+            int barDiameter,
+            int barsPerLayer = 2)
+        {
+            ApplyStaggering(result, barDiameter, concreteGrade: null, steelGrade: null, barsPerLayer: barsPerLayer);
+        }
+
+        /// <summary>
+        /// Áp dụng so le mối nối (Stagger) với mác vật liệu thực (không hardcode).
+        /// </summary>
+        public void ApplyStaggering(
+            CuttingResult result,
+            int barDiameter,
+            string concreteGrade,
+            string steelGrade,
+            int barsPerLayer = 2)
         {
             if (result.Segments.Count < 2 || barsPerLayer < 2) return;
 
-            // Tính khoảng cách so le - sử dụng default grades
-            double spliceLength = _anchorage.GetSpliceLength(barDiameter, "B25", "CB400");
+            // Tính khoảng cách so le theo bảng neo/nối
+            if (string.IsNullOrWhiteSpace(concreteGrade))
+                concreteGrade = _anchorage?.ConcreteGrades?.FirstOrDefault() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(steelGrade))
+                steelGrade = _anchorage?.SteelGrades?.FirstOrDefault() ?? string.Empty;
+
+            double spliceLength = _anchorage.GetSpliceLength(barDiameter, concreteGrade, steelGrade);
             double staggerDist = Math.Max(
                 _detailing.MinStaggerDistance,
                 spliceLength * _detailing.StaggerFactorLd
@@ -356,13 +377,15 @@ namespace DTS_Engine.Core.Algorithms
             string startSupportType,
             string endSupportType,
             int barDiameter,
-            int barsPerLayer = 2)
+            int barsPerLayer = 2,
+            string concreteGrade = null,
+            string steelGrade = null)
         {
             // Step 1: Auto-cut
             var result = AutoCutBars(totalLength, spans, isTopBar, groupType);
 
             // Step 2: Apply staggering
-            ApplyStaggering(result, barDiameter, barsPerLayer);
+            ApplyStaggering(result, barDiameter, concreteGrade, steelGrade, barsPerLayer);
 
             // Step 3: Apply end anchorage
             ApplyEndAnchorage(result, startSupportType, endSupportType, barDiameter);

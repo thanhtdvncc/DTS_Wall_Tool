@@ -893,6 +893,43 @@ namespace DTS_Engine.Core.Algorithms
 
             System.Diagnostics.Debug.WriteLine($"[REBAR DEBUG] Total scenarios tried: {scenariosTried}, Valid: {validScenarios}");
 
+            // 2.5. CHẤM ĐIỂM THI CÔNG + TOTAL SCORE (0-100)
+            // - ConstructabilityScore: dùng settings + geometry thật (splice flags nếu đúng SelectedDesign)
+            // - TotalScore: normalize theo Weight trong batch, tránh mismatch thang điểm
+            if (solutions.Count > 0)
+            {
+                foreach (var s in solutions)
+                {
+                    if (!s.IsValid) continue;
+                    s.ConstructabilityScore = ConstructabilityScoring.CalculateScore(s, group, settings);
+                }
+
+                var weights = solutions.Where(s => s.IsValid).Select(s => s.TotalSteelWeight).Where(w => w > 0).ToList();
+                if (weights.Count > 0)
+                {
+                    double minW = weights.Min();
+                    double maxW = weights.Max();
+
+                    foreach (var s in solutions.Where(s => s.IsValid))
+                    {
+                        double weightScore;
+                        if (Math.Abs(maxW - minW) < 1e-9)
+                            weightScore = 100;
+                        else
+                            weightScore = (maxW - s.TotalSteelWeight) / (maxW - minW) * 100.0;
+
+                        if (weightScore < 0) weightScore = 0;
+                        if (weightScore > 100) weightScore = 100;
+
+                        double cs = s.ConstructabilityScore;
+                        if (cs < 0) cs = 0;
+                        if (cs > 100) cs = 100;
+
+                        s.TotalScore = 0.6 * weightScore + 0.4 * cs;
+                    }
+                }
+            }
+
             // 3. CHẤM ĐIỂM & CHỌN LỌC (RANKING)
             var rankedSolutions = solutions.OrderByDescending(s => s.EfficiencyScore).ToList();
             var finalProposals = PruneSimilarSolutions(rankedSolutions);
@@ -997,15 +1034,18 @@ namespace DTS_Engine.Core.Algorithms
             totalWeight += (sol.As_Backbone_Top + sol.As_Backbone_Bot) * 0.00785 * totalLength / 1000.0;
             sol.TotalSteelWeight = totalWeight;
 
-            // Gọi hàm tính điểm chuyên biệt
+            // Gọi hàm tính điểm chuyên biệt (giữ nguyên workflow: EfficiencyScore vẫn là weight-driven)
             CalculateEfficiencyScore(sol, settings);
+
+            // Constructability score (0-100) - dùng dữ liệu thật từ BeamGroup (width/length), splice flags nếu đúng SelectedDesign
+            sol.ConstructabilityScore = ConstructabilityScoring.CalculateScore(sol, group, settings);
 
             // Mô tả
             sol.Description = bbCount == 2 ? "Tiết kiệm" :
                               bbCount == 3 ? "Cân bằng" : "An toàn";
 
             // Append Score info to description for debug/viewing
-            sol.Description += $" (Score: {Math.Round(sol.EfficiencyScore, 0)})";
+            sol.Description += $" (Score: {Math.Round(sol.EfficiencyScore, 0)}, CS: {Math.Round(sol.ConstructabilityScore, 0)})";
 
             return sol;
         }

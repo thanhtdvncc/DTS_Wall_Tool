@@ -286,6 +286,7 @@
         const data = __DATA_JSON__;
         let currentGroupIndex = 0;
         let currentGroup = null;
+        let selectedOptionKey = null; // 'locked' | numeric index as string
         let highlightedSpanIndex = -1;
         let spanBounds = [];
 
@@ -531,6 +532,8 @@
             currentGroup = data.groups[currentGroupIndex];
             document.getElementById('groupSelect').value = currentGroupIndex;
 
+            selectedOptionKey = currentGroup?.SelectedDesign ? 'locked' : String(currentGroup?.SelectedBackboneIndex || 0);
+
             populateOptionSelect();
             renderCanvas();
             renderTable();
@@ -557,7 +560,6 @@
                 lockedOpt.value = 'locked';
                 const isInvalid = currentGroup.SelectedDesign.IsValid === false;
                 lockedOpt.textContent = `⭐ Phương án CHỐT ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang dùng)'}`;
-                if (isInvalid) lockedOpt.style.color = '#ef4444';
                 sel.appendChild(lockedOpt);
             }
 
@@ -570,35 +572,53 @@
             });
 
             // Chọn SelectedDesign nếu có, không thì chọn theo index
-            sel.value = currentGroup.SelectedDesign ? 'locked' : (currentGroup.SelectedBackboneIndex || 0);
+            if (selectedOptionKey == null) {
+                selectedOptionKey = currentGroup.SelectedDesign ? 'locked' : String(currentGroup.SelectedBackboneIndex || 0);
+            }
+            sel.value = selectedOptionKey;
         }
 
         function selectOption(index) {
-            currentGroup.SelectedBackboneIndex = parseInt(index);
-
-            // Populate span rebar from selected backbone option
-            const opt = currentGroup.BackboneOptions?.[index];
-            if (opt) {
-                const backbone = `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`;
-                const botBackbone = `${opt.BackboneCount_Bot}D${opt.BackboneDiameter}`;
-                currentGroup.Spans.forEach(span => {
-                    // Only update if not manually edited
-                    if (!span._userEdited) {
-                        if (!span.TopRebar) span.TopRebar = [[], [], []];
-                        if (!span.BotRebar) span.BotRebar = [[], [], []];
-                        span.TopRebar[0][0] = backbone;
-                        span.TopRebar[0][2] = backbone;
-                        span.TopRebar[0][4] = backbone;
-                        span.BotRebar[0][0] = botBackbone;
-                        span.BotRebar[0][2] = botBackbone;
-                        span.BotRebar[0][4] = botBackbone;
-                    }
-                });
+            selectedOptionKey = String(index);
+            if (selectedOptionKey !== 'locked') {
+                const parsed = parseInt(selectedOptionKey);
+                if (!isNaN(parsed)) currentGroup.SelectedBackboneIndex = parsed;
             }
+
+            const opt = getSelectedOption();
+            applyOptionToSpans(opt);
 
             updateMetrics();
             renderCanvas();
             renderTable();
+        }
+
+        function getSelectedOption() {
+            if (!currentGroup) return null;
+            if (selectedOptionKey === 'locked') return currentGroup.SelectedDesign || null;
+            const idx = parseInt(selectedOptionKey);
+            if (isNaN(idx)) return currentGroup.BackboneOptions?.[0] || null;
+            return currentGroup.BackboneOptions?.[idx] || null;
+        }
+
+        function applyOptionToSpans(opt) {
+            if (!currentGroup?.Spans?.length || !opt) return;
+
+            const backbone = `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`;
+            const botBackbone = `${opt.BackboneCount_Bot}D${opt.BackboneDiameter}`;
+            currentGroup.Spans.forEach(span => {
+                // Only update if not manually edited
+                if (!span._userEdited) {
+                    if (!span.TopRebar) span.TopRebar = [[], [], []];
+                    if (!span.BotRebar) span.BotRebar = [[], [], []];
+                    span.TopRebar[0][0] = backbone;
+                    span.TopRebar[0][2] = backbone;
+                    span.TopRebar[0][4] = backbone;
+                    span.BotRebar[0][0] = botBackbone;
+                    span.BotRebar[0][2] = botBackbone;
+                    span.BotRebar[0][4] = botBackbone;
+                }
+            });
         }
 
         // ===== SELECTED DESIGN (Phương án Chốt) =====
@@ -651,6 +671,30 @@
 
             // Send message to C# to run rebar calculation
             window.chrome.webview?.postMessage('QUICK_CALC|' + currentGroupIndex);
+        }
+
+        // Called from C# after Quick Calc finished
+        function onGroupUpdated(groupIndex, groupJson) {
+            try {
+                const updated = (typeof groupJson === 'string') ? JSON.parse(groupJson) : groupJson;
+                if (!data.groups || groupIndex < 0 || groupIndex >= data.groups.length) return;
+                data.groups[groupIndex] = updated;
+
+                if (currentGroupIndex === groupIndex) {
+                    currentGroup = updated;
+                    selectedOptionKey = currentGroup?.SelectedDesign ? 'locked' : String(currentGroup?.SelectedBackboneIndex || 0);
+                    populateOptionSelect();
+                    updateLockStatus();
+                    updateGroupInfo();
+                    updateMetrics();
+                    renderCanvas();
+                    renderTable();
+                }
+
+                showToast('✓ Đã tính lại và cập nhật phương án');
+            } catch (e) {
+                console.log('onGroupUpdated error', e);
+            }
         }
 
         function updateLockStatus() {
@@ -724,13 +768,16 @@
 
         function updateMetrics() {
             if (!currentGroup) return;
-            const opt = currentGroup.BackboneOptions?.[currentGroup.SelectedBackboneIndex || 0];
+            const opt = getSelectedOption() || currentGroup.BackboneOptions?.[currentGroup.SelectedBackboneIndex || 0];
             if (opt) {
                 document.getElementById('metricBackbone').textContent = opt.OptionName || '-';
                 document.getElementById('metricAs').textContent = `${opt.As_Backbone_Top?.toFixed(1) || 0} cm²`;
                 document.getElementById('metricWaste').textContent = `${opt.WastePercentage?.toFixed(1) || 0}%`;
                 document.getElementById('metricWeight').textContent = `${opt.TotalSteelWeight?.toFixed(0) || 0} kg`;
-                document.getElementById('metricScore').textContent = opt.EfficiencyScore?.toFixed(0) || '-';
+                const scoreVal = (opt.TotalScore ?? opt.ConstructabilityScore ?? opt.EfficiencyScore);
+                document.getElementById('metricScore').textContent = (scoreVal !== undefined && scoreVal !== null)
+                    ? Number(scoreVal).toFixed(0)
+                    : '-';
             }
 
             // Warnings
