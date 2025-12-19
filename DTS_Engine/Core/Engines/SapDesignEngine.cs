@@ -173,8 +173,12 @@ namespace DTS_Engine.Core.Engines
         {
             if (_model == null) return false;
 
+            // [FIX] Set units to kN_cm_C to ensure rebar areas are in cm²
+            var originalUnit = _model.GetPresentUnits();
             try
             {
+                _model.SetPresentUnits(eUnits.kN_cm_C);
+
                 // 1. Lấy tiết diện hiện tại của Frame để clone (nếu chưa có section mới)
                 string propName = "";
                 string sAuto = "";
@@ -218,29 +222,7 @@ namespace DTS_Engine.Core.Engines
 
                 // Update Values
                 // SAP SetRebarBeam inputs: TopLeft, TopRight, BotLeft, BotRight.
-                // Note: SAP Beam Section Rebar is defined at End I and End J (Start/End).
-                // It does NOT support Mid-span rebar definition in Section Property directly?
-                // Wait, SetRebarBeam doc says: TopLeftArea, TopRightArea...
-                // "Left" usually means Start (I-End)?? No, Left/Right usually implies Cross Section corners?
-                // Let's check SAP2000 Help.
-                // "TopLeftArea: The total area of longitudinal reinforcement at the top left end of the beam."
-                // "TopRightArea: ... top right end ..."
-                // THIS IS CONFUSING. Usually "Left/Right" in SetRebarBeam refers to I-End and J-End? 
-                // Or Left/Right of the cross section?
-                // SAP2000 OAPI Doc usually refers to Start/End as I/J.
-                // However, the function params are `TopLeftArea`, `TopRightArea`, `BotLeftArea`, `BotRightArea`.
-                // Actually, SAP2000 Beam Reinforcement Override allows setting Top/Bot Area at I and J.
-                // Let's assume:
-                // TopLeftArea = Top Area at Start (I)
-                // TopRightArea = Top Area at End (J)
-                // BotLeftArea = Bot Area at Start (I)
-                // BotRightArea = Bot Area at End (J)
-
-                // But wait, what about Mid? 
-                // SAP Section Property only defines I and J reinforcement for checking? 
-                // Yes, standard concrete check often interpolates.
-                // WE CANNOT SET MID REBAR in Section Property via API easily if it only accepts 4 values.
-                // We will map:
+                // Mapping:
                 // TopLeft -> TopAreaProv[0] (Start)
                 // TopRight -> TopAreaProv[2] (End)
                 // BotLeft -> BotAreaProv[0] (Start)
@@ -251,12 +233,10 @@ namespace DTS_Engine.Core.Engines
                 double botStart = botAreaProv[0];
                 double botEnd = botAreaProv[2];
 
+                // Cover: mm -> cm (SAP units now kN_cm_C)
                 int retRebar = _model.PropFrame.SetRebarBeam(newSectionName, matLong, matConf,
-                    coverTop / 10.0, coverBot / 10.0, // mm -> cm (since we set unit to kN_cm_C at function start? No, need to be careful)
+                    coverTop / 10.0, coverBot / 10.0,
                     topStart, topEnd, botStart, botEnd);
-
-                // Note: We need to handle Units carefully. This function assumes the context is set by caller or we set it.
-                // Let's force unit set inside this scope if we want safety, but better to set outside.
 
                 return retRebar == 0;
             }
@@ -264,6 +244,11 @@ namespace DTS_Engine.Core.Engines
             {
                 System.Diagnostics.Debug.WriteLine("UpdateBeamRebar Error: " + ex.Message);
                 return false;
+            }
+            finally
+            {
+                // Restore original units
+                _model.SetPresentUnits(originalUnit);
             }
         }
 
