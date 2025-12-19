@@ -33,6 +33,11 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public DetailingConfig Detailing { get; set; } = new DetailingConfig();
 
+        /// <summary>
+        /// Cấu hình Export SAP (Section Naming)
+        /// </summary>
+        public ExportConfig Export { get; set; } = new ExportConfig();
+
         // ===== MULTI-STORY NAMING SYSTEM =====
         /// <summary>
         /// Danh sách cấu hình đặt tên theo tầng.
@@ -640,6 +645,50 @@ namespace DTS_Engine.Core.Data
         /// VD: 0.15 = cắt bớt thép nhịp tại vị trí 0.15L
         /// </summary>
         public double BotSpanCutRatio { get; set; } = 0.15;
+    }
+
+    /// <summary>
+    /// Cấu hình Export SAP Section Naming
+    /// Format: {BeamName}_{Section}_{RebarInfo}
+    /// User có thể bật/tắt và tùy chỉnh thứ tự các thành phần
+    /// </summary>
+    public class ExportConfig
+    {
+        /// <summary>
+        /// Bao gồm thông tin tiết diện (_{WxH}) trong tên section
+        /// VD: _30x40
+        /// </summary>
+        public bool IncludeSection { get; set; } = true;
+
+        /// <summary>
+        /// Bao gồm thông tin thép (_{TopStart}_{TopEnd}_{BotStart}_{BotEnd}) trong tên section
+        /// VD: _8.6_13.2_8.3_8.6
+        /// </summary>
+        public bool IncludeRebar { get; set; } = true;
+
+        /// <summary>
+        /// Format thứ tự hiển thị thép. Các placeholder:
+        /// {TS}=TopStart, {TM}=TopMid, {TE}=TopEnd, {BS}=BotStart, {BM}=BotMid, {BE}=BotEnd
+        /// Mặc định: "{TS}_{TE}_{BS}_{BE}" → 8.6_13.2_8.3_8.6
+        /// VD user đổi: "{BS}_{BE}_{TS}_{TE}" → 8.3_8.6_8.6_13.2
+        /// </summary>
+        public string RebarFormat { get; set; } = "{TS}_{TE}_{BS}_{BE}";
+
+        /// <summary>
+        /// Số chữ số thập phân cho diện tích thép
+        /// </summary>
+        public int RebarDecimalPlaces { get; set; } = 1;
+
+        /// <summary>
+        /// Ký tự phân cách giữa các thành phần (mặc định "_")
+        /// </summary>
+        public string Separator { get; set; } = "_";
+
+        /// <summary>
+        /// Giới hạn độ dài tên section (SAP2000)
+        /// SAP cũ: 31, SAP mới: 49
+        /// </summary>
+        public int MaxSectionNameLength { get; set; } = 49;
     }
 
     #region Anchorage & Detailing Config

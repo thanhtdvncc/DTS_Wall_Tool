@@ -866,14 +866,26 @@ namespace DTS_Engine.Commands
                     var curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                     if (curve == null) continue;
 
+                    // [FIX] Chỉ xử lý phần tử đã đăng ký DTS_APP
+                    if (!XDataUtils.HasAppXData(curve)) continue;
+
                     Point3d mid = curve.StartPoint + (curve.EndPoint - curve.StartPoint) * 0.5;
                     Vector3d dir = curve.EndPoint - curve.StartPoint;
                     bool isXDir = Math.Abs(dir.X) > Math.Abs(dir.Y);
 
                     var xdata = XDataUtils.ReadRebarData(curve);
 
-                    // Fix: Làm tròn Z để phân tầng (Tolerance 100mm)
-                    double levelZ = Math.Round(mid.Z / 100.0) * 100.0;
+                    // [FIX] Nếu có XData BaseZ (logical elevation), dùng nó thay vì geometric Z (thường là 0 trong 2D)
+                    double levelZ;
+                    if (xdata != null && xdata.BaseZ.HasValue)
+                    {
+                        levelZ = xdata.BaseZ.Value;
+                    }
+                    else
+                    {
+                        // Fallback: Làm tròn Z hình học để phân tầng (Tolerance 100mm)
+                        levelZ = Math.Round(mid.Z / 100.0) * 100.0;
+                    }
 
                     // === GIRDER DETECTION (COLUMN + AXIS BASED) ===
                     // Rule 1: Dầm có cột ở 2 đầu => Girder (chắc chắn)
@@ -923,11 +935,23 @@ namespace DTS_Engine.Commands
                     WriteMessage($"\n--- Tầng Z={currentZ:F0} ---");
 
                     // Config naming cho tầng này
+                    // Config naming cho tầng này
                     var storyConfig = settings.GetStoryConfig(currentZ);
-                    string beamPrefix = storyConfig?.BeamPrefix ?? "B";
-                    string girderPrefix = storyConfig?.GirderPrefix ?? "G";
-                    string suffix = storyConfig?.Suffix ?? "";
-                    int startIndex = storyConfig?.StartIndex ?? 1;
+
+                    // [STRICT] Kiểm tra Config tồn tại. Nếu không có -> Báo lỗi & Bỏ qua
+                    if (storyConfig == null)
+                    {
+                        WriteMessage($"   ⚠️ [SKIP] Không tìm thấy cấu hình cho tầng Z={currentZ}. Vui lòng kiểm tra lại Setting > Naming.");
+                        continue; // Bỏ qua tầng này
+                    }
+
+                    WriteMessage($"   [INFO] Áp dụng Config: {storyConfig.StoryName}, Elev={storyConfig.Elevation}, StartIndex={storyConfig.StartIndex}");
+
+                    // Lấy thông tin từ Config (Không dùng fallback mặc định)
+                    string beamPrefix = storyConfig.BeamPrefix;   // VD: "B"
+                    string girderPrefix = storyConfig.GirderPrefix; // VD: "G"
+                    string suffix = storyConfig.Suffix ?? "";
+                    int startIndex = storyConfig.StartIndex;
 
                     // [FIX] StoryIndex = StartIndex trực tiếp từ StoryConfig
                     // VD: xBaseZ=11700 khớp với StoryConfig có StartIndex=3 => storyIndex="3"
@@ -947,7 +971,10 @@ namespace DTS_Engine.Commands
 
                         // Danh sách Assigned Types để gom nhóm (WxH + Steel + Direction)
                         var assignedTypes = new Dictionary<string, int>();
-                        int nextNumber = 1; // Số thứ tự bắt đầu từ 1 trong mỗi nhóm direction
+
+                        // [FIX] Bộ đếm riêng cho từng hướng (key="X" hoặc "Y")
+                        // Reset về 1 cho mỗi hướng
+                        var counters = new Dictionary<string, int> { { "X", 1 }, { "Y", 1 } };
 
                         foreach (var item in sortedList)
                         {
@@ -973,7 +1000,11 @@ namespace DTS_Engine.Commands
                             }
                             else
                             {
-                                number = nextNumber++;
+                                // Get current counter for this direction
+                                number = counters[direction];
+                                // Increment counter for this direction
+                                counters[direction]++;
+
                                 assignedTypes[typeKey] = number;
                             }
 
@@ -1008,10 +1039,15 @@ namespace DTS_Engine.Commands
             WriteMessage($"   - RowTolerance: {namingCfg.RowTolerance}mm, GirderMinWidth: {girderThreshold}mm");
         }
 
+        /// <summary>
+        /// Xuất kết quả bố trí thép thực tế (As Provided) từ CAD cập nhật ngược lại vào SAP2000.
+        /// [UPDATE] Format: {BeamName}_{Section}_{TopStart}_{TopEnd}_{BotStart}_{BotEnd}
+        /// Ví dụ: 1GX1_40x60_8.6_13.2_8.3_8.6
+        /// </summary>
         [CommandMethod("DTS_REBAR_EXPORT_SAP")]
         public void DTS_REBAR_EXPORT_SAP()
         {
-            WriteMessage("=== REBAR: XUẤT THÉP VỀ SAP2000 ===");
+            WriteMessage("=== REBAR: XUẤT THÉP VỀ SAP2000 (FORMATTED) ===");
 
             // 1. Check Connection
             if (!SapUtils.IsConnected)
@@ -1023,6 +1059,8 @@ namespace DTS_Engine.Commands
                 }
             }
 
+            WriteMessage("\n⚠️ LƯU Ý: Hãy đảm bảo mô hình SAP2000 ĐÃ ĐƯỢC MỞ KHÓA (Unlock).");
+
             SapDesignEngine engine = new SapDesignEngine();
             if (!engine.IsReady)
             {
@@ -1030,13 +1068,12 @@ namespace DTS_Engine.Commands
                 return;
             }
 
-            // 2. Select Frames
             // 2. Select Objects
-            WriteMessage("\nChọn các đường Dầm cần cập nhật về SAP: ");
+            WriteMessage("Chọn các đường Dầm cần cập nhật về SAP: ");
             var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
             if (selectedIds.Count == 0) return;
 
-            // 3. Get SAP Frame Mapping (same as DTS_REBAR_SAP_RESULT)
+            // 3. Mapping
             var allSapFrames = SapUtils.GetAllFramesGeometry();
             Dictionary<ObjectId, string> cadToSap = new Dictionary<ObjectId, string>();
 
@@ -1047,18 +1084,25 @@ namespace DTS_Engine.Commands
                     var curve = tr.GetObject(id, OpenMode.ForRead) as Curve;
                     if (curve == null) continue;
 
+                    // [FIX] Chỉ xử lý phần tử đã đăng ký DTS_APP
+                    if (!XDataUtils.HasAppXData(curve)) continue;
+
+                    var xData = XDataUtils.ReadRebarData(curve);
+                    if (xData != null && !string.IsNullOrEmpty(xData.SapElementName))
+                    {
+                        cadToSap[id] = xData.SapElementName;
+                        continue;
+                    }
+
+                    // Fallback mapping
                     Point3d start = curve.StartPoint;
                     Point3d end = curve.EndPoint;
-
                     var match = allSapFrames.FirstOrDefault(f =>
                         (IsSamePt(f.StartPt, start) && IsSamePt(f.EndPt, end)) ||
                         (IsSamePt(f.StartPt, end) && IsSamePt(f.EndPt, start))
                     );
 
-                    if (match != null)
-                    {
-                        cadToSap[id] = match.Name;
-                    }
+                    if (match != null) cadToSap[id] = match.Name;
                 }
             });
 
@@ -1068,7 +1112,7 @@ namespace DTS_Engine.Commands
                 return;
             }
 
-            // 4. Read XData and Update SAP
+            // 4. Update SAP
             int successCount = 0;
             int failCount = 0;
             var dtsSettings = DtsSettings.Instance;
@@ -1078,83 +1122,35 @@ namespace DTS_Engine.Commands
                 foreach (var kvp in cadToSap)
                 {
                     ObjectId cadId = kvp.Key;
-                    string sapName = kvp.Value;
+                    string sapID = kvp.Value;
 
                     DBObject obj = tr.GetObject(cadId, OpenMode.ForRead);
                     var data = XDataUtils.ReadRebarData(obj);
 
-                    if (data == null)
-                    {
-                        failCount++;
-                        continue;
-                    }
+                    if (data == null) continue;
+                    if (data.Width <= 0 || data.SectionHeight <= 0) continue;
 
-                    // === FIX Issue 3: Protect user data - Check NOD first ===
-                    // Priority: NOD_BEAM_GROUPS (user edited) > XData > Recalculate
-
-                    // 1. Validate dimensions first
-                    if (data.Width <= 0 || data.SectionHeight <= 0)
+                    // Ensure Data (Recalculate logic if needed)
+                    if (data.TopAreaProv == null || data.TopAreaProv.Length < 3 || data.TopAreaProv[0] <= 0)
                     {
-                        WriteMessage($" -> Lỗi: Dầm {sapName} thiếu tiết diện. Bỏ qua.");
-                        failCount++;
-                        continue;
-                    }
+                        // Tự động tính toán lại nếu thiếu dữ liệu
+                        if (data.TopAreaProv == null) data.TopAreaProv = new double[6];
+                        if (data.BotAreaProv == null) data.BotAreaProv = new double[6];
+                        if (data.TopArea == null) data.TopArea = new double[6];
+                        if (data.BotArea == null) data.BotArea = new double[6];
+                        if (data.TorsionArea == null) data.TorsionArea = new double[6];
 
-                    // 2. Check if beam exists in NOD (user has edited in BeamGroupViewer)
-                    bool hasNodData = false;
-                    string nodJson = XDataUtils.LoadBeamGroupsFromNOD(AcadUtils.Db, tr);
-                    if (!string.IsNullOrEmpty(nodJson))
-                    {
-                        try
-                        {
-                            var nodGroups = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BeamGroup>>(nodJson);
-                            if (nodGroups != null)
-                            {
-                                foreach (var group in nodGroups)
-                                {
-                                    // Match by SpanId or by physical segment SAP name
-                                    var matchingSpan = group.Spans?.FirstOrDefault(s =>
-                                        s.SpanId == sapName ||
-                                        s.Segments?.Any(seg => seg.SapFrameName == sapName) == true);
-                                    if (matchingSpan != null)
-                                    {
-                                        // Found in NOD - use user's choice
-                                        // TopRebar is [layer, position] - get layer 0, positions 0,1,2
-                                        if (matchingSpan.TopRebar != null)
-                                        {
-                                            for (int i = 0; i < 3; i++)
-                                            {
-                                                string topStr = matchingSpan.TopRebar[0, i];
-                                                string botStr = matchingSpan.BotRebar?[0, i];
-                                                if (!string.IsNullOrEmpty(topStr))
-                                                    data.TopAreaProv[i] = RebarStringParser.Parse(topStr);
-                                                if (!string.IsNullOrEmpty(botStr))
-                                                    data.BotAreaProv[i] = RebarStringParser.Parse(botStr);
-                                            }
-                                            hasNodData = true;
-                                            WriteMessage($"   {sapName}: Sử dụng dữ liệu từ BeamGroupViewer (user edited)");
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        catch { /* JSON parse error - continue without NOD data */ }
-                    }
-
-                    // 3. Check XData (already calculated)
-                    if (!hasNodData && (data.TopAreaProv == null || data.TopAreaProv[0] <= 0))
-                    {
-                        // 4. Last resort: Re-calculate (only if no user data exists)
-                        WriteMessage($"   {sapName}: Không có dữ liệu user, tính toán lại...");
                         double torsionRatioTop = dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25;
                         double torsionRatioBot = dtsSettings.Beam?.TorsionDist_BotBar ?? 0.25;
+
                         for (int i = 0; i < 3; i++)
                         {
                             double asTop = data.TopArea[i] + data.TorsionArea[i] * torsionRatioTop;
                             double asBot = data.BotArea[i] + data.TorsionArea[i] * torsionRatioBot;
 
-                            // [FIX] Dùng DtsSettings thay vì RebarSettings
+                            if (asTop == 0) asTop = data.Width * data.SectionHeight * 0.0015;
+                            if (asBot == 0) asBot = data.Width * data.SectionHeight * 0.0015;
+
                             string sTop = RebarCalculator.Calculate(asTop, data.Width * 10, data.SectionHeight * 10, dtsSettings);
                             string sBot = RebarCalculator.Calculate(asBot, data.Width * 10, data.SectionHeight * 10, dtsSettings);
 
@@ -1162,59 +1158,91 @@ namespace DTS_Engine.Commands
                             data.BotAreaProv[i] = RebarStringParser.Parse(sBot);
                         }
                     }
-                    // === END Fix Issue 3 ===
 
-                    // Use calculated values from data
-                    double[] topProv = data.TopAreaProv;
-                    double[] botProv = data.BotAreaProv;
+                    double[] topProv = data.TopAreaProv ?? new double[6];
+                    double[] botProv = data.BotAreaProv ?? new double[6];
 
-                    // Create Section Name based on convention
-                    // Format: [SapName]_[WxH]_[Top0]_[Top2]_[Bot0]_[Bot2]
-                    string newSectionName = $"{sapName}_{(int)data.Width}x{(int)data.SectionHeight}_{(int)topProv[0]}_{(int)topProv[2]}_{(int)botProv[0]}_{(int)botProv[2]}";
+                    // === [NAMING LOGIC - STRICT: NO FALLBACK] ===
 
-                    // Limit length for SAP
-                    if (newSectionName.Length > 31)
+                    // [STRICT] Bỏ qua nếu thiếu BeamName - KHÔNG CÓ FALLBACK
+                    if (string.IsNullOrEmpty(data.BeamName))
                     {
-                        // Truncate to fit SAP limit
-                        newSectionName = newSectionName.Substring(0, 31);
+                        WriteMessage($" ❌ [{sapID}] Lỗi: Chưa có BeamName. Vui lòng chạy DTS_REBAR_BEAM_NAME trước.");
+                        continue;
+                    }
+                    string baseName = data.BeamName.Replace(" ", "").Replace("/", "_");
+
+                    // === APPLY EXPORT CONFIG ===
+                    var exportCfg = dtsSettings.Export ?? new ExportConfig();
+                    string sep = exportCfg.Separator ?? "_";
+                    string fmt = $"F{exportCfg.RebarDecimalPlaces}";
+
+                    // 2. Section: "30x40" (bật/tắt theo ExportConfig)
+                    string dimStr = exportCfg.IncludeSection
+                        ? $"{sep}{data.Width:F0}x{data.SectionHeight:F0}"
+                        : "";
+
+                    // 3. Rebar: dùng RebarFormat để user tùy chỉnh thứ tự
+                    string rebarStr = "";
+                    if (exportCfg.IncludeRebar)
+                    {
+                        rebarStr = (exportCfg.RebarFormat ?? "{TS}_{TE}_{BS}_{BE}")
+                            .Replace("{TS}", topProv[0].ToString(fmt))
+                            .Replace("{TM}", topProv[1].ToString(fmt))
+                            .Replace("{TE}", topProv[2].ToString(fmt))
+                            .Replace("{BS}", botProv[0].ToString(fmt))
+                            .Replace("{BM}", botProv[1].ToString(fmt))
+                            .Replace("{BE}", botProv[2].ToString(fmt));
+                        rebarStr = sep + rebarStr;
                     }
 
-                    bool success = engine.UpdateBeamRebar(
-                        sapName,
-                        newSectionName,
-                        topProv,
-                        botProv,
-                        dtsSettings.Beam?.CoverTop ?? 35,
-                        dtsSettings.Beam?.CoverBot ?? 35
-                    );
+                    // 4. Combine: {BeamName}{Section}{Rebar}
+                    string newSectionName = $"{baseName}{dimStr}{rebarStr}";
 
-                    if (success)
+                    // [STRICT] Kiểm tra độ dài - báo lỗi thay vì rút gọn
+                    int maxLen = exportCfg.MaxSectionNameLength > 0 ? exportCfg.MaxSectionNameLength : 49;
+                    if (newSectionName.Length > maxLen)
                     {
-                        successCount++;
-
-                        // FIX DATA DESYNC: Save calculated data back to XData
-                        // This ensures Sync Highlight works correctly next time
-                        XDataUtils.UpdateElementData(obj, data, tr);
+                        WriteMessage($" ⚠️ [{sapID}] Tên quá dài ({newSectionName.Length}/{maxLen} ký tự): {newSectionName}");
+                        continue;
                     }
-                    else
+
+                    // 5. Call Engine
+                    try
+                    {
+                        bool success = engine.UpdateBeamRebar(
+                            sapID,
+                            newSectionName,
+                            topProv,
+                            botProv,
+                            dtsSettings.Beam?.CoverTop ?? 35,
+                            dtsSettings.Beam?.CoverBot ?? 35
+                        );
+
+                        if (success) successCount++;
+                        else
+                        {
+                            failCount++;
+                            WriteMessage($" -> [{sapID}] Thất bại. Name: {newSectionName}");
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        WriteMessage($" -> [{sapID}] Exception: {ex.Message}");
                         failCount++;
+                    }
                 }
             });
 
             if (failCount > 0)
-                WriteMessage($"Cảnh báo: {failCount} dầm không thể cập nhật.");
+                WriteError($"Thất bại: {failCount} dầm.");
 
-            // Reset color to ByLayer for successfully updated beams
-            // (they were marked RED by DTS_REBAR_SAP_RESULT if insufficient)
             if (successCount > 0)
             {
                 var successIds = cadToSap.Keys.ToList();
-                int resetCount = VisualUtils.ResetToByLayer(successIds);
-                if (resetCount > 0)
-                    WriteMessage($"   Đã reset màu {resetCount} dầm về ByLayer.");
+                VisualUtils.ResetToByLayer(successIds);
+                WriteSuccess($"Đã cập nhật {successCount} dầm về SAP với định dạng mới.");
             }
-
-            WriteSuccess($"Đã cập nhật {successCount} dầm về SAP2000.");
         }
 
         /// <summary>

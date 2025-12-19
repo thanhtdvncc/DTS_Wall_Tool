@@ -31,6 +31,26 @@ namespace DTS_Engine.Core.Utils
         // NOD Keys for BeamGroup persistence
         public const string NOD_BEAM_GROUPS = "DTS_BeamGroups";
 
+        /// <summary>
+        /// Kiểm tra xem đối tượng có XData của DTS_APP hay không
+        /// </summary>
+        public static bool HasAppXData(DBObject obj)
+        {
+            if (obj == null) return false;
+            var rb = obj.XData;
+            if (rb == null) return false;
+
+            foreach (var tv in rb)
+            {
+                if (tv.TypeCode == (int)DxfCode.ExtendedDataRegAppName &&
+                    tv.Value.ToString().Equals(APP_NAME, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         #endregion
 
         #region Factory Pattern - Core API
@@ -201,8 +221,11 @@ namespace DTS_Engine.Core.Utils
             var dict = GetRawData(obj);
             if (dict == null) return null;
 
-            // Check if rebar data exists (by key presence, not xType)
-            if (!dict.ContainsKey("TopArea") && !dict.ContainsKey("SapElementName"))
+            // Check if beam data exists (by key presence, not xType)
+            // Include SupportI/SupportJ for Girder detection before SAP result import
+            bool hasRebarData = dict.ContainsKey("TopArea") || dict.ContainsKey("SapElementName");
+            bool hasSupportData = dict.ContainsKey("SupportI") || dict.ContainsKey("xSupport_I");
+            if (!hasRebarData && !hasSupportData)
                 return null;
 
             var result = new BeamResultData();

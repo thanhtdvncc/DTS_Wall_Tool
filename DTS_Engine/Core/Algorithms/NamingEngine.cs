@@ -6,31 +6,26 @@ using DTS_Engine.Core.Data;
 namespace DTS_Engine.Core.Algorithms
 {
     /// <summary>
-    /// Smart Naming Engine - Tự động đặt tên dầm theo tầng và nhóm giống nhau.
-    /// Dầm có cùng Signature (Tiết diện + Thép) sẽ dùng chung tên.
+    /// Smart Naming Engine - Tự động đặt tên dầm theo format: {StoryIndex}{Prefix}{Direction}{Number}{Suffix}
+    /// Ví dụ: 3GX12 = Tầng 3 (StartIndex=3) + Dầm chính G + Hướng X + Số 12
     /// </summary>
     public static class NamingEngine
     {
         /// <summary>
         /// Auto-labeling cho danh sách BeamGroup.
-        /// Thuật toán:
-        /// 1. Phân loại theo Story (Tầng)
-        /// 2. Sắp xếp không gian: Y desc → X asc (Trên xuống, Trái sang)
-        /// 3. Gán tên: Dùng SignatureMap để reuse tên cho dầm giống nhau
         /// </summary>
         public static void AutoLabeling(List<Data.BeamGroup> groups, DtsSettings settings)
         {
             if (groups == null || groups.Count == 0) return;
             if (settings == null) settings = DtsSettings.Instance;
 
-            // 0. ASSIGN STORY TO EACH GROUP based on LevelZ (from XData origin)
+            // 0. Gán Story và lấy Config cho từng group dựa trên cao độ (LevelZ/xBaseZ)
+            // Cần đảm bảo StoryName chuẩn theo Config để group sau này
             foreach (var group in groups)
             {
-                // Get Z from group (set during import from XData origin)
-                double z = group.LevelZ;
-
-                // Find matching story using tolerance
+                double z = group.LevelZ; // Lấy từ xBaseZ
                 var storyConfig = settings.GetStoryConfig(z);
+
                 if (storyConfig != null)
                 {
                     group.StoryName = storyConfig.StoryName;
@@ -41,7 +36,7 @@ namespace DTS_Engine.Core.Algorithms
                 }
             }
 
-            // 1. Group by Story
+            // 1. Group by StoryName để xử lý từng tầng riêng biệt
             var storyBuckets = groups
                 .GroupBy(g => g.StoryName ?? "Unknown")
                 .OrderBy(b => GetElevation(b.Key, settings))
@@ -50,27 +45,40 @@ namespace DTS_Engine.Core.Algorithms
             foreach (var bucket in storyBuckets)
             {
                 string storyName = bucket.Key;
+
+                // Lấy lại config của tầng này để lấy StartIndex, Prefix, Suffix
                 var storyConfig = settings.StoryConfigs?.FirstOrDefault(s => s.StoryName == storyName);
 
-                // Fallback nếu không tìm thấy config
+                // Fallback nếu không tìm thấy config (dù đã gán ở bước 0)
                 if (storyConfig == null && settings.StoryConfigs?.Count > 0)
                 {
-                    // Dùng tầng cao nhất và cảnh báo
                     storyConfig = settings.StoryConfigs.OrderByDescending(s => s.Elevation).FirstOrDefault();
-                    System.Diagnostics.Debug.WriteLine($"[NamingEngine] WARNING: Story '{storyName}' not in StoryConfigs. Using fallback: {storyConfig?.StoryName}");
                 }
 
-                // Get suffix from config (shared for all types)
+                // === 1. PREPARE NAMING COMPONENTS ===
+
+                // A. StoryIndex: Lấy từ biến StartIndex trong settings (như bạn yêu cầu)
+                // Ví dụ: Setting StartIndex = 3 -> dầm sẽ bắt đầu bằng số 3
+                string storyIndexStr = storyConfig?.StartIndex.ToString() ?? "0";
+
+                // B. Suffix
                 string suffix = storyConfig?.Suffix ?? "";
-                int startIndex = storyConfig?.StartIndex ?? 1;
 
-                // Separate counters and signature maps for Beam vs Girder
-                int beamCounter = startIndex;
-                int girderCounter = startIndex;
-                var beamSignatureMap = new Dictionary<string, string>();
-                var girderSignatureMap = new Dictionary<string, string>();
+                // C. Prefixes
+                string girderPrefix = storyConfig?.GirderPrefix ?? "G";
+                string beamPrefix = storyConfig?.BeamPrefix ?? "B";
 
-                // 2. Spatial Sort: Y desc, X asc
+                // === 2. SETUP COUNTERS ===
+                // Bộ đếm riêng cho từng hướng và loại dầm (Reset về 1)
+                // Key: "{Prefix}_{Direction}" -> Value: Current Number (1, 2, 3...)
+                var counters = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+                // Map để reuse tên cho các dầm giống hệt nhau (Cùng Signature + Cùng Hướng)
+                // Key: "{Signature}_{Direction}" -> Value: Existing Name
+                var signatureMap = new Dictionary<string, string>();
+
+                // === 3. SPATIAL SORT (Sắp xếp không gian) ===
+                // Ưu tiên Y giảm dần (Trên xuống), sau đó X tăng dần (Trái sang)
                 var sortedGroups = bucket
                     .OrderByDescending(g => GetCenterY(g))
                     .ThenBy(g => GetCenterX(g))
@@ -78,38 +86,59 @@ namespace DTS_Engine.Core.Algorithms
 
                 foreach (var group in sortedGroups)
                 {
-                    // Skip if user locked name
+                    // Skip nếu user khóa tên
                     if (group.IsNameLocked && !string.IsNullOrEmpty(group.Name))
                         continue;
 
-                    // Update signature
+                    // Update signature (Tiết diện + Thép)
                     group.UpdateSignature();
                     string sig = group.Signature ?? "";
 
-                    // Determine prefix and counter based on GroupType (Beam vs Girder)
+                    // Xác định loại (Girder/Beam)
                     bool isGirder = (group.GroupType ?? "").Equals("Girder", StringComparison.OrdinalIgnoreCase)
-                                    || group.Width >= 300; // Fallback: Width >= 300mm = Girder
+                                    || group.Width >= 300;
 
-                    string prefix = isGirder
-                        ? (storyConfig?.GirderPrefix ?? "G")
-                        : (storyConfig?.BeamPrefix ?? "B");
+                    string currentPrefix = isGirder ? girderPrefix : beamPrefix;
 
-                    var signatureMap = isGirder ? girderSignatureMap : beamSignatureMap;
-                    ref int counter = ref (isGirder ? ref girderCounter : ref beamCounter);
+                    // Xác định hướng (X/Y)
+                    string rawDir = group.Direction?.ToUpper() ?? "X";
+                    string currentDirection = (rawDir == "Y") ? "Y" : "X";
 
-                    // Check map for reusing names
-                    if (signatureMap.TryGetValue(sig, out string existingName))
+                    // Key định danh cho nhóm dầm giống nhau
+                    // Phải bao gồm cả Direction để dầm ngang (X) không lấy tên của dầm dọc (Y)
+                    string groupingKey = $"{sig}_{currentPrefix}_{currentDirection}";
+
+                    // Key cho bộ đếm (VD: "G_X", "B_Y")
+                    string counterKey = $"{currentPrefix}_{currentDirection}";
+
+                    // Khởi tạo bộ đếm nếu chưa có (Luôn bắt đầu từ 1)
+                    if (!counters.ContainsKey(counterKey))
                     {
-                        // Reuse existing name (same structure)
+                        counters[counterKey] = 1;
+                    }
+
+                    // === 4. GÁN TÊN ===
+                    if (signatureMap.TryGetValue(groupingKey, out string existingName))
+                    {
+                        // Reuse tên cũ nếu giống hệt nhau
                         group.Name = existingName;
                     }
                     else
                     {
-                        // Generate new name
-                        string newName = $"{prefix}{counter}{suffix}";
+                        // Tạo tên mới
+                        int currentNumber = counters[counterKey];
+
+                        // FORMAT: {StoryIndex}{Prefix}{Direction}{Number}{Suffix}
+                        // Ví dụ: 3 + G + X + 12 + "" = 3GX12
+                        string newName = $"{storyIndexStr}{currentPrefix}{currentDirection}{currentNumber}{suffix}";
+
                         group.Name = newName;
-                        signatureMap[sig] = newName;
-                        counter++;
+
+                        // Lưu vào map
+                        signatureMap[groupingKey] = newName;
+
+                        // Tăng số thứ tự
+                        counters[counterKey]++;
                     }
                 }
             }
@@ -118,10 +147,6 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// Kiểm tra xung đột tên khi user đổi tên thủ công.
         /// </summary>
-        /// <returns>
-        /// null = OK, no conflict
-        /// string = Signature của group đang dùng tên này (nếu khác signature → warning)
-        /// </returns>
         public static string CheckConflict(string newName, string newSignature,
             List<BeamGroup> allGroups, string currentGroupName)
         {
@@ -129,13 +154,12 @@ namespace DTS_Engine.Core.Algorithms
                 g.Name == newName &&
                 g.GroupName != currentGroupName);
 
-            if (existing == null) return null; // No conflict
+            if (existing == null) return null;
 
-            // Check if same signature (OK to merge) or different (warning)
             if (existing.Signature == newSignature)
-                return null; // Same structure, can share name
+                return null;
 
-            return existing.Signature; // Different structure - return for warning
+            return existing.Signature;
         }
 
         // === HELPERS ===
@@ -148,7 +172,6 @@ namespace DTS_Engine.Core.Algorithms
         private static double GetCenterY(Data.BeamGroup group)
         {
             if (group.Spans == null || group.Spans.Count == 0) return 0;
-            // Lấy Y trung bình từ các span
             double sum = 0;
             int count = 0;
             foreach (var span in group.Spans)
@@ -159,7 +182,7 @@ namespace DTS_Engine.Core.Algorithms
                     {
                         if (seg.StartPoint != null && seg.StartPoint.Length >= 2)
                         {
-                            sum += seg.StartPoint[1]; // Y
+                            sum += seg.StartPoint[1];
                             count++;
                         }
                     }
@@ -181,7 +204,7 @@ namespace DTS_Engine.Core.Algorithms
                     {
                         if (seg.StartPoint != null && seg.StartPoint.Length >= 2)
                         {
-                            sum += seg.StartPoint[0]; // X
+                            sum += seg.StartPoint[0];
                             count++;
                         }
                     }

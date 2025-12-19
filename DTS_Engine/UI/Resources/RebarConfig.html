@@ -686,6 +686,47 @@
                     </div>
                 </div>
             </div>
+
+            <!-- EXPORT SAP SECTION NAMING -->
+            <div class="section" style="background:#fff8e1;border:1px solid #f9a825;">
+                <div class="section-header" style="background:#f9a825;color:white;">📤 Export SAP - Section Naming</div>
+                <div class="section-body">
+                    <div class="check-row">
+                        <input type="checkbox" id="ExportIncludeSection" checked>
+                        <label for="ExportIncludeSection">Thêm thông tin tiết diện (<code>_30x40</code>)</label>
+                    </div>
+                    <div class="check-row">
+                        <input type="checkbox" id="ExportIncludeRebar" checked>
+                        <label for="ExportIncludeRebar">Thêm thông tin thép (<code>_8.6_13.2_8.3_8.6</code>)</label>
+                    </div>
+                    <div class="row" style="margin-top:8px;">
+                        <div class="col-2">
+                            <label>Định dạng thép (RebarFormat)</label>
+                            <input type="text" id="ExportRebarFormat" value="{TS}_{TE}_{BS}_{BE}"
+                                placeholder="{TS}_{TE}_{BS}_{BE}">
+                        </div>
+                        <div class="col">
+                            <label>Số thập phân</label>
+                            <input type="number" id="ExportRebarDecimalPlaces" value="1" min="0" max="3">
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col">
+                            <label>Ký tự phân cách</label>
+                            <input type="text" id="ExportSeparator" value="_" maxlength="3">
+                        </div>
+                        <div class="col">
+                            <label>Max độ dài tên</label>
+                            <input type="number" id="ExportMaxSectionNameLength" value="49" min="20" max="100">
+                        </div>
+                    </div>
+                    <div class="hint">
+                        <b>Placeholders:</b> {TS}=TopStart, {TM}=TopMid, {TE}=TopEnd, {BS}=BotStart, {BM}=BotMid,
+                        {BE}=BotEnd<br>
+                        <b>Ví dụ:</b> BeamName=1GX1 → <code>1GX1_30x40_8.6_13.2_8.3_8.6</code>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- TAB 4: ANCHORAGE (Neo & Nối) - COMPREHENSIVE -->
@@ -1849,6 +1890,14 @@
                     radio.onchange = () => document.getElementById('SortDirection').value = radio.value;
                 });
 
+                // Export SAP Section Naming
+                setChk('ExportIncludeSection', data.Export?.IncludeSection ?? true);
+                setChk('ExportIncludeRebar', data.Export?.IncludeRebar ?? true);
+                setId('ExportRebarFormat', data.Export?.RebarFormat ?? '{TS}_{TE}_{BS}_{BE}');
+                setId('ExportRebarDecimalPlaces', data.Export?.RebarDecimalPlaces ?? 1);
+                setId('ExportSeparator', data.Export?.Separator ?? '_');
+                setId('ExportMaxSectionNameLength', data.Export?.MaxSectionNameLength ?? 49);
+
                 // Tab 4: Anchorage - Matrix based
                 loadAnchorageTab();
 
@@ -2216,6 +2265,14 @@
                             AllowLapSpliceInJoint: getChk('GirderAllowLapInJoint'),
                             SupportZoneRatio: 0.25
                         }
+                    },
+                    Export: {
+                        IncludeSection: getChk('ExportIncludeSection'),
+                        IncludeRebar: getChk('ExportIncludeRebar'),
+                        RebarFormat: getVal('ExportRebarFormat') || '{TS}_{TE}_{BS}_{BE}',
+                        RebarDecimalPlaces: parseInt(getVal('ExportRebarDecimalPlaces')) || 1,
+                        Separator: getVal('ExportSeparator') || '_',
+                        MaxSectionNameLength: parseInt(getVal('ExportMaxSectionNameLength')) || 49
                     }
                 };
 
