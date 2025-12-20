@@ -157,6 +157,12 @@
                 <button onclick="setCanvasMode('shear')" id="modeShear"
                     class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500">Shear-Web</button>
             </div>
+            <!-- Zoom indicator -->
+            <div id="zoomIndicator"
+                class="absolute bottom-2 right-2 bg-slate-800/70 text-white text-[10px] px-2 py-0.5 rounded">100%</div>
+            <!-- Help overlay -->
+            <div class="absolute bottom-2 left-2 text-[9px] text-slate-400 bg-white/70 px-1 rounded">Alt+Drag: Pan |
+                Ctrl+Drag: Box Zoom | Wheel: Zoom | DblClick: Reset</div>
         </div>
 
         <!-- METRICS BAR -->
@@ -282,36 +288,80 @@
     </footer>
 
     <script>
+        // ============================================================
+        // BEAM VIEWER - Modular Architecture
+        // Uses Beam namespace for state and functions
+        // Core modules (Dts.*) injected by C# if available
+        // ============================================================
+
         // Data from C#
         const data = __DATA_JSON__;
+
+        // ============ BEAM NAMESPACE ============
+        window.Beam = window.Beam || {};
+
+        // State management
+        Beam.State = {
+            currentGroupIndex: 0,
+            currentGroup: null,
+            selectedOptionKey: null, // 'locked' | numeric index as string
+            highlightedSpanIndex: -1,
+            spanBounds: [],
+
+            // Canvas mode: 'section' | 'long' | 'shear'
+            canvasMode: 'long',
+
+            // Canvas interaction
+            zoom: 1.0,
+            panX: 0,
+            panY: 0,
+            isDragging: false,
+            lastX: 0,
+            lastY: 0,
+
+            // Box zoom
+            boxZoomActive: false,
+            boxZoomStartX: 0,
+            boxZoomStartY: 0,
+            boxZoomEndX: 0,
+            boxZoomEndY: 0,
+
+            // UI
+            tablePanelCollapsed: false,
+            highlightModeEnabled: false
+        };
+
+        // Constants
+        Beam.Constants = {
+            MIN_SPAN_WIDTH: 80,
+            MAX_CANVAS_WIDTH: 1600,
+            CANVAS_PADDING: 30,
+            BEAM_HEIGHT: 80
+        };
+
+        // Aliases for backward compatibility (refactor gradually)
         let currentGroupIndex = 0;
         let currentGroup = null;
-        let selectedOptionKey = null; // 'locked' | numeric index as string
+        let selectedOptionKey = null;
         let highlightedSpanIndex = -1;
         let spanBounds = [];
-
-        // RELATIVE SIZING: Min span width, max canvas width scaled
         const MIN_SPAN_WIDTH = 80;
         const MAX_CANVAS_WIDTH = 1600;
         const CANVAS_PADDING = 30;
-        const BEAM_HEIGHT = 80; // Increased for rebar display
-
-        // HIGHLIGHT MODE & TRANSPARENCY STATE
+        const BEAM_HEIGHT = 80;
         let highlightModeEnabled = false;
-
-        // CANVAS MODE: 'section' | 'long' | 'shear'
         let canvasMode = 'long';
-
-        // CANVAS INTERACTION STATE
         let canvasZoom = 1.0;
         let canvasPanX = 0;
         let canvasPanY = 0;
         let canvasDragging = false;
         let canvasLastX = 0;
         let canvasLastY = 0;
-        // spanBounds is declared at line 296
-
-        // TABLE PANEL STATE
+        let boxZoomActive = false;
+        let boxZoomStartX = 0;
+        let boxZoomStartY = 0;
+        let boxZoomEndX = 0;
+        let boxZoomEndY = 0;
         let tablePanelCollapsed = false;
 
         function toggleTablePanel() {
@@ -373,7 +423,24 @@
             }
         }
 
+        // Resize canvas to fill container
+        function resizeCanvas() {
+            const container = document.getElementById('canvasContainer');
+            const canvas = document.getElementById('beamCanvas');
+            if (container && canvas) {
+                canvas.style.width = '100%';
+                canvas.style.height = '100%';
+                // Set actual canvas resolution based on container size
+                canvas.height = container.clientHeight || 300;
+                renderCanvas();
+            }
+        }
+
         function init() {
+            // Resize canvas initially and on window resize
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
             // Sync material grades from DtsSettings to read-only display
             if (data.settings) {
                 const concreteDisp = document.getElementById('concreteDisplay');
@@ -398,7 +465,7 @@
                     const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
                     for (let i = 0; i < spanBounds.length; i++) {
                         const b = spanBounds[i];
-                        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+                        if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
                             highlightSpan(i);
                             const row = document.querySelector(`[data-span-index="${i}"]`);
                             if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -407,8 +474,19 @@
                     }
                 });
 
-                // Hover to highlight span
+                // Hover to highlight span + Box zoom drag update
                 canvas.addEventListener('mousemove', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+
+                    // Handle box zoom drag
+                    if (boxZoomActive) {
+                        boxZoomEndX = e.clientX - rect.left;
+                        boxZoomEndY = e.clientY - rect.top;
+                        renderCanvas(); // Will draw selection box
+                        return;
+                    }
+
+                    // Handle pan drag
                     if (canvasDragging) {
                         const dx = e.clientX - canvasLastX;
                         const dy = e.clientY - canvasLastY;
@@ -418,13 +496,13 @@
                         canvasLastY = e.clientY;
                         renderCanvas();
                     } else {
-                        const rect = canvas.getBoundingClientRect();
+                        // Hover detection
                         const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
                         const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
                         let found = -1;
                         for (let i = 0; i < spanBounds.length; i++) {
                             const b = spanBounds[i];
-                            if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+                            if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
                                 found = i;
                                 break;
                             }
@@ -437,8 +515,23 @@
                     }
                 });
 
-                // Middle click or Alt+click to start pan
+                // Middle click or Alt+click to start pan, Ctrl+click to start box zoom
                 canvas.addEventListener('mousedown', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+
+                    // Ctrl+Left click = Box Zoom
+                    if (e.button === 0 && e.ctrlKey) {
+                        boxZoomActive = true;
+                        boxZoomStartX = e.clientX - rect.left;
+                        boxZoomStartY = e.clientY - rect.top;
+                        boxZoomEndX = boxZoomStartX;
+                        boxZoomEndY = boxZoomStartY;
+                        canvas.style.cursor = 'crosshair';
+                        e.preventDefault();
+                        return;
+                    }
+
+                    // Middle click or Alt+Left click = Pan
                     if (e.button === 1 || (e.button === 0 && e.altKey)) {
                         canvasDragging = true;
                         canvasLastX = e.clientX;
@@ -448,13 +541,57 @@
                     }
                 });
 
-                canvas.addEventListener('mouseup', () => {
+                canvas.addEventListener('mouseup', (e) => {
+                    // Finish box zoom
+                    if (boxZoomActive) {
+                        boxZoomActive = false;
+                        canvas.style.cursor = 'default';
+
+                        // Calculate box dimensions
+                        const x1 = Math.min(boxZoomStartX, boxZoomEndX);
+                        const y1 = Math.min(boxZoomStartY, boxZoomEndY);
+                        const x2 = Math.max(boxZoomStartX, boxZoomEndX);
+                        const y2 = Math.max(boxZoomStartY, boxZoomEndY);
+                        const boxW = x2 - x1;
+                        const boxH = y2 - y1;
+
+                        // Only zoom if box is reasonable size (min 20px)
+                        if (boxW > 20 && boxH > 20) {
+                            // Convert screen coords to world coords (before zoom)
+                            const worldX1 = (x1 - canvasPanX) / canvasZoom;
+                            const worldY1 = (y1 - canvasPanY) / canvasZoom;
+                            const worldX2 = (x2 - canvasPanX) / canvasZoom;
+                            const worldY2 = (y2 - canvasPanY) / canvasZoom;
+                            const worldW = worldX2 - worldX1;
+                            const worldH = worldY2 - worldY1;
+
+                            // Calculate new zoom to fit box
+                            const canvasW = canvas.width;
+                            const canvasH = canvas.height;
+                            const zoomX = canvasW / worldW;
+                            const zoomY = canvasH / worldH;
+                            const newZoom = Math.min(zoomX, zoomY, 5) * 0.9; // Max 5x, 90% margin
+
+                            // Center the box
+                            const worldCenterX = (worldX1 + worldX2) / 2;
+                            const worldCenterY = (worldY1 + worldY2) / 2;
+
+                            canvasZoom = Math.max(0.5, newZoom);
+                            canvasPanX = canvasW / 2 - worldCenterX * canvasZoom;
+                            canvasPanY = canvasH / 2 - worldCenterY * canvasZoom;
+
+                            renderCanvas();
+                        }
+                        return;
+                    }
+
                     canvasDragging = false;
                     canvas.style.cursor = 'default';
                 });
 
                 canvas.addEventListener('mouseleave', () => {
                     canvasDragging = false;
+                    boxZoomActive = false;
                     canvas.style.cursor = 'default';
                     highlightedSpanIndex = -1;
                     renderCanvas();
@@ -465,7 +602,7 @@
                 canvas.addEventListener('wheel', (e) => {
                     e.preventDefault();
                     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                    const newZoom = Math.max(0.5, Math.min(3, canvasZoom * delta));
+                    const newZoom = Math.max(0.5, Math.min(5, canvasZoom * delta));
                     const rect = canvas.getBoundingClientRect();
                     const mouseX = e.clientX - rect.left;
                     const mouseY = e.clientY - rect.top;
@@ -549,31 +686,40 @@
         function populateOptionSelect() {
             const sel = document.getElementById('optionSelect');
             sel.innerHTML = '';
-            if (!currentGroup?.BackboneOptions) {
-                sel.innerHTML = '<option>No options</option>';
-                return;
-            }
 
-            // Nếu có SelectedDesign, thêm vào đầu dropdown với ⭐
-            if (currentGroup.SelectedDesign) {
+            // Nếu có SelectedDesign (đã chốt), luôn hiển thị đầu tiên với ⭐
+            if (currentGroup?.SelectedDesign) {
                 const lockedOpt = document.createElement('option');
                 lockedOpt.value = 'locked';
                 const isInvalid = currentGroup.SelectedDesign.IsValid === false;
-                lockedOpt.textContent = `⭐ Phương án CHỐT ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang dùng)'}`;
+                const designName = currentGroup.SelectedDesign.OptionName || 'Phương án đã chốt';
+                lockedOpt.textContent = `⭐ ${designName} ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang dùng)'}`;
                 sel.appendChild(lockedOpt);
             }
 
-            // Thêm các phương án máy đề xuất
-            currentGroup.BackboneOptions.forEach((opt, i) => {
-                const option = document.createElement('option');
-                option.value = i;
-                option.textContent = `${opt.OptionName || 'Option ' + (i + 1)} - D${opt.BackboneDiameter || '?'}${i === 0 ? ' (Best)' : ''}`;
-                sel.appendChild(option);
-            });
+            // Kiểm tra BackboneOptions
+            const options = currentGroup?.BackboneOptions || [];
+
+            if (options.length === 0) {
+                // Không có phương án tính toán
+                const noCalcOpt = document.createElement('option');
+                noCalcOpt.value = 'none';
+                noCalcOpt.textContent = '⏳ Chưa tính (Nhấn "Tính thép")';
+                noCalcOpt.disabled = true;
+                sel.appendChild(noCalcOpt);
+            } else {
+                // Thêm các phương án máy đề xuất
+                options.forEach((opt, i) => {
+                    const option = document.createElement('option');
+                    option.value = i;
+                    option.textContent = `${opt.OptionName || 'Option ' + (i + 1)} - D${opt.BackboneDiameter || '?'}${i === 0 ? ' ★Best' : ''}`;
+                    sel.appendChild(option);
+                });
+            }
 
             // Chọn SelectedDesign nếu có, không thì chọn theo index
             if (selectedOptionKey == null) {
-                selectedOptionKey = currentGroup.SelectedDesign ? 'locked' : String(currentGroup.SelectedBackboneIndex || 0);
+                selectedOptionKey = currentGroup?.SelectedDesign ? 'locked' : String(currentGroup?.SelectedBackboneIndex || 0);
             }
             sel.value = selectedOptionKey;
         }
@@ -809,29 +955,38 @@
             spanBounds = [];
             const spans = currentGroup.Spans;
 
-            // Calculate relative widths (use sqrt for better visual scaling)
+            // Calculate span widths: each span has width proportional to length
+            // with MIN = 1/5 of max length span width for consistency
             const lengths = spans.map(s => s.Length || 1);
             const maxLen = Math.max(...lengths);
             const minLen = Math.min(...lengths);
 
-            // Scale: each span gets width proportional to its length, but with min/max limits
-            const availableWidth = MAX_CANVAS_WIDTH - CANVAS_PADDING * 2 - spans.length * 10;
-            const totalLen = lengths.reduce((a, b) => a + b, 0);
+            // Calculate base width for max-length span
+            const maxSpanWidth = Math.min(200, (MAX_CANVAS_WIDTH - CANVAS_PADDING * 2 - spans.length * 15) / Math.max(1, spans.length));
+            const minSpanWidth = Math.max(MIN_SPAN_WIDTH, maxSpanWidth / 5); // Min is 1/5 of max
 
             let totalWidth = CANVAS_PADDING * 2;
             const spanWidths = lengths.map(len => {
-                const ratio = len / totalLen;
-                const w = Math.max(MIN_SPAN_WIDTH, ratio * availableWidth);
-                totalWidth += w + 10; // +10 for support gap
+                const ratio = len / maxLen;
+                const w = minSpanWidth + (maxSpanWidth - minSpanWidth) * ratio;
+                totalWidth += w + 15; // +15 for support gap
                 return w;
             });
 
-            canvas.width = Math.min(totalWidth, MAX_CANVAS_WIDTH);
+            // Set canvas size accounting for zoom
+            const baseWidth = Math.min(totalWidth, MAX_CANVAS_WIDTH);
             const height = 180;
+            canvas.width = baseWidth;
+            canvas.height = height;
 
-            // Clear with light background
+            // Clear with light background (full canvas, before transform)
             ctx.fillStyle = '#f8fafc';
-            ctx.fillRect(0, 0, canvas.width, height);
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Apply zoom and pan transform
+            ctx.save();
+            ctx.translate(canvasPanX, canvasPanY);
+            ctx.scale(canvasZoom, canvasZoom);
 
             let x = CANVAS_PADDING;
             const beamY = 60;
@@ -876,14 +1031,41 @@
 
                 // Support between spans
                 drawSupport(ctx, x, beamY);
-                x += 10;
+                x += 15;
             });
 
-            // Scroll to highlighted span
-            if (highlightedSpanIndex >= 0 && spanBounds[highlightedSpanIndex]) {
+            // Restore canvas transform
+            ctx.restore();
+
+            // Draw box zoom selection rectangle (after restore, in screen coords)
+            if (boxZoomActive) {
+                const x1 = Math.min(boxZoomStartX, boxZoomEndX);
+                const y1 = Math.min(boxZoomStartY, boxZoomEndY);
+                const w = Math.abs(boxZoomEndX - boxZoomStartX);
+                const h = Math.abs(boxZoomEndY - boxZoomStartY);
+
+                ctx.strokeStyle = '#3b82f6';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                ctx.strokeRect(x1, y1, w, h);
+                ctx.setLineDash([]);
+
+                // Fill with transparent blue
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
+                ctx.fillRect(x1, y1, w, h);
+            }
+
+            // Update zoom indicator if exists
+            const zoomIndicator = document.getElementById('zoomIndicator');
+            if (zoomIndicator) {
+                zoomIndicator.textContent = `${Math.round(canvasZoom * 100)}%`;
+            }
+
+            // Scroll to highlighted span (only when not interacting)
+            if (!canvasDragging && !boxZoomActive && highlightedSpanIndex >= 0 && spanBounds[highlightedSpanIndex]) {
                 const bound = spanBounds[highlightedSpanIndex];
                 const container = document.getElementById('canvasContainer');
-                const scrollTarget = bound.x - container.clientWidth / 2 + bound.width / 2;
+                const scrollTarget = (bound.x * canvasZoom + canvasPanX) - container.clientWidth / 2 + (bound.width * canvasZoom) / 2;
                 container.scrollTo({ left: scrollTarget, behavior: 'smooth' });
             }
         }
@@ -1391,6 +1573,77 @@
 
         // Init
         init();
+
+        // ============ EXPORT TO BEAM NAMESPACE ============
+        // This allows external access and future module extraction
+        Object.assign(Beam, {
+            // Navigation
+            loadGroup,
+            prevGroup,
+            nextGroup,
+            populateGroupSelect,
+
+            // Options
+            populateOptionSelect,
+            selectOption,
+            getSelectedOption,
+            applyOptionToSpans,
+
+            // Lock/Unlock
+            lockDesign,
+            unlockDesign,
+            updateLockStatus,
+
+            // Rendering
+            renderCanvas,
+            renderTable,
+            drawSupport,
+            drawRebarLines,
+
+            // Table editing
+            toggleSpanActive,
+            updateRebar,
+            updateLayerRebar,
+            updateStirrup,
+            updateSideBar,
+            renderLayerRebarInputs,
+            renderStirrupInputs,
+
+            // Highlight
+            highlightSpan,
+            clearHighlight,
+
+            // Actions
+            doSave,
+            doExport,
+            doImport,
+            doCancel,
+            applyToDrawing,
+            quickCalc,
+            copyFormat,
+
+            // UI
+            showToast,
+            toggleTablePanel,
+            setCanvasMode,
+            toggleHighlightMode,
+
+            // Material
+            setGroupConcrete,
+            setGroupSteel,
+
+            // Utils
+            resizeCanvas,
+            selectAllSpans,
+            selectNoneSpans,
+            applyStirrupPattern
+        });
+
+        // Sync state to namespace
+        Beam.State.currentGroupIndex = currentGroupIndex;
+        Beam.State.currentGroup = currentGroup;
+
+        console.log('Beam Viewer initialized with namespace:', Object.keys(Beam));
     </script>
 </body>
 

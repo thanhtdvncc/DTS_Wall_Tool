@@ -91,6 +91,7 @@ namespace DTS_Engine.UI.Forms
 
         private string LoadHtmlFromResource()
         {
+            // Load BeamGroupViewer.html directly (contains Beam namespace)
             string resourceName = "DTS_Engine.UI.Resources.BeamGroupViewer.html";
             Assembly assembly = Assembly.GetExecutingAssembly();
 
@@ -98,7 +99,6 @@ namespace DTS_Engine.UI.Forms
             {
                 if (stream == null)
                 {
-                    // Fallback: return basic HTML
                     return "<html><body><h1>BeamGroupViewer not found</h1></body></html>";
                 }
 
@@ -108,13 +108,11 @@ namespace DTS_Engine.UI.Forms
 
                     // Inject data with settings
                     var settings = DtsSettings.Instance;
-
-                    // Determine view mode: 'groups' if has groups, 'single' if single elements (no group)
                     string viewMode = (_groups != null && _groups.Count > 0) ? "groups" : "single";
 
                     var data = new
                     {
-                        mode = viewMode,  // 'groups' or 'single'
+                        mode = viewMode,
                         groups = _groups,
                         settings = new
                         {
