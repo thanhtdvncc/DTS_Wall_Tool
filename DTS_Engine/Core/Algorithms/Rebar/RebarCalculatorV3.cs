@@ -39,7 +39,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar
             {
                 new PyramidRule(),            // Priority 1: Critical - L2 <= L1
                 new SymmetryRule(),           // Priority 5: Warning - Prefer even counts
-                new PreferredDiameterRule()   // Priority 10: Info - Diameter matching
+                new PreferredDiameterRule(),  // Priority 10: Info - Diameter matching
+                new WastePenaltyRule()        // Priority 15: Warning - Penalize waste bars
             };
 
             var ruleEngine = new RuleEngine(rules);

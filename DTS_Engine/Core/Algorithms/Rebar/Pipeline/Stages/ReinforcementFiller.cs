@@ -274,6 +274,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             }
             else return false;
 
+            // ACCUMULATE WASTE COUNT for penalty scoring
+            ctx.AccumulatedWasteCount += bestPlan.WasteCount;
+
             int addL1 = bestPlan.CountLayer1 - backboneCount;
             int addL2 = bestPlan.CountLayer2;
 

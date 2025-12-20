@@ -54,6 +54,12 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Models
         /// <summary>Bonus từ việc match PreferredDiameter</summary>
         public double PreferredDiameterBonus { get; set; } = 0;
 
+        /// <summary>
+        /// Tổng số thanh thép lãng phí do ràng buộc cấu tạo (VD: 3+1→3+2).
+        /// Dùng để phạt điểm phương án.
+        /// </summary>
+        public int AccumulatedWasteCount { get; set; } = 0;
+
         // ═══════════════════════════════════════════════════════════════
         // COMPUTED DATA (Set by subsequent stages)
         // ═══════════════════════════════════════════════════════════════
@@ -125,6 +131,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Models
                 TopBackboneCount = 0,
                 BotBackboneCount = 0,
                 PreferredDiameterBonus = 0,
+                AccumulatedWasteCount = 0,
 
                 // OUTPUT - reset
                 CurrentSolution = null,

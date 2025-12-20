@@ -51,6 +51,37 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                 }
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // CRITICAL FIX: UNIT NORMALIZATION
+            // BeamGroup.Width/Height SHOULD be in mm, but some sources may provide:
+            // - meters (0.4 for 400mm beam)
+            // - centimeters (40 for 400mm beam)
+            // We normalize to mm using heuristics:
+            // ═══════════════════════════════════════════════════════════════
+            if (beamWidth > 0 && beamWidth < 5)
+            {
+                // Likely meters (e.g. 0.4m = 400mm)
+                beamWidth *= 1000;
+            }
+            else if (beamWidth >= 5 && beamWidth < 100)
+            {
+                // Likely centimeters (e.g. 40cm = 400mm)
+                beamWidth *= 10;
+            }
+            // else: already in mm (e.g. 400)
+
+            if (beamHeight > 0 && beamHeight < 5)
+            {
+                // Likely meters (e.g. 0.6m = 600mm)
+                beamHeight *= 1000;
+            }
+            else if (beamHeight >= 5 && beamHeight < 100)
+            {
+                // Likely centimeters (e.g. 60cm = 600mm)
+                beamHeight *= 10;
+            }
+            // else: already in mm (e.g. 600)
+
             // HARD FAIL: No valid dimensions
             if (beamWidth <= 0 || beamHeight <= 0)
             {

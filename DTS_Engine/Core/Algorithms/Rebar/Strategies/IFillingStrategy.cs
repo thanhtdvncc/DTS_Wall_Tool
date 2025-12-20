@@ -65,6 +65,12 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Strategies
         /// <summary>Tổng số thanh</summary>
         public int TotalBars { get; set; }
 
+        /// <summary>
+        /// Số thanh lãng phí do ràng buộc cấu tạo (VD: bump từ 1 lên 2).
+        /// Dùng để trừ điểm phương án.
+        /// </summary>
+        public int WasteCount { get; set; }
+
         /// <summary>Lý do thất bại nếu IsValid = false</summary>
         public string FailReason { get; set; }
     }

@@ -101,11 +101,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Strategies
             // Trường hợp 3+1: Phải bump lên 3+2, hoặc thử phương án 2+2
             // ═══════════════════════════════════════════════════════════════
             const int MIN_BARS_PER_LAYER = 2;
+            int wasteCount = 0;
             if (n2 > 0 && n2 < MIN_BARS_PER_LAYER)
             {
                 // Bump L2 lên tối thiểu 2 nếu còn thỏa pyramid
                 if (MIN_BARS_PER_LAYER <= n1)
                 {
+                    wasteCount = MIN_BARS_PER_LAYER - n2; // Số thanh waste (thường = 1)
                     n2 = MIN_BARS_PER_LAYER;
                 }
                 else
@@ -134,7 +136,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Strategies
                 IsValid = true,
                 CountLayer1 = n1,
                 CountLayer2 = n2,
-                TotalBars = n1 + n2
+                TotalBars = n1 + n2,
+                WasteCount = wasteCount
             };
         }
     }
