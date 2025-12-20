@@ -1479,17 +1479,36 @@
 
             const backbone = `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`;
             const botBackbone = `${opt.BackboneCount_Bot}D${opt.BackboneDiameter}`;
+
+            // Helper to get reinforcement suffix from solution
+            const getReinf = (spanId, pos) => {
+                const reinf = opt.Reinforcements;
+                if (!reinf) return '';
+                const key = `${spanId}_${pos}`;
+                const spec = reinf[key];
+                if (spec && spec.Count > 0) {
+                    return `+${spec.Count}D${spec.Diameter}`;
+                }
+                return '';
+            };
+
             currentGroup.Spans.forEach(span => {
                 // Only update if not manually edited
                 if (!span._userEdited) {
                     if (!span.TopRebar) span.TopRebar = [[], [], []];
                     if (!span.BotRebar) span.BotRebar = [[], [], []];
-                    span.TopRebar[0][0] = backbone;
-                    span.TopRebar[0][2] = backbone;
-                    span.TopRebar[0][4] = backbone;
-                    span.BotRebar[0][0] = botBackbone;
-                    span.BotRebar[0][2] = botBackbone;
-                    span.BotRebar[0][4] = botBackbone;
+
+                    const sid = span.SpanId;
+
+                    // TOP: backbone + reinforcement at each position
+                    span.TopRebar[0][0] = backbone + getReinf(sid, 'Top_Left');
+                    span.TopRebar[0][2] = backbone + getReinf(sid, 'Top_Mid');
+                    span.TopRebar[0][4] = backbone + getReinf(sid, 'Top_Right');
+
+                    // BOT: backbone + reinforcement at each position
+                    span.BotRebar[0][0] = botBackbone + getReinf(sid, 'Bot_Left');
+                    span.BotRebar[0][2] = botBackbone + getReinf(sid, 'Bot_Mid');
+                    span.BotRebar[0][4] = botBackbone + getReinf(sid, 'Bot_Right');
                 }
             });
         }
