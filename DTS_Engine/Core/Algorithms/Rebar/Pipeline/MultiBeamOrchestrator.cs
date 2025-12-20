@@ -53,9 +53,14 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                 // Execute pipeline for this beam
                 var proposals = _pipeline.Execute(group, spanResults, settings, globalConstraints, external);
 
-                if (proposals.Any())
+                // CRITICAL FIX: Only use VALID proposals, ordered by efficiency
+                var validProposals = proposals.Where(p => p.IsValid)
+                                              .OrderByDescending(p => p.EfficiencyScore)
+                                              .ToList();
+
+                if (validProposals.Any())
                 {
-                    var bestSolution = proposals.First();
+                    var bestSolution = validProposals.First();
                     results[group.GroupName] = bestSolution;
 
                     // Update NeighborDesigns for next beams to reference
@@ -66,18 +71,24 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                         StirrupDiameter = 10  // TODO: Get from StirrupCalculator when implemented
                     };
 
-
-
                     // If no preferred diameter set yet, use this beam's backbone as preferred
                     if (!globalConstraints.PreferredMainDiameter.HasValue)
                     {
                         globalConstraints.PreferredMainDiameter = bestSolution.BackboneDiameter;
-
                     }
                 }
                 else
                 {
-
+                    // ALL SOLUTIONS INVALID - Create explicit failure entry
+                    // This prevents silent failures where user gets a broken design
+                    var firstFailed = proposals.FirstOrDefault();
+                    results[group.GroupName] = new ContinuousBeamSolution
+                    {
+                        OptionName = "FAILED",
+                        IsValid = false,
+                        ValidationMessage = firstFailed?.ValidationMessage ??
+                            string.Format("CRITICAL: Không tìm được phương án hợp lệ cho dầm {0}", group.GroupName)
+                    };
                 }
             }
 

@@ -9,8 +9,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
 {
     /// <summary>
     /// Stage 2: Tính toán thép gia cường cho mỗi nhịp.
-    /// Sử dụng Greedy vs Balanced dual strategy.
-    /// Context vào → Context với CurrentSolution đã có Reinforcements.
+    /// V3.1: SUPPORT-CENTRIC DESIGN - Engineer Thinking
+    /// - Phase 1: Unified Support Design (Gối là thực thể duy nhất)
+    /// - Phase 2: Span Bridging (Gán thép gối cho cả 2 nhịp liền kề)
+    /// - Phase 3: Mid-span Design
     /// </summary>
     public class ReinforcementFiller : IRebarPipelineStage
     {
@@ -43,276 +45,284 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                     yield return ctx;
                     continue;
                 }
-
-                var result = SolveDeterministicScenario(ctx);
-                yield return result;
+                // Use the new Engineer-Thinking logic
+                yield return SolveScenarioEngineered(ctx);
             }
         }
 
         /// <summary>
-        /// Solve a specific backbone scenario deterministically.
-        /// Visits every span and calculates local reinforcement.
+        /// NEW LOGIC: Support-Centric Design instead of Span-Centric.
+        /// Kỹ sư nhìn vào Biểu đồ bao vật liệu (Envelope) của toàn dầm.
         /// </summary>
-        private SolutionContext SolveDeterministicScenario(SolutionContext ctx)
+        private SolutionContext SolveScenarioEngineered(SolutionContext ctx)
         {
             var group = ctx.Group;
             var results = ctx.SpanResults;
             var settings = ctx.Settings;
 
-            int topDia = ctx.TopBackboneDiameter;
-            int botDia = ctx.BotBackboneDiameter;
-            int nTop = ctx.TopBackboneCount;
-            int nBot = ctx.BotBackboneCount;
+            // Get Safety Factor from settings (default 1.0, user can increase to 1.05)
+            double safetyFactor = settings?.Rules?.SafetyFactor ?? 1.0;
 
-            // Initialize solution
+            // 1. Setup Backbone (Base Solution)
             var sol = new ContinuousBeamSolution
             {
                 OptionName = ctx.ScenarioId,
-                BackboneDiameter = topDia,
-                BackboneCount_Top = nTop,
-                BackboneCount_Bot = nBot,
-                As_Backbone_Top = nTop * GetBarArea(topDia),
-                As_Backbone_Bot = nBot * GetBarArea(botDia),
+                BackboneDiameter = ctx.TopBackboneDiameter,
+                BackboneCount_Top = ctx.TopBackboneCount,
+                BackboneCount_Bot = ctx.BotBackboneCount,
                 IsValid = true,
                 Reinforcements = new Dictionary<string, RebarSpec>()
             };
 
+            // Calculate Backbone Area
+            double backboneAreaTop = ctx.TopBackboneCount * GetBarArea(ctx.TopBackboneDiameter);
+            double backboneAreaBot = ctx.BotBackboneCount * GetBarArea(ctx.BotBackboneDiameter);
+            sol.As_Backbone_Top = backboneAreaTop;
+            sol.As_Backbone_Bot = backboneAreaBot;
+
             ctx.CurrentSolution = sol;
+            ctx.StirrupLegCount = GetStirrupLegCount(ctx.BeamWidth, settings);
 
             int numSpans = Math.Min(group.Spans?.Count ?? 0, results?.Count ?? 0);
-            int legCount = GetStirrupLegCount(ctx.BeamWidth, settings);
-            ctx.StirrupLegCount = legCount;
+            if (numSpans == 0) return ctx;
 
-            // ═══════════════════════════════════════════════════════════════
-            // ITERATE EACH SPAN - JOINT-AWARE FILLING
-            // HOTFIX: Sử dụng MAX envelope tại cột để thép gối liên tục
-            // ═══════════════════════════════════════════════════════════════
+            // ==================================================================================
+            // PHASE 1: UNIFY SUPPORTS (Đồng bộ hóa Gối)
+            // Support i is between Span i-1 and Span i.
+            // Tại một cột (Gối), thép lớp trên là sự liên tục từ nhịp trái sang nhịp phải.
+            // ==================================================================================
+
+            // Dictionary to store designed reinforcement at each support index
+            var supportDesignsTop = new Dictionary<int, RebarSpec>();
+            var supportDesignsBot = new Dictionary<int, RebarSpec>();
+
+            for (int i = 0; i <= numSpans; i++)
+            {
+                // === TOP REINFORCEMENT AT SUPPORT ===
+                double reqTopLeft = 0;  // From span i-1 (Right end)
+                double reqTopRight = 0; // From span i (Left end)
+
+                if (i > 0 && results[i - 1] != null)
+                    reqTopLeft = GetReqArea(results[i - 1], true, 2, settings);
+
+                if (i < numSpans && results[i] != null)
+                    reqTopRight = GetReqArea(results[i], true, 0, settings);
+
+                // The Envelope Requirement at this Support (apply safety factor)
+                double maxReqTop = Math.Max(reqTopLeft, reqTopRight) * safetyFactor;
+
+                // Design the TOP reinforcement for this specific support
+                var topSpec = DesignLocation(
+                    ctx, maxReqTop, ctx.TopBackboneDiameter, ctx.TopBackboneCount,
+                    backboneAreaTop, safetyFactor, true
+                );
+
+                if (topSpec == null)
+                {
+                    ctx.IsValid = false;
+                    ctx.FailStage = StageName;
+                    sol.IsValid = false;
+                    sol.ValidationMessage = string.Format(
+                        "CRITICAL: Không đủ chỗ bố trí thép Top tại Gối {0} (Req: {1:F1} cm²)",
+                        i, maxReqTop);
+                    return ctx;
+                }
+                supportDesignsTop[i] = topSpec;
+
+                // === BOTTOM REINFORCEMENT AT SUPPORT (if needed) ===
+                double reqBotLeft = 0;
+                double reqBotRight = 0;
+
+                if (i > 0 && results[i - 1] != null)
+                    reqBotLeft = GetReqArea(results[i - 1], false, 2, settings);
+
+                if (i < numSpans && results[i] != null)
+                    reqBotRight = GetReqArea(results[i], false, 0, settings);
+
+                double maxReqBot = Math.Max(reqBotLeft, reqBotRight) * safetyFactor;
+
+                // Only design if required > backbone (thường thép dưới gối không cần gia cường)
+                if (maxReqBot > backboneAreaBot)
+                {
+                    var botSpec = DesignLocation(
+                        ctx, maxReqBot, ctx.BotBackboneDiameter, ctx.BotBackboneCount,
+                        backboneAreaBot, safetyFactor, false
+                    );
+
+                    if (botSpec == null)
+                    {
+                        ctx.IsValid = false;
+                        ctx.FailStage = StageName;
+                        sol.IsValid = false;
+                        sol.ValidationMessage = string.Format(
+                            "CRITICAL: Không đủ chỗ bố trí thép Bot tại Gối {0}", i);
+                        return ctx;
+                    }
+                    supportDesignsBot[i] = botSpec;
+                }
+            }
+
+            // ==================================================================================
+            // PHASE 2: FILL SPANS & BRIDGE SUPPORTS (Điền vào nhịp & Gán thép gối)
+            // Đảm bảo 100% đồng bộ: cả 2 nhịp liền kề dùng chung 1 RebarSpec tại gối
+            // ==================================================================================
 
             for (int i = 0; i < numSpans; i++)
             {
                 var span = group.Spans[i];
                 var res = results[i];
-                if (res == null) continue;
 
-                // ═══════════════════════════════════════════════════════════
-                // A. TOP REINFORCEMENT - GỐI TRÁI (LEFT SUPPORT)
-                // Logic: Tại cột, lấy MAX(Gối phải nhịp trước, Gối trái nhịp này)
-                // ═══════════════════════════════════════════════════════════
-                double reqTopL = GetReqArea(res, true, 0, settings);
-                if (i > 0)
-                {
-                    // Envelope với gối phải nhịp trước (chung cột)
-                    var prevRes = results[i - 1];
-                    if (prevRes != null)
-                    {
-                        double reqPrevRight = GetReqArea(prevRes, true, 2, settings);
-                        reqTopL = Math.Max(reqTopL, reqPrevRight);
-                    }
-                }
+                // A. ASSIGN SUPPORT REINFORCEMENT (TOP)
+                // Left Support of this span = Support i
+                if (supportDesignsTop.ContainsKey(i))
+                    AssignSpecToSolution(sol, supportDesignsTop[i], string.Format("{0}_Top_Left", span.SpanId));
 
-                if (!TryAutoFill(ctx, sol, reqTopL, topDia, nTop, legCount, string.Format("{0}_Top_Left", span.SpanId)))
+                // Right Support of this span = Support i+1
+                if (supportDesignsTop.ContainsKey(i + 1))
+                    AssignSpecToSolution(sol, supportDesignsTop[i + 1], string.Format("{0}_Top_Right", span.SpanId));
+
+                // B. ASSIGN SUPPORT REINFORCEMENT (BOT - if exists)
+                if (supportDesignsBot.ContainsKey(i))
+                    AssignSpecToSolution(sol, supportDesignsBot[i], string.Format("{0}_Bot_Left", span.SpanId));
+
+                if (supportDesignsBot.ContainsKey(i + 1))
+                    AssignSpecToSolution(sol, supportDesignsBot[i + 1], string.Format("{0}_Bot_Right", span.SpanId));
+
+                // C. DESIGN MID-SPAN (BOTTOM - Primary)
+                double reqBotMid = GetReqArea(res, false, 1, settings) * safetyFactor;
+                var midBotSpec = DesignLocation(
+                    ctx, reqBotMid, ctx.BotBackboneDiameter, ctx.BotBackboneCount,
+                    backboneAreaBot, safetyFactor, false
+                );
+
+                if (midBotSpec == null)
                 {
                     ctx.IsValid = false;
                     ctx.FailStage = StageName;
                     sol.IsValid = false;
-                    sol.ValidationMessage = string.Format("Không đủ chỗ bố trí thép tại {0} Top Left (Req={1:F2} cm²)", span.SpanId, reqTopL);
+                    sol.ValidationMessage = string.Format(
+                        "CRITICAL: Không đủ chỗ bố trí thép Bot Mid tại {0} (Req: {1:F1} cm²)",
+                        span.SpanId, reqBotMid);
                     return ctx;
                 }
+                AssignSpecToSolution(sol, midBotSpec, string.Format("{0}_Bot_Mid", span.SpanId));
 
-                // ═══════════════════════════════════════════════════════════
-                // B. TOP REINFORCEMENT - GỐI PHẢI (RIGHT SUPPORT)
-                // Tương tự, envelope với gối trái nhịp sau (nếu có)
-                // ═══════════════════════════════════════════════════════════
-                double reqTopR = GetReqArea(res, true, 2, settings);
-                if (i < numSpans - 1)
+                // D. DESIGN MID-SPAN (TOP - if needed for compression/hanging)
+                double reqTopMid = GetReqArea(res, true, 1, settings) * safetyFactor;
+                if (reqTopMid > backboneAreaTop)
                 {
-                    var nextRes = results[i + 1];
-                    if (nextRes != null)
-                    {
-                        double reqNextLeft = GetReqArea(nextRes, true, 0, settings);
-                        reqTopR = Math.Max(reqTopR, reqNextLeft);
-                    }
-                }
-
-                if (!TryAutoFill(ctx, sol, reqTopR, topDia, nTop, legCount, string.Format("{0}_Top_Right", span.SpanId)))
-                {
-                    ctx.IsValid = false;
-                    ctx.FailStage = StageName;
-                    sol.IsValid = false;
-                    sol.ValidationMessage = string.Format("Không đủ chỗ bố trí thép tại {0} Top Right", span.SpanId);
-                    return ctx;
-                }
-
-                // ═══════════════════════════════════════════════════════════
-                // C. TOP REINFORCEMENT - GIỮA NHỊP (nếu cần)
-                // ═══════════════════════════════════════════════════════════
-                double reqTopM = GetReqArea(res, true, 1, settings);
-                if (reqTopM > sol.As_Backbone_Top * 1.05)
-                {
-                    if (!TryAutoFill(ctx, sol, reqTopM, topDia, nTop, legCount, string.Format("{0}_Top_Mid", span.SpanId)))
-                    {
-                        ctx.IsValid = false;
-                        ctx.FailStage = StageName;
-                        sol.IsValid = false;
-                        sol.ValidationMessage = string.Format("Không đủ chỗ bố trí thép tại {0} Top Mid", span.SpanId);
-                        return ctx;
-                    }
-                }
-
-                // ═══════════════════════════════════════════════════════════
-                // D. BOTTOM REINFORCEMENT - GIỮA NHỊP (chính yếu)
-                // ═══════════════════════════════════════════════════════════
-                double reqBotM = GetReqArea(res, false, 1, settings);
-                if (!TryAutoFill(ctx, sol, reqBotM, botDia, nBot, legCount, string.Format("{0}_Bot_Mid", span.SpanId)))
-                {
-                    ctx.IsValid = false;
-                    ctx.FailStage = StageName;
-                    sol.IsValid = false;
-                    sol.ValidationMessage = string.Format("Không đủ chỗ bố trí thép tại {0} Bot Mid (Req={1:F2} cm²)", span.SpanId, reqBotM);
-                    return ctx;
-                }
-
-                // ═══════════════════════════════════════════════════════════
-                // E. BOTTOM REINFORCEMENT - GỐI (nếu cần, với envelope)
-                // ═══════════════════════════════════════════════════════════
-                double reqBotL = GetReqArea(res, false, 0, settings);
-                if (i > 0)
-                {
-                    var prevRes = results[i - 1];
-                    if (prevRes != null)
-                    {
-                        double reqPrevRight = GetReqArea(prevRes, false, 2, settings);
-                        reqBotL = Math.Max(reqBotL, reqPrevRight);
-                    }
-                }
-                if (reqBotL > sol.As_Backbone_Bot * 1.05)
-                {
-                    if (!TryAutoFill(ctx, sol, reqBotL, botDia, nBot, legCount, string.Format("{0}_Bot_Left", span.SpanId)))
-                    {
-                        ctx.IsValid = false;
-                        ctx.FailStage = StageName;
-                        sol.IsValid = false;
-                        return ctx;
-                    }
-                }
-
-                double reqBotR = GetReqArea(res, false, 2, settings);
-                if (i < numSpans - 1)
-                {
-                    var nextRes = results[i + 1];
-                    if (nextRes != null)
-                    {
-                        double reqNextLeft = GetReqArea(nextRes, false, 0, settings);
-                        reqBotR = Math.Max(reqBotR, reqNextLeft);
-                    }
-                }
-                if (reqBotR > sol.As_Backbone_Bot * 1.05)
-                {
-                    if (!TryAutoFill(ctx, sol, reqBotR, botDia, nBot, legCount, string.Format("{0}_Bot_Right", span.SpanId)))
-                    {
-                        ctx.IsValid = false;
-                        ctx.FailStage = StageName;
-                        sol.IsValid = false;
-                        return ctx;
-                    }
+                    var midTopSpec = DesignLocation(
+                        ctx, reqTopMid, ctx.TopBackboneDiameter, ctx.TopBackboneCount,
+                        backboneAreaTop, safetyFactor, true
+                    );
+                    if (midTopSpec != null)
+                        AssignSpecToSolution(sol, midTopSpec, string.Format("{0}_Top_Mid", span.SpanId));
                 }
             }
 
-            // CALCULATE WEIGHT & METRICS
+            // ==================================================================================
+            // PHASE 3: METRICS CALCULATION
+            // ==================================================================================
             CalculateSolutionMetrics(sol, group, settings);
 
             return ctx;
         }
 
         /// <summary>
-        /// Try to auto-fill reinforcement using dual strategy.
+        /// Helper to design a single location (Support or Midspan)
+        /// trying both Greedy and Balanced, returning the best valid Spec.
+        /// Returns null if CANNOT fit (dầm quá hẹp).
         /// </summary>
-        private bool TryAutoFill(
+        private RebarSpec DesignLocation(
             SolutionContext ctx,
-            ContinuousBeamSolution sol,
-            double reqArea, int backboneDia, int backboneCount,
-            int legCount, string locationKey)
+            double reqArea,
+            int backboneDia,
+            int backboneCount,
+            double backboneArea,
+            double safetyFactor,
+            bool isTop)
         {
-            double backboneArea = backboneCount * GetBarArea(backboneDia);
+            // If backbone covers requirement
+            if (backboneArea >= reqArea)
+            {
+                return new RebarSpec { Count = 0, Diameter = backboneDia, Layer = 1 }; // No add bars
+            }
 
-            // Backbone đủ rồi
-            if (backboneArea >= reqArea * 0.99) return true;
+            // Prepare context for strategies
+            int capacity = GetMaxBarsPerLayer(ctx.BeamWidth, backboneDia, ctx.Settings);
+            if (backboneCount > capacity) return null; // Already exceeds capacity
 
-            int addDia = backboneDia;
-            double addBarArea = GetBarArea(addDia);
-            int totalBarsNeeded = (int)Math.Ceiling(reqArea / addBarArea);
-            int capacity = GetMaxBarsPerLayer(ctx.BeamWidth, addDia, ctx.Settings);
-
-            if (backboneCount > capacity) return false;
-
-            // Get MaxLayers from settings
-            int maxLayers = ctx.Settings?.Beam?.MaxLayers ?? 2;
-
-            // Create filling context
-            var fillContext = new FillingContext
+            var fillCtx = new FillingContext
             {
                 RequiredArea = reqArea,
                 BackboneArea = backboneArea,
                 BackboneCount = backboneCount,
                 BackboneDiameter = backboneDia,
                 LayerCapacity = capacity,
-                StirrupLegCount = legCount,
-                MaxLayers = maxLayers,
+                StirrupLegCount = ctx.StirrupLegCount,
+                MaxLayers = ctx.Settings?.Beam?.MaxLayers ?? 2,
                 Settings = ctx.Settings,
                 Constraints = ctx.ExternalConstraints
             };
 
-            // DUAL STRATEGY: GREEDY vs BALANCED
-            var planA = _greedyStrategy.Calculate(fillContext);
-            var planB = _balancedStrategy.Calculate(fillContext);
+            // Try Strategy 1: Greedy (ưu tiên ít lớp)
+            var resGreedy = _greedyStrategy.Calculate(fillCtx);
 
-            FillingResult bestPlan = null;
+            // Try Strategy 2: Balanced (ưu tiên đối xứng)
+            var resBalanced = _balancedStrategy.Calculate(fillCtx);
 
-            if (planA.IsValid && !planB.IsValid) bestPlan = planA;
-            else if (!planA.IsValid && planB.IsValid) bestPlan = planB;
-            else if (planA.IsValid && planB.IsValid)
+            FillingResult best = null;
+
+            // Decision Logic (Engineer Mindset):
+            // 1. Validity is King.
+            // 2. Prefer fewer layers (Greedy) unless congestion is high.
+            // 3. Prefer Balanced for symmetry if layers are equal.
+
+            if (resGreedy.IsValid && !resBalanced.IsValid) best = resGreedy;
+            else if (!resGreedy.IsValid && resBalanced.IsValid) best = resBalanced;
+            else if (resGreedy.IsValid && resBalanced.IsValid)
             {
-                // Prefer fewer bars, then fewer waste
-                if (planB.TotalBars < planA.TotalBars) bestPlan = planB;
-                else if (planB.TotalBars == planA.TotalBars && planB.WasteCount < planA.WasteCount) bestPlan = planB;
-                else bestPlan = planA;
-            }
-            else return false;
-
-            // ACCUMULATE WASTE COUNT for penalty scoring
-            ctx.AccumulatedWasteCount += bestPlan.WasteCount;
-
-            // ═══════════════════════════════════════════════════════════════
-            // DYNAMIC N-LAYER: Handle List<int> LayerCounts
-            // Layer 0 includes backbone, additional bars = LayerCounts[0] - backboneCount
-            // Layer 1+ are all additional
-            // ═══════════════════════════════════════════════════════════════
-            var layerCounts = bestPlan.LayerCounts;
-            if (layerCounts == null || layerCounts.Count == 0) return true; // No additional needed
-
-            int addL1 = Math.Max(0, layerCounts[0] - backboneCount);
-            int addOtherLayers = 0;
-            for (int i = 1; i < layerCounts.Count; i++)
-            {
-                addOtherLayers += layerCounts[i];
-            }
-
-            int totalAdd = addL1 + addOtherLayers;
-
-            if (totalAdd > 0)
-            {
-                sol.Reinforcements[locationKey] = new RebarSpec
+                // Compare logic
+                if (resGreedy.LayerCounts.Count < resBalanced.LayerCounts.Count)
+                    best = resGreedy;
+                else if (resBalanced.LayerCounts.Count < resGreedy.LayerCounts.Count)
+                    best = resBalanced;
+                else
                 {
-                    Diameter = addDia,
-                    Count = totalAdd,
-                    Layer = layerCounts.Count, // Number of layers used
-                    Position = locationKey.Contains("Top") ? "Top" : "Bot",
-                    // Store layer breakdown for viewer
-                    LayerBreakdown = layerCounts
-                };
+                    // Same layers, prefer fewer bars (less waste)
+                    best = (resGreedy.TotalBars <= resBalanced.TotalBars) ? resGreedy : resBalanced;
+                }
             }
 
-            return true;
+            if (best == null) return null; // FAILED - Cannot fit
+
+            // Accumulate waste for penalty scoring
+            ctx.AccumulatedWasteCount += best.WasteCount;
+
+            // Convert Result to Spec
+            // LayerCounts includes Backbone. Extract ONLY additional bars.
+            int totalBars = best.LayerCounts.Sum();
+            int addBars = totalBars - backboneCount;
+
+            if (addBars <= 0)
+                return new RebarSpec { Count = 0, Diameter = backboneDia, Layer = 1 };
+
+            return new RebarSpec
+            {
+                Diameter = backboneDia, // Keeping same diameter for standardization
+                Count = addBars,
+                Layer = best.LayerCounts.Count,
+                Position = isTop ? "Top" : "Bot",
+                LayerBreakdown = best.LayerCounts
+            };
+        }
+
+        private void AssignSpecToSolution(ContinuousBeamSolution sol, RebarSpec spec, string key)
+        {
+            if (spec != null && spec.Count > 0)
+            {
+                sol.Reinforcements[key] = spec;
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -332,24 +342,27 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             return val > 0 ? val : 0;
         }
 
+        /// <summary>
+        /// ENGINEER UPGRADE: Stricter capacity check based on real clear spacing.
+        /// Formula: n*d + (n-1)*s <= usable width
+        /// </summary>
         private static int GetMaxBarsPerLayer(double width, int dia, DtsSettings settings)
         {
-            double cover = settings.Beam?.CoverSide ?? 25;
-            double stirrup = settings.Beam?.EstimatedStirrupDiameter ?? 10;
-            double minSpacing = settings.Beam?.MinClearSpacing ?? 25;
+            double cover = settings?.Beam?.CoverSide ?? 25;
+            double stirrup = settings?.Beam?.EstimatedStirrupDiameter ?? 10;
+            double minSpacing = Math.Max(dia, settings?.Beam?.MinClearSpacing ?? 25);
 
             double usable = width - 2 * cover - 2 * stirrup;
-            double spacing = Math.Max(dia, minSpacing);
-
             if (usable <= 0) return 0;
 
-            int maxBars = (int)Math.Floor((usable + spacing) / (dia + spacing));
+            // n(d+s) - s <= usable => n <= (usable + s) / (d + s)
+            int maxBars = (int)Math.Floor((usable + minSpacing) / (dia + minSpacing));
             return Math.Max(0, maxBars);
         }
 
         private static int GetStirrupLegCount(double width, DtsSettings settings)
         {
-            string rules = settings.Beam?.AutoLegsRules ?? "250-2 400-4 600-6";
+            string rules = settings?.Beam?.AutoLegsRules ?? "250-2 400-4 600-6";
 
             try
             {
@@ -382,17 +395,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
 
         private static void CalculateSolutionMetrics(ContinuousBeamSolution sol, BeamGroup group, DtsSettings settings)
         {
-            // ═══════════════════════════════════════════════════════════════
-            // CRITICAL FIX: Correct weight calculation using d²/162 formula
-            // 
-            // OLD (WRONG): As(cm²) * 0.785 * L(m) → wrong units
-            // NEW (CORRECT): d²/162 * L(m) * N → kg
-            // ═══════════════════════════════════════════════════════════════
-
             double totalLengthMM = group.Spans?.Sum(s => s.Length) ?? 6000;
 
             // --- 1. BACKBONE WEIGHT ---
-            // Backbone runs full length of beam + 2% for lap splices
             double wBackboneTop = Utils.WeightCalculator.CalculateBackboneWeight(
                 sol.BackboneDiameter, totalLengthMM, sol.BackboneCount_Top, 1.02);
             double wBackboneBot = Utils.WeightCalculator.CalculateBackboneWeight(
@@ -400,7 +405,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             double wBackbone = wBackboneTop + wBackboneBot;
 
             // --- 2. REINFORCEMENT WEIGHT ---
-            // Get length ratios from settings (NO HARDCODING!)
             double supportRatio = settings?.Curtailment?.SupportReinfRatio ?? 0.33;
             double midSpanRatio = settings?.Curtailment?.MidSpanReinfRatio ?? 0.8;
 
@@ -410,16 +414,14 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                 var spec = kvp.Value;
                 if (spec.Count <= 0) continue;
 
-                // Find span to get length
                 var span = group.Spans?.FirstOrDefault(s => kvp.Key.StartsWith(s.SpanId));
                 double spanLenMM = span?.Length ?? 5000;
 
-                // Determine bar length based on position (from Settings)
                 double barLenMM;
                 if (kvp.Key.Contains("Left") || kvp.Key.Contains("Right"))
-                    barLenMM = spanLenMM * supportRatio; // From settings
+                    barLenMM = spanLenMM * supportRatio;
                 else
-                    barLenMM = spanLenMM * midSpanRatio; // From settings
+                    barLenMM = spanLenMM * midSpanRatio;
 
                 wReinf += Utils.WeightCalculator.CalculateWeight(spec.Diameter, barLenMM, spec.Count);
             }
@@ -427,16 +429,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             // --- 3. TOTAL WEIGHT ---
             sol.TotalSteelWeight = wBackbone + wReinf;
 
-            // --- VALIDATION: Sanity check ---
-            // Dầm 10m × 4 thanh D25 ≈ 150kg, không phải 0.1kg
-            if (totalLengthMM > 10000 && sol.TotalSteelWeight < 10)
-            {
-                // Something is wrong - flag for debugging
-                sol.ValidationMessage = $"WARNING: Weight too low! {sol.TotalSteelWeight:F1}kg for {totalLengthMM / 1000:F1}m beam";
-            }
-
             // --- 4. EFFICIENCY SCORE ---
-            // Higher weight = lower score (prefer lighter solutions)
             double effScore = 10000.0 / (sol.TotalSteelWeight + 1);
             if (sol.Reinforcements.Any(r => r.Value.Layer >= 2)) effScore *= 0.95;
             if (sol.BackboneCount_Top != sol.BackboneCount_Bot) effScore *= 0.98;

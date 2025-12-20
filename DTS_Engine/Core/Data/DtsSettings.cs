@@ -1185,5 +1185,12 @@ namespace DTS_Engine.Core.Data
         /// Mặc định: 100 (Critical)
         /// </summary>
         public double PyramidPenaltyScore { get; set; } = 100.0;
+
+        /// <summary>
+        /// Hệ số an toàn cho diện tích thép (Safety Factor)
+        /// Mặc định: 1.0 (đủ đúng As_prov >= As_req)
+        /// Khuyến nghị: 1.05 để đảm bảo an toàn hơn (+5%)
+        /// </summary>
+        public double SafetyFactor { get; set; } = 1.0;
     }
 }

@@ -978,8 +978,7 @@
             <!-- RULES & PENALTIES (NEW) -->
             <div class="section" style="background:#ffebee;border:1px solid #ef5350;">
                 <div class="section-header" style="background:#ef5350;color:white;">⚠️ Quy tắc & Điểm phạt (Rules &
-                    Penalties)
-                </div>
+                    Penalties)</div>
                 <div class="section-body">
                     <div class="row">
                         <div class="col">
@@ -994,6 +993,17 @@
                             <label>Pyramid Penalty (Critical)</label>
                             <input type="number" id="PyramidPenaltyScore" value="100">
                         </div>
+                    </div>
+                    <div class="row" style="margin-top:10px;">
+                        <div class="col">
+                            <label>Hệ số an toàn (Safety Factor)</label>
+                            <input type="number" id="SafetyFactor" step="0.01" min="1.0" max="1.2" value="1.0"
+                                placeholder="1.0 = đủ đúng, 1.05 = +5%">
+                        </div>
+                        <div class="col">
+                            <span class="hint">1.0 = As_prov ≥ As_req<br>1.05 = An toàn +5%</span>
+                        </div>
+                        <div class="col"></div>
                     </div>
                 </div>
             </div>
@@ -1952,6 +1962,7 @@
                     setId('WastePenaltyScore', data.Rules?.WastePenaltyScore ?? 20);
                     setId('AlignmentPenaltyScore', data.Rules?.AlignmentPenaltyScore ?? 25);
                     setId('PyramidPenaltyScore', data.Rules?.PyramidPenaltyScore ?? 100);
+                    setId('SafetyFactor', data.Rules?.SafetyFactor ?? 1.0);
 
                     // Curtailment Settings (NEW)
                     setId('TopSupportExtRatio', data.Curtailment?.TopSupportExtRatio ?? 0.25);
@@ -2273,7 +2284,8 @@
                     Rules: {
                         WastePenaltyScore: getVal('WastePenaltyScore') || 20,
                         AlignmentPenaltyScore: getVal('AlignmentPenaltyScore') || 25,
-                        PyramidPenaltyScore: getVal('PyramidPenaltyScore') || 100
+                        PyramidPenaltyScore: getVal('PyramidPenaltyScore') || 100,
+                        SafetyFactor: getVal('SafetyFactor') || 1.0
                     },
                     Detailing: {
                         MaxBarLength: getVal('MaxBarLength') || 11700,
