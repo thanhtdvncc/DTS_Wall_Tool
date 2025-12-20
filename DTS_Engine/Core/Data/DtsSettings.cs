@@ -604,6 +604,12 @@ namespace DTS_Engine.Core.Data
         /// Khoảng cách đai tối đa (mm)
         /// </summary>
         public int MaxStirrupSpacing { get; set; } = 200;
+
+        /// <summary>
+        /// Cấu hình quy tắc bố trí đai cho cột
+        /// Dựa trên bảng tra tiêu chuẩn theo số thanh thép và loại cột
+        /// </summary>
+        public ColumnStirrupConfig Stirrup { get; set; } = new ColumnStirrupConfig();
     }
 
     /// <summary>
@@ -1340,6 +1346,114 @@ namespace DTS_Engine.Core.Data
         /// Dùng để tính nhanh mà không cần parse string.
         /// </summary>
         public int TotalLegs { get; set; } = 2;
+    }
+
+    // =====================================================================
+    // COLUMN STIRRUP CONFIGURATION (V3.3) - Lookup Tables for Bar Count
+    // =====================================================================
+
+    /// <summary>
+    /// Cấu hình quy tắc bố trí đai cho cột dựa trên số thanh thép thực tế.
+    /// Có 2 bảng cho 2 loại cột: Rectangular (chữ nhật) và Circular (tròn).
+    /// </summary>
+    public class ColumnStirrupConfig
+    {
+        /// <summary>
+        /// Kích hoạt quy tắc bố trí đai nâng cao (tra bảng).
+        /// Nếu false, sử dụng logic đơn giản.
+        /// </summary>
+        public bool EnableAdvancedRules { get; set; } = true;
+
+        /// <summary>
+        /// Bảng 1: Cấu tạo đai cho cột hình CHỮ NHẬT.
+        /// </summary>
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
+        public List<StirrupRuleRow> RectangularRules { get; set; } = GenerateDefaultRectangularRules();
+
+        /// <summary>
+        /// Bảng 2: Cấu tạo đai cho cột hình TRÒN.
+        /// </summary>
+        [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
+        public List<StirrupRuleRow> CircularRules { get; set; } = GenerateDefaultCircularRules();
+
+        /// <summary>
+        /// Tra bảng để lấy số nhánh đai dựa trên số thanh và loại cột.
+        /// </summary>
+        public int GetLegCount(int barCount, bool isCircular)
+        {
+            if (!EnableAdvancedRules) return 2;
+
+            var table = isCircular ? CircularRules : RectangularRules;
+            var rule = table?.FirstOrDefault(r => r.BarCount == barCount);
+            return rule?.TotalLegs ?? 2;
+        }
+
+        /// <summary>
+        /// Tra bảng để lấy cấu tạo đai đầy đủ.
+        /// </summary>
+        public StirrupRuleRow GetRule(int barCount, bool isCircular)
+        {
+            if (!EnableAdvancedRules) return null;
+
+            var table = isCircular ? CircularRules : RectangularRules;
+            return table?.FirstOrDefault(r => r.BarCount == barCount);
+        }
+
+        // ===== SEED DATA: Cột CHỮ NHẬT =====
+        private static List<StirrupRuleRow> GenerateDefaultRectangularRules()
+        {
+            return new List<StirrupRuleRow>
+            {
+                new StirrupRuleRow { BarCount = 1, RectangularLinks = "", CrossTies = "1", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 2, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 3, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 4, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 5, RectangularLinks = "", CrossTies = "3", TotalLegs = 3 },
+                new StirrupRuleRow { BarCount = 6, RectangularLinks = "3-4", CrossTies = "", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 7, RectangularLinks = "3-5", CrossTies = "", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 8, RectangularLinks = "3-6", CrossTies = "", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 9, RectangularLinks = "3-7", CrossTies = "5", TotalLegs = 5 },
+                new StirrupRuleRow { BarCount = 10, RectangularLinks = "3-8; 5-6", CrossTies = "", TotalLegs = 6 },
+                new StirrupRuleRow { BarCount = 11, RectangularLinks = "3-5; 7-9", CrossTies = "", TotalLegs = 6 },
+                new StirrupRuleRow { BarCount = 12, RectangularLinks = "3-5; 8-10", CrossTies = "", TotalLegs = 6 },
+                new StirrupRuleRow { BarCount = 13, RectangularLinks = "3-5; 9-11", CrossTies = "7", TotalLegs = 7 },
+                new StirrupRuleRow { BarCount = 14, RectangularLinks = "3-5; 7-8; 10-12", CrossTies = "", TotalLegs = 8 },
+                new StirrupRuleRow { BarCount = 15, RectangularLinks = "3-5; 7-9; 11-13", CrossTies = "", TotalLegs = 8 },
+                new StirrupRuleRow { BarCount = 16, RectangularLinks = "3-5; 7-10; 12-14", CrossTies = "", TotalLegs = 8 },
+                new StirrupRuleRow { BarCount = 17, RectangularLinks = "3-5; 7-11; 13-15", CrossTies = "9", TotalLegs = 9 },
+                new StirrupRuleRow { BarCount = 18, RectangularLinks = "3-5; 7-12; 9-10; 14-16", CrossTies = "", TotalLegs = 10 },
+                new StirrupRuleRow { BarCount = 19, RectangularLinks = "3-5; 7-9; 11-13; 15-17", CrossTies = "", TotalLegs = 10 },
+                new StirrupRuleRow { BarCount = 20, RectangularLinks = "3-5; 7-9; 12-14; 16-18", CrossTies = "", TotalLegs = 10 }
+            };
+        }
+
+        // ===== SEED DATA: Cột TRÒN =====
+        private static List<StirrupRuleRow> GenerateDefaultCircularRules()
+        {
+            return new List<StirrupRuleRow>
+            {
+                new StirrupRuleRow { BarCount = 1, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 2, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 3, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 4, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 5, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 6, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 7, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 8, RectangularLinks = "", CrossTies = "2-6; 4-8", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 9, RectangularLinks = "", CrossTies = "2-7; 4-9", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 10, RectangularLinks = "", CrossTies = "2-7; 4-9", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 11, RectangularLinks = "", CrossTies = "2-8; 5-10", TotalLegs = 4 },
+                new StirrupRuleRow { BarCount = 12, RectangularLinks = "", CrossTies = "2-6; 8-12; 4-10", TotalLegs = 6 },
+                new StirrupRuleRow { BarCount = 13, RectangularLinks = "", CrossTies = "2-6; 8-12; 4-10", TotalLegs = 6 },
+                new StirrupRuleRow { BarCount = 14, RectangularLinks = "", CrossTies = "2-6; 9-13; 13-2; 6-9; 4-11", TotalLegs = 10 },
+                new StirrupRuleRow { BarCount = 15, RectangularLinks = "", CrossTies = "2-6; 9-13; 13-2; 6-9; 4-11", TotalLegs = 10 },
+                new StirrupRuleRow { BarCount = 16, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 17, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 18, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 19, RectangularLinks = "", CrossTies = "", TotalLegs = 2 },
+                new StirrupRuleRow { BarCount = 20, RectangularLinks = "", CrossTies = "2-10; 4-18; 6-16; 8-14; 12-20", TotalLegs = 10 }
+            };
+        }
     }
 }
 

@@ -598,6 +598,64 @@
                     </div>
                 </div>
             </div>
+
+            <!-- COLUMN STIRRUP RULES (V3.3) -->
+            <div class="section" style="background:#fff3e0;border:1px solid #ff9800;">
+                <div class="section-header" style="background:#ff9800;color:white;">🔩 Cấu tạo Đai Cột (Column Stirrup
+                    Rules)</div>
+                <div class="section-body">
+                    <div class="row" style="margin-bottom:10px;">
+                        <div class="col">
+                            <label style="display:flex;align-items:center;gap:8px;font-weight:bold;">
+                                <input type="checkbox" id="chkEnableColStirrupRules" checked>
+                                Kích hoạt quy tắc bố trí đai cột nâng cao (Tra bảng theo số thanh thép)
+                            </label>
+                            <div class="hint">Sẵn sàng cho tích hợp thiết kế cột. Nếu tắt, dùng logic đơn giản.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;">
+                <!-- Bảng 1: Cột CHỮ NHẬT -->
+                <div class="section">
+                    <div class="section-header">Bảng 1: Cột hình CHỮ NHẬT</div>
+                    <div class="section-body" style="max-height:350px;overflow-y:auto;">
+                        <table id="tblColStirrupRect" style="width:100%;border-collapse:collapse;font-size:11px;">
+                            <thead style="position:sticky;top:0;background:#f8f9fa;">
+                                <tr>
+                                    <th style="border:1px solid #ddd;padding:4px;width:40px;">SL</th>
+                                    <th style="border:1px solid #ddd;padding:4px;">Đai □ (Links)</th>
+                                    <th style="border:1px solid #ddd;padding:4px;">Đai C (Ties)</th>
+                                    <th style="border:1px solid #ddd;padding:4px;width:50px;">Nhánh</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbodyColStirrupRect"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Bảng 2: Cột TRÒN -->
+                <div class="section">
+                    <div class="section-header">Bảng 2: Cột hình TRÒN</div>
+                    <div class="section-body" style="max-height:350px;overflow-y:auto;">
+                        <table id="tblColStirrupCirc" style="width:100%;border-collapse:collapse;font-size:11px;">
+                            <thead style="position:sticky;top:0;background:#f8f9fa;">
+                                <tr>
+                                    <th style="border:1px solid #ddd;padding:4px;width:40px;">SL</th>
+                                    <th style="border:1px solid #ddd;padding:4px;">Đai □ (Links)</th>
+                                    <th style="border:1px solid #ddd;padding:4px;">Đai C (Ties)</th>
+                                    <th style="border:1px solid #ddd;padding:4px;width:50px;">Nhánh</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbodyColStirrupCirc"></tbody>
+                        </table>
+                        <div class="hint" style="margin-top:8px;">
+                            Cột tròn: Đai C nối chéo giữa các thanh đối diện.
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- TAB 3: NAMING -->
@@ -2322,7 +2380,8 @@
                         Cover: getVal('ColCover'),
                         LapSpliceMultiplier: getVal('LapSpliceMultiplier'),
                         MinBarsPerSide: getVal('MinBarsPerSide'),
-                        MaxStirrupSpacing: getVal('MaxStirrupSpacing')
+                        MaxStirrupSpacing: getVal('MaxStirrupSpacing'),
+                        Stirrup: collectColStirrupData()
                     },
                     Naming: {
                         // Legacy prefix/suffix REMOVED - now use per-story config in StoryConfigs
@@ -2492,6 +2551,114 @@
                 ];
             }
 
+            // ============ COLUMN STIRRUP RULES FUNCTIONS (V3.3) ============
+            function renderColStirrupTables() {
+                const colStirrup = data.Column?.Stirrup || {};
+
+                // Set checkbox
+                const chk = document.getElementById('chkEnableColStirrupRules');
+                if (chk) chk.checked = colStirrup.EnableAdvancedRules !== false;
+
+                // Render Rectangular table
+                const tbodyRect = document.getElementById('tbodyColStirrupRect');
+                if (tbodyRect) {
+                    tbodyRect.innerHTML = '';
+                    const rules = colStirrup.RectangularRules || generateDefaultColRectRules();
+                    rules.forEach(r => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td style="border:1px solid #ddd;padding:4px;text-align:center;background:#f8f9fa;">${r.BarCount}</td>
+                            <td style="border:1px solid #ddd;padding:2px;"><input type="text" class="col-stirrup-links" value="${r.RectangularLinks || ''}" style="width:100%;border:none;font-size:11px;"></td>
+                            <td style="border:1px solid #ddd;padding:2px;"><input type="text" class="col-stirrup-ties" value="${r.CrossTies || ''}" style="width:100%;border:none;font-size:11px;"></td>
+                            <td style="border:1px solid #ddd;padding:2px;"><input type="number" class="col-stirrup-legs" value="${r.TotalLegs || 2}" style="width:100%;border:none;font-size:11px;text-align:center;"></td>
+                        `;
+                        tr.dataset.barCount = r.BarCount;
+                        tbodyRect.appendChild(tr);
+                    });
+                }
+
+                // Render Circular table
+                const tbodyCirc = document.getElementById('tbodyColStirrupCirc');
+                if (tbodyCirc) {
+                    tbodyCirc.innerHTML = '';
+                    const rules = colStirrup.CircularRules || generateDefaultColCircRules();
+                    rules.forEach(r => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td style="border:1px solid #ddd;padding:4px;text-align:center;background:#f8f9fa;">${r.BarCount}</td>
+                            <td style="border:1px solid #ddd;padding:2px;"><input type="text" class="col-stirrup-links" value="${r.RectangularLinks || ''}" style="width:100%;border:none;font-size:11px;"></td>
+                            <td style="border:1px solid #ddd;padding:2px;"><input type="text" class="col-stirrup-ties" value="${r.CrossTies || ''}" style="width:100%;border:none;font-size:11px;"></td>
+                            <td style="border:1px solid #ddd;padding:2px;"><input type="number" class="col-stirrup-legs" value="${r.TotalLegs || 2}" style="width:100%;border:none;font-size:11px;text-align:center;"></td>
+                        `;
+                        tr.dataset.barCount = r.BarCount;
+                        tbodyCirc.appendChild(tr);
+                    });
+                }
+            }
+
+            function collectColStirrupData() {
+                const chk = document.getElementById('chkEnableColStirrupRules');
+                const result = {
+                    EnableAdvancedRules: chk ? chk.checked : true,
+                    RectangularRules: [],
+                    CircularRules: []
+                };
+
+                // Collect Rectangular table
+                const rectRows = document.querySelectorAll('#tbodyColStirrupRect tr');
+                rectRows.forEach(tr => {
+                    result.RectangularRules.push({
+                        BarCount: parseInt(tr.dataset.barCount) || 0,
+                        RectangularLinks: tr.querySelector('.col-stirrup-links')?.value || '',
+                        CrossTies: tr.querySelector('.col-stirrup-ties')?.value || '',
+                        TotalLegs: parseInt(tr.querySelector('.col-stirrup-legs')?.value) || 2
+                    });
+                });
+
+                // Collect Circular table
+                const circRows = document.querySelectorAll('#tbodyColStirrupCirc tr');
+                circRows.forEach(tr => {
+                    result.CircularRules.push({
+                        BarCount: parseInt(tr.dataset.barCount) || 0,
+                        RectangularLinks: tr.querySelector('.col-stirrup-links')?.value || '',
+                        CrossTies: tr.querySelector('.col-stirrup-ties')?.value || '',
+                        TotalLegs: parseInt(tr.querySelector('.col-stirrup-legs')?.value) || 2
+                    });
+                });
+
+                return result;
+            }
+
+            function generateDefaultColRectRules() {
+                return [
+                    { BarCount: 1, RectangularLinks: '', CrossTies: '1', TotalLegs: 2 },
+                    { BarCount: 2, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 3, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 4, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 5, RectangularLinks: '', CrossTies: '3', TotalLegs: 3 },
+                    { BarCount: 6, RectangularLinks: '3-4', CrossTies: '', TotalLegs: 4 },
+                    { BarCount: 7, RectangularLinks: '3-5', CrossTies: '', TotalLegs: 4 },
+                    { BarCount: 8, RectangularLinks: '3-6', CrossTies: '', TotalLegs: 4 },
+                    { BarCount: 9, RectangularLinks: '3-7', CrossTies: '5', TotalLegs: 5 },
+                    { BarCount: 10, RectangularLinks: '3-8; 5-6', CrossTies: '', TotalLegs: 6 }
+                ];
+            }
+
+            function generateDefaultColCircRules() {
+                return [
+                    { BarCount: 1, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 2, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 3, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 4, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 5, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 6, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 7, RectangularLinks: '', CrossTies: '', TotalLegs: 2 },
+                    { BarCount: 8, RectangularLinks: '', CrossTies: '2-6; 4-8', TotalLegs: 4 },
+                    { BarCount: 9, RectangularLinks: '', CrossTies: '2-7; 4-9', TotalLegs: 4 },
+                    { BarCount: 10, RectangularLinks: '', CrossTies: '2-7; 4-9', TotalLegs: 4 }
+                ];
+            }
+
             function doCancel() {
                 window.chrome.webview.postMessage('CANCEL');
             }
@@ -2507,6 +2674,7 @@
             // Initialize form on load
             loadForm();
             renderStirrupTables();
+            renderColStirrupTables();
         </script>
 </body>
 
