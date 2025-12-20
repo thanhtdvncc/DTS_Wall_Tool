@@ -181,6 +181,31 @@ namespace DTS_Engine.Core.Algorithms
         }
 
         /// <summary>
+        /// UNIFIED ROUNDING for rebar area values across DTS_REBAR system.
+        /// Rule: &lt;1 → 4 decimal places, ≥1 → 2 decimal places
+        /// </summary>
+        public static string FormatRebarValue(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+                return "-";
+            if (value < 1)
+                return value.ToString("F4");
+            return value.ToString("F2");
+        }
+
+        /// <summary>
+        /// Round rebar area value for XData storage (same logic as FormatRebarValue but returns double).
+        /// </summary>
+        public static double RoundRebarValue(double value)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value) || value <= 0)
+                return 0;
+            if (value < 1)
+                return Math.Round(value, 4);
+            return Math.Round(value, 2);
+        }
+
+        /// <summary>
         /// [DEPRECATED] Tính số thanh tối đa trong 1 lớp (phiên bản cơ bản với spacing cố định)
         /// ⚠️ CẢNH BÁO: Phương thức này hardcode stirrupDia = 10. 
         /// Sử dụng GetMaxBarsPerLayer(beamWidth, barDiameter, DtsSettings) thay thế!
@@ -266,6 +291,7 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// Tính số nhánh đai tự động dựa trên bề rộng dầm và quy tắc user định nghĩa.
         /// </summary>
+#pragma warning disable CS0618 // Intentional: backward compatibility with RebarSettings
         public static int GetAutoLegs(double beamWidthMm, RebarSettings settings)
         {
             if (!settings.AutoLegsFromWidth)
@@ -290,6 +316,7 @@ namespace DTS_Engine.Core.Algorithms
             // Nếu bề rộng lớn hơn tất cả, dùng số nhánh lớn nhất
             return rules.Last().Item2;
         }
+#pragma warning restore CS0618
 
         /// <summary>
         /// Tính toán bước đai từ diện tích cắt và xoắn yêu cầu.
@@ -298,6 +325,7 @@ namespace DTS_Engine.Core.Algorithms
         /// Output: String dạng "2-d8a150" (số nhánh - phi - bước)
         /// </summary>
         /// <param name="beamWidthMm">Bề rộng dầm (mm) để tính auto legs. Nếu 0 sẽ dùng StirrupLegs.</param>
+#pragma warning disable CS0618 // Intentional: backward compatibility with RebarSettings
         public static string CalculateStirrup(double shearArea, double ttArea, double beamWidthMm, RebarSettings settings)
         {
             // ACI/TCVN: Tổng diện tích đai trên đơn vị dài = Av/s + 2 * At/s
@@ -372,12 +400,14 @@ namespace DTS_Engine.Core.Algorithms
 
             return null; // Không tìm được bước phù hợp
         }
+#pragma warning restore CS0618
 
         /// <summary>
         /// Tính toán cốt giá/sườn (Web bars).
         /// Logic: Envelope(Torsion, Constructive) và làm chẵn.
         /// Sử dụng danh sách đường kính để tìm phương án tối ưu.
         /// </summary>
+#pragma warning disable CS0618 // Intentional: backward compatibility with RebarSettings
         public static string CalculateWebBars(double torsionTotal, double torsionRatioSide, double heightMm, RebarSettings settings)
         {
             // Lấy danh sách đường kính sườn (ưu tiên nhỏ trước)
@@ -421,6 +451,7 @@ namespace DTS_Engine.Core.Algorithms
             if (nMax == 0) return "-";
             return $"{nMax}d{dMax}";
         }
+#pragma warning restore CS0618
 
         // ====================================================================
         // DtsSettings OVERLOADS - Use these instead of RebarSettings versions

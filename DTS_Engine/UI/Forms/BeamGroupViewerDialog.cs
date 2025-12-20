@@ -202,7 +202,26 @@ namespace DTS_Engine.UI.Forms
                     string json = message.Substring(5);
                     var data = JsonConvert.DeserializeObject<DataWrapper>(json);
                     if (data?.groups != null)
+                    {
                         _groups = data.groups;
+
+                        // Persist to DWG (NOD) so next open is consistent
+                        var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                        if (doc != null)
+                        {
+                            using (doc.LockDocument())
+                            using (var tr = doc.Database.TransactionManager.StartTransaction())
+                            {
+                                string nodJson = JsonConvert.SerializeObject(_groups);
+                                XDataUtils.SaveBeamGroupsToNOD(doc.Database, tr, nodJson);
+                                tr.Commit();
+                            }
+
+                            // XDATA-FIRST: Sync rebar strings to beam XData entities
+                            Commands.RebarCommands.SyncGroupSpansToXData(_groups);
+                        }
+                    }
+
                     MessageBox.Show("Đã lưu dữ liệu!", "Save",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
@@ -223,6 +242,10 @@ namespace DTS_Engine.UI.Forms
                     if (data?.groups != null)
                     {
                         _groups = data.groups;
+
+                        // XDATA-FIRST: Sync rebar strings to beam XData entities
+                        Commands.RebarCommands.SyncGroupSpansToXData(_groups);
+
                         _onApply?.Invoke(_groups);
                     }
                     this.DialogResult = DialogResult.OK;
@@ -417,7 +440,7 @@ namespace DTS_Engine.UI.Forms
                     var obj = tr.GetObject(objId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
                     if (obj == null) continue;
 
-                    var data = XDataUtils.ReadElementData(obj) as BeamResultData;
+                    var data = XDataUtils.ReadRebarData(obj);
                     if (data != null)
                     {
                         results.Add(data);

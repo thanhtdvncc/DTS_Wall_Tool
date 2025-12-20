@@ -144,42 +144,51 @@ namespace DTS_Engine.Core.Data
         {
             var dict = new Dictionary<string, object>();
             WriteBaseProperties(dict);
-            // Raw Data - Round to 8 decimal places to prevent overly precise values
+
+            // Raw Data - Round to 6 decimal places to reduce XData size
             dict["TopArea"] = RoundArray(TopArea);
             dict["BotArea"] = RoundArray(BotArea);
             dict["TorsionArea"] = RoundArray(TorsionArea);
             dict["ShearArea"] = RoundArray(ShearArea);
             dict["TTArea"] = RoundArray(TTArea);
             dict["DesignCombo"] = DesignCombo;
-            // Section
-            dict["SectionName"] = SectionName;
-            dict["Width"] = Width;
-            dict["SectionHeight"] = SectionHeight;
-            dict["TorsionFactorUsed"] = Math.Round(TorsionFactorUsed, 8);
+
+            // Section (Map to Standard mm keys to avoid duplication)
+            dict["xSectionName"] = SectionName;
+            // Explicitly round single values too
+            dict["xWidth"] = Math.Round(Width * 10.0, 6);          // cm -> mm
+            dict["xDepth"] = Math.Round(SectionHeight * 10.0, 6);  // cm -> mm
+            dict["TorsionFactorUsed"] = Math.Round(TorsionFactorUsed, 6);
+
             // Longitudinal Solution
             dict["TopRebarString"] = TopRebarString;
             dict["BotRebarString"] = BotRebarString;
             dict["TopAreaProv"] = RoundArray(TopAreaProv);
             dict["BotAreaProv"] = RoundArray(BotAreaProv);
+
             // Stirrup & Web Solution
             dict["StirrupString"] = StirrupString;
             dict["WebBarString"] = WebBarString;
             dict["BeamName"] = BeamName;
+
             // SAP Mapping
             if (!string.IsNullOrEmpty(SapElementName)) dict["SapElementName"] = SapElementName;
             if (!string.IsNullOrEmpty(MappingSource)) dict["MappingSource"] = MappingSource;
+
             // Grouping Info
-            if (!string.IsNullOrEmpty(BeamType)) dict["BeamType"] = BeamType;
             if (!string.IsNullOrEmpty(BelongToGroup)) dict["BelongToGroup"] = BelongToGroup;
+            if (!string.IsNullOrEmpty(BeamType)) dict["xBeamType"] = BeamType; // Map to xBeamType standard
+
             // Support Info (for Girder detection)
             dict["SupportI"] = SupportI;
             dict["SupportJ"] = SupportJ;
             if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
+
             return dict;
         }
 
         /// <summary>
-        /// Round array values to 8 decimal places
+        /// Round array values to 6 decimal places
         /// </summary>
         private static double[] RoundArray(double[] arr)
         {
@@ -187,7 +196,7 @@ namespace DTS_Engine.Core.Data
             var result = new double[arr.Length];
             for (int i = 0; i < arr.Length; i++)
             {
-                result[i] = Math.Round(arr[i], 8);
+                result[i] = Math.Round(arr[i], 6);
             }
             return result;
         }
@@ -195,6 +204,7 @@ namespace DTS_Engine.Core.Data
         public override void FromDictionary(Dictionary<string, object> dict)
         {
             ReadBaseProperties(dict);
+
             // Raw
             if (dict.TryGetValue("TopArea", out var t)) TopArea = ConvertToDoubleArray(t);
             if (dict.TryGetValue("BotArea", out var b)) BotArea = ConvertToDoubleArray(b);
@@ -202,28 +212,42 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("ShearArea", out var shear)) ShearArea = ConvertToDoubleArray(shear);
             if (dict.TryGetValue("TTArea", out var tt)) TTArea = ConvertToDoubleArray(tt);
             if (dict.TryGetValue("DesignCombo", out var dc)) DesignCombo = dc?.ToString();
-            // Section
-            if (dict.TryGetValue("SectionName", out var sn)) SectionName = sn?.ToString();
-            if (dict.TryGetValue("Width", out var w)) Width = Convert.ToDouble(w);
-            if (dict.TryGetValue("SectionHeight", out var h)) SectionHeight = Convert.ToDouble(h);
+
+            // Section - Prioritize Standard xKeys (mm)
+            if (dict.TryGetValue("xSectionName", out var xsn)) SectionName = xsn?.ToString();
+            else if (dict.TryGetValue("SectionName", out var sn)) SectionName = sn?.ToString();
+
+            if (dict.TryGetValue("xWidth", out var xw)) Width = Convert.ToDouble(xw) / 10.0;
+            else if (dict.TryGetValue("Width", out var w)) Width = Convert.ToDouble(w);
+
+            if (dict.TryGetValue("xDepth", out var xd)) SectionHeight = Convert.ToDouble(xd) / 10.0;
+            else if (dict.TryGetValue("SectionHeight", out var sh)) SectionHeight = Convert.ToDouble(sh);
             else if (dict.TryGetValue("Height", out var h2)) SectionHeight = Convert.ToDouble(h2); // Backward compat
+
             if (dict.TryGetValue("TorsionFactorUsed", out var tf)) TorsionFactorUsed = Convert.ToDouble(tf);
+
             // Longitudinal
             if (dict.TryGetValue("TopRebarString", out var trs)) TopRebarString = ConvertToStringArray(trs);
             if (dict.TryGetValue("BotRebarString", out var brs)) BotRebarString = ConvertToStringArray(brs);
             if (dict.TryGetValue("TopAreaProv", out var tap)) TopAreaProv = ConvertToDoubleArray(tap);
             if (dict.TryGetValue("BotAreaProv", out var bap)) BotAreaProv = ConvertToDoubleArray(bap);
+
             // Stirrup & Web
             if (dict.TryGetValue("StirrupString", out var ss)) StirrupString = ConvertToStringArray(ss);
             if (dict.TryGetValue("WebBarString", out var ws)) WebBarString = ConvertToStringArray(ws);
             if (dict.TryGetValue("BeamName", out var bn)) BeamName = bn?.ToString();
-            // SAP Mapping
+
+            // Mapping
             if (dict.TryGetValue("SapElementName", out var sapN)) SapElementName = sapN?.ToString();
             if (dict.TryGetValue("MappingSource", out var mapS)) MappingSource = mapS?.ToString();
-            // Grouping Info
-            if (dict.TryGetValue("BeamType", out var bt)) BeamType = bt?.ToString();
+
+            // Grouping (Standard xBeamType)
+            if (dict.TryGetValue("xBeamType", out var xbt)) BeamType = xbt?.ToString();
+            else if (dict.TryGetValue("BeamType", out var bt)) BeamType = bt?.ToString();
+
             if (dict.TryGetValue("BelongToGroup", out var btg)) BelongToGroup = btg?.ToString();
-            // Support Info
+
+            // Support
             if (dict.TryGetValue("SupportI", out var si)) SupportI = Convert.ToInt32(si);
             else if (dict.TryGetValue("xSupport_I", out var xsi)) SupportI = Convert.ToInt32(xsi);
 
@@ -236,36 +260,55 @@ namespace DTS_Engine.Core.Data
 
         private double[] ConvertToDoubleArray(object obj)
         {
-            if (obj is object[] arr)
+            var result = new double[3];
+            if (obj == null) return result;
+
+            if (obj is double[] arr)
             {
-                double[] res = new double[arr.Length];
-                for (int i = 0; i < arr.Length; i++) res[i] = Convert.ToDouble(arr[i]);
-                return res;
+                for (int i = 0; i < 3 && i < arr.Length; i++) result[i] = arr[i];
+                return result;
             }
-            if (obj is System.Collections.ArrayList list)
+
+            // Robust IEnumerable handling (ArrayList, JArray, List<object>...)
+            if (obj is System.Collections.IEnumerable enumerable && !(obj is string))
             {
-                double[] res = new double[list.Count];
-                for (int i = 0; i < list.Count; i++) res[i] = Convert.ToDouble(list[i]);
-                return res;
+                int i = 0;
+                foreach (var item in enumerable)
+                {
+                    if (i >= 3) break;
+                    if (item != null)
+                    {
+                        try { result[i] = Convert.ToDouble(item); } catch { }
+                    }
+                    i++;
+                }
             }
-            return new double[3];
+            return result;
         }
 
         private string[] ConvertToStringArray(object obj)
         {
-            if (obj is object[] arr)
+            var result = new string[3];
+            if (obj == null) return result;
+
+            if (obj is string[] arr)
             {
-                string[] res = new string[arr.Length];
-                for (int i = 0; i < arr.Length; i++) res[i] = arr[i]?.ToString();
-                return res;
+                for (int i = 0; i < 3 && i < arr.Length; i++) result[i] = arr[i];
+                return result;
             }
-            if (obj is System.Collections.ArrayList list)
+
+            // Robust IEnumerable handling (ArrayList, JArray, List<object>...)
+            if (obj is System.Collections.IEnumerable enumerable && !(obj is string))
             {
-                string[] res = new string[list.Count];
-                for (int i = 0; i < list.Count; i++) res[i] = list[i]?.ToString();
-                return res;
+                int i = 0;
+                foreach (var item in enumerable)
+                {
+                    if (i >= 3) break;
+                    if (item != null) result[i] = item.ToString();
+                    i++;
+                }
             }
-            return new string[3];
+            return result;
         }
     }
 

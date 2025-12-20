@@ -104,18 +104,19 @@ namespace DTS_Engine.Commands
                         mappingSource = "XData";
                         // WriteMessage($" -> Match via SapFrameName: {sapName}");
                     }
-                    // === PRIORITY 2: BeamResultData already has SapElementName from previous run ===
-                    else if (existingData is BeamResultData rebarData && !string.IsNullOrEmpty(rebarData.SapElementName))
-                    {
-                        sapName = rebarData.SapElementName;
-                        mappingSource = "XData";
-                        // WriteMessage($" -> Match via BeamResultData.SapElementName: {sapName}");
-                    }
-                    // === NO MATCH (missing XData or not plotted from SAP) ===
+                    // === PRIORITY 2: Raw XData key SapElementName (independent of xType) ===
                     else
                     {
-                        // Highlight this object as unmapped
-                        WriteMessage($" -> Không tìm thấy SapFrameName trong XData. Cần chạy lại DTS_PLOT_FROM_SAP.");
+                        var raw = XDataUtils.GetRawData(obj);
+                        if (raw != null && raw.TryGetValue("SapElementName", out var sapObj))
+                        {
+                            var sapFromRaw = sapObj?.ToString();
+                            if (!string.IsNullOrEmpty(sapFromRaw))
+                            {
+                                sapName = sapFromRaw;
+                                mappingSource = "XData";
+                            }
+                        }
                     }
 
                     if (!string.IsNullOrEmpty(sapName))
@@ -217,40 +218,22 @@ namespace DTS_Engine.Commands
                                 }
                                 // === END Sync Highlight ===
 
-                                // === PRESERVE EXISTING BEAM DATA ===
-                                // Read existing BeamData (from DTS_PLOT_FROM_SAP) to preserve SupportI/J and AxisName
-                                var existingBeamData = XDataUtils.ReadElementData(obj) as BeamData;
-                                if (existingBeamData != null)
-                                {
-                                    // Carry over support info to prevent overwrite
-                                    designData.SupportI = existingBeamData.SupportI;
-                                    designData.SupportJ = existingBeamData.SupportJ;
-                                    designData.AxisName = existingBeamData.AxisName;
-                                }
-                                // === END PRESERVE ===
-
-                                // === CUSTOM MERGE: Preserve xType from DTS_PLOT_FROM_SAP ===
-                                // Read existing raw data
-                                var existingDict = XDataUtils.GetRawData(obj) ?? new Dictionary<string, object>();
-
-                                // Get new REBAR_DATA fields
-                                designData.UpdateTimestamp();
-                                var newDict = designData.ToDictionary();
-
-                                // Merge: Add new fields but DON'T overwrite xType and xDataVersion
-                                foreach (var entry in newDict)
-                                {
-                                    // Skip xType to preserve original "BEAM" type
-                                    if (entry.Key == "xType") continue;
-                                    // Skip xDataVersion to keep original version
-                                    if (entry.Key == "xDataVersion") continue;
-
-                                    existingDict[entry.Key] = entry.Value;
-                                }
-
-                                // Write merged data
-                                XDataUtils.SetRawData(obj, existingDict, tr);
-                                // === END CUSTOM MERGE ===
+                                // XData-first: update REQUIRED data only (do NOT overwrite provided layout/solution)
+                                XDataUtils.UpdateBeamRequiredXData(
+                                    obj,
+                                    tr,
+                                    topArea: designData.TopArea,
+                                    botArea: designData.BotArea,
+                                    torsionArea: designData.TorsionArea,
+                                    shearArea: designData.ShearArea,
+                                    ttArea: designData.TTArea,
+                                    designCombo: designData.DesignCombo,
+                                    sectionName: designData.SectionName,
+                                    width: designData.Width,
+                                    sectionHeight: designData.SectionHeight,
+                                    torsionFactorUsed: designData.TorsionFactorUsed,
+                                    sapElementName: designData.SapElementName,
+                                    mappingSource: designData.MappingSource);
                             }
                             catch (System.Exception ex2)
                             {
@@ -391,7 +374,7 @@ namespace DTS_Engine.Commands
                 {
                     if (id.IsErased) continue;
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent != null && ent.Layer == "dts_rebar_text")
+                    if (ent != null && ent.Layer == "dts_labels")
                     {
                         bool shouldDelete = false;
 
@@ -421,25 +404,12 @@ namespace DTS_Engine.Commands
         }
 
         /// <summary>
-        /// Format thông minh: F3 cho số nhỏ (shear cm2/cm như 0.067), F1 ceiling cho số lớn (area cm2)
+        /// UNIFIED ROUNDING: &lt;1 → 4 decimals, ≥1 → 2 decimals
+        /// Used across DTS_REBAR for consistent display
         /// </summary>
         private string FormatValue(double val)
         {
-            if (Math.Abs(val) < 0.0001) return "0";
-
-            if (Math.Abs(val) < 1.0)
-            {
-                // Hiển thị dạng 0.067 (cho Shear Area/cm, TTArea)
-                return val.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
-            }
-            else
-            {
-                // Hiển thị dạng 2.1, 15 (cho Longitudinal Area)
-                double ceiling = Math.Ceiling(val * 10) / 10.0;
-                return (ceiling % 1 == 0)
-                    ? ceiling.ToString("F0", System.Globalization.CultureInfo.InvariantCulture)
-                    : ceiling.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
-            }
+            return Core.Algorithms.RebarCalculator.FormatRebarValue(val);
         }
 
         [CommandMethod("DTS_REBAR_CALCULATE_SETTING")]
@@ -560,7 +530,16 @@ namespace DTS_Engine.Commands
                             data.WebBarString[i] = sWeb;
                         }
 
-                        XDataUtils.UpdateElementData(obj, data, tr);
+                        // XData-first: only update solution keys; do NOT overwrite xType/other schemas
+                        XDataUtils.UpdateBeamSolutionXData(
+                            obj,
+                            tr,
+                            data.TopRebarString,
+                            data.BotRebarString,
+                            data.StirrupString,
+                            data.WebBarString,
+                            data.BelongToGroup,
+                            data.BeamType);
                         singleCount++;
                     }
                 });
@@ -1019,8 +998,10 @@ namespace DTS_Engine.Commands
                                 if (item.Data != null)
                                 {
                                     // Set BeamName (display name) - NOT SapElementName (SAP frame ID)
-                                    item.Data.BeamName = fullName;
-                                    XDataUtils.UpdateElementData(curve, item.Data, tr);
+                                    XDataUtils.MergeRawData(curve, tr, new Dictionary<string, object>
+                                    {
+                                        ["BeamName"] = fullName
+                                    });
                                 }
                                 LabelPlotter.PlotLabel(btr, tr, curve.StartPoint, curve.EndPoint, fullName, LabelPosition.MiddleBottom);
                             }
@@ -1385,11 +1366,14 @@ namespace DTS_Engine.Commands
             var selectedHandles = selectedIds.Select(id => id.Handle.ToString()).ToList();
             ClearRebarLabels(selectedHandles);
 
-            int count = 0;
+            // int count = 0; // Previously for counting plotted labels - not currently used
             var dtsSettings = DtsSettings.Instance;
 
             UsingTransaction(tr =>
             {
+                // Ensure the layer exists before creating labels
+                AcadUtils.EnsureLayerExists("dts_labels", tr);
+
                 var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
 
                 foreach (ObjectId id in selectedIds)
@@ -1451,32 +1435,71 @@ namespace DTS_Engine.Commands
                                     topText = $"{FormatValue(stirrupProv)}/{FormatValue(stirrupReq)}({FormatValue(2 * ats)})\\P{stirrupStr}";
 
                                     // Bot: Web - Aprov/Areq (Areq = TorsionArea × SideRatio)
-                                    double webReq = (data.TorsionArea?[i] ?? 0) * (dtsSettings.Beam?.TorsionDist_SideBar ?? 0.50);
+                                    double torsionSide = dtsSettings.Beam?.TorsionDist_SideBar ?? 0.50;
+                                    double webReq = data.TorsionArea?[i] * torsionSide ?? 0;
                                     string webStr = data.WebBarString?[i] ?? "-";
-                                    // Parse Aprov từ web string (e.g., "2d12")
                                     double webProv = RebarCalculator.ParseRebarArea(webStr);
                                     botText = $"{FormatValue(webProv)}/{FormatValue(webReq)}\\P{webStr}";
                                 }
                                 break;
                         }
 
-                        string ownerH = obj.Handle.ToString();
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, topText, i, true, ownerH);
-                        LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, botText, i, false, ownerH);
-                    }
+                        // Plot labels
+                        Point3d labelPos1, labelPos2;
+                        if (i == 0)
+                        {
+                            labelPos1 = pStart;
+                            labelPos2 = pStart;
+                        }
+                        else if (i == 1)
+                        {
+                            labelPos1 = new Point3d((pStart.X + pEnd.X) / 2, (pStart.Y + pEnd.Y) / 2, 0);
+                            labelPos2 = labelPos1;
+                        }
+                        else
+                        {
+                            labelPos1 = pEnd;
+                            labelPos2 = pEnd;
+                        }
 
-                    count++;
+                        // Create MText for Top
+                        var mtextTop = new MText();
+                        mtextTop.Contents = topText;
+                        mtextTop.TextHeight = dtsSettings.General.TextHeight;
+                        mtextTop.Location = new Point3d(labelPos1.X, labelPos1.Y + 2.5, 0);
+                        mtextTop.Layer = "dts_labels";
+                        mtextTop.ColorIndex = 1; // Red
+
+                        var xDataTop = new Dictionary<string, object>();
+                        xDataTop["xOwnerHandle"] = id.Handle.ToString();
+                        xDataTop["xType"] = "RebarLabel";
+                        XDataUtils.SetRawData(mtextTop, xDataTop, tr);
+
+                        btr.AppendEntity(mtextTop);
+                        tr.AddNewlyCreatedDBObject(mtextTop, true);
+
+                        // Create MText for Bottom
+                        var mtextBot = new MText();
+                        mtextBot.Contents = botText;
+                        mtextBot.TextHeight = dtsSettings.General.TextHeight;
+                        mtextBot.Location = new Point3d(labelPos2.X, labelPos2.Y - 2.5, 0);
+                        mtextBot.Layer = "dts_labels";
+                        mtextBot.ColorIndex = 5; // Blue
+
+                        var xDataBot = new Dictionary<string, object>();
+                        xDataBot["xOwnerHandle"] = id.Handle.ToString();
+                        xDataBot["xType"] = "RebarLabel";
+                        XDataUtils.SetRawData(mtextBot, xDataBot, tr);
+
+                        btr.AppendEntity(mtextBot);
+                        tr.AddNewlyCreatedDBObject(mtextBot, true);
+                    }
                 }
             });
 
-            string[] modeNames = { "Thép dọc", "Đai/Sườn", "Dọc+Area", "Đai/Sườn+Area" };
-            WriteSuccess($"Đã hiển thị {count} dầm theo chế độ: {modeNames[mode]}.");
+            WriteSuccess($"Đã hiển thị thép cho {selectedIds.Count} dầm (Mode {mode}).");
         }
 
-        /// <summary>
-        /// Mở BeamGroupViewer để xem/chỉnh sửa nhóm dầm liên tục
-        /// [FIX] Yêu cầu user chọn dầm hoặc Enter để xem tất cả
-        /// </summary>
         [CommandMethod("DTS_REBAR_VIEWER")]
         public void DTS_BEAM_VIEWER()
         {
@@ -1560,28 +1583,80 @@ namespace DTS_Engine.Commands
                                     double height = beamData?.Height ?? 400; // mm (Depth alias)
                                     string sectionName = beamData?.SectionName ?? $"B{width}x{height}";
 
-                                    // === READ CALCULATED REBAR DATA FROM XDATA ===
-                                    var rebarInfo = XDataUtils.ReadRebarXData(ent);
+                                    // === READ DESIGN + SOLUTION DATA FROM XDATA (XData-first) ===
+                                    var designData = XDataUtils.ReadRebarData(ent);
+                                    var rebarInfo = XDataUtils.ReadRebarXData(ent); // legacy fallback
 
                                     // Parse rebar strings to populate SpanData arrays
                                     // Format: "3D18" or "2D16+2D18" at 6 positions (Left, L/4, Mid, R/4, Right, Reserve)
                                     var topRebar = new string[3, 6]; // 3 layers × 6 positions
                                     var botRebar = new string[3, 6];
                                     var stirrup = new string[3];     // 3 positions: Left, Mid, Right
+                                    var webBar = new string[3];
 
-                                    if (!string.IsNullOrEmpty(rebarInfo?.TopRebar))
+                                    var asTopReq6 = new double[6];
+                                    var asBotReq6 = new double[6];
+                                    var stirrupReq3 = new double[3];
+                                    var webReq3 = new double[3];
+
+                                    if (designData != null)
                                     {
-                                        // Apply same rebar to all positions for single beam (simplified)
+                                        double torsTop = DtsSettings.Instance.Beam?.TorsionDist_TopBar ?? 0.25;
+                                        double torsBot = DtsSettings.Instance.Beam?.TorsionDist_BotBar ?? 0.25;
+                                        double torsSide = DtsSettings.Instance.Beam?.TorsionDist_SideBar ?? 0.50;
+                                        for (int zi = 0; zi < 3; zi++)
+                                        {
+                                            double asTopReq = (designData.TopArea?[zi] ?? 0) + (designData.TorsionArea?[zi] ?? 0) * torsTop;
+                                            double asBotReq = (designData.BotArea?[zi] ?? 0) + (designData.TorsionArea?[zi] ?? 0) * torsBot;
+                                            int p0 = zi == 0 ? 0 : (zi == 1 ? 2 : 4);
+                                            int p1 = p0 + 1;
+                                            asTopReq6[p0] = asTopReq;
+                                            asTopReq6[p1] = asTopReq;
+                                            asBotReq6[p0] = asBotReq;
+                                            asBotReq6[p1] = asBotReq;
+
+                                            stirrupReq3[zi] = (designData.ShearArea?[zi] ?? 0);
+                                            webReq3[zi] = (designData.TorsionArea?[zi] ?? 0) * torsSide;
+                                        }
+                                    }
+
+                                    // Prefer BeamResultData 3-zone solution arrays (Start/Mid/End)
+                                    var topZones = (designData?.TopRebarString != null && designData.TopRebarString.Length >= 3)
+                                        ? designData.TopRebarString
+                                        : new string[3];
+                                    var botZones = (designData?.BotRebarString != null && designData.BotRebarString.Length >= 3)
+                                        ? designData.BotRebarString
+                                        : new string[3];
+                                    var stirZones = (designData?.StirrupString != null && designData.StirrupString.Length >= 3)
+                                        ? designData.StirrupString
+                                        : new string[3];
+                                    var webZones = (designData?.WebBarString != null && designData.WebBarString.Length >= 3)
+                                        ? designData.WebBarString
+                                        : new string[3];
+
+                                    // Map 3 zones -> 6 positions: (0,1)=Start, (2,3)=Mid, (4,5)=End
+                                    for (int zi = 0; zi < 3; zi++)
+                                    {
+                                        int p0 = zi == 0 ? 0 : (zi == 1 ? 2 : 4);
+                                        int p1 = p0 + 1;
+                                        if (!string.IsNullOrEmpty(topZones[zi])) { topRebar[0, p0] = topZones[zi]; topRebar[0, p1] = topZones[zi]; }
+                                        if (!string.IsNullOrEmpty(botZones[zi])) { botRebar[0, p0] = botZones[zi]; botRebar[0, p1] = botZones[zi]; }
+                                        stirrup[zi] = stirZones[zi] ?? "";
+                                        webBar[zi] = webZones[zi] ?? "";
+                                    }
+
+                                    // Legacy fallback: fill if XData zones are empty
+                                    if (topZones.All(string.IsNullOrEmpty) && !string.IsNullOrEmpty(rebarInfo?.TopRebar))
                                         for (int i = 0; i < 6; i++) topRebar[0, i] = rebarInfo.TopRebar;
-                                    }
-                                    if (!string.IsNullOrEmpty(rebarInfo?.BotRebar))
-                                    {
+
+                                    if (botZones.All(string.IsNullOrEmpty) && !string.IsNullOrEmpty(rebarInfo?.BotRebar))
                                         for (int i = 0; i < 6; i++) botRebar[0, i] = rebarInfo.BotRebar;
-                                    }
-                                    if (!string.IsNullOrEmpty(rebarInfo?.Stirrup))
-                                    {
+
+                                    if (stirZones.All(string.IsNullOrEmpty) && !string.IsNullOrEmpty(rebarInfo?.Stirrup))
                                         for (int i = 0; i < 3; i++) stirrup[i] = rebarInfo.Stirrup;
-                                    }
+
+                                    if (webZones.All(string.IsNullOrEmpty) && !string.IsNullOrEmpty(rebarInfo?.SideBar))
+                                        webBar[1] = rebarInfo.SideBar;
 
                                     // Create real single-span BeamGroup with calculated rebar
                                     var singleGroup = new BeamGroup
@@ -1607,7 +1682,12 @@ namespace DTS_Engine.Commands
                                                 TopRebar = topRebar,
                                                 BotRebar = botRebar,
                                                 Stirrup = stirrup,
+                                                WebBar = webBar,
                                                 SideBar = rebarInfo?.SideBar,
+                                                As_Top = asTopReq6,
+                                                As_Bot = asBotReq6,
+                                                StirrupReq = stirrupReq3,
+                                                WebReq = webReq3,
                                                 Segments = new List<PhysicalSegment>
                                                 {
                                                     new PhysicalSegment
@@ -1616,9 +1696,9 @@ namespace DTS_Engine.Commands
                                                         Length = length,
                                                         StartPoint = new double[] { start.X, start.Y },
                                                         EndPoint = new double[] { end.X, end.Y },
-                                                        TopRebar = rebarInfo?.TopRebar,
-                                                        BotRebar = rebarInfo?.BotRebar,
-                                                        Stirrup = rebarInfo?.Stirrup
+                                                        TopRebar = (topRebar[0,2] ?? rebarInfo?.TopRebar),
+                                                        BotRebar = (botRebar[0,2] ?? rebarInfo?.BotRebar),
+                                                        Stirrup = (stirrup.Length > 1 ? stirrup[1] : rebarInfo?.Stirrup)
                                                     }
                                                 }
                                             }
@@ -1641,6 +1721,9 @@ namespace DTS_Engine.Commands
 
                     WriteMessage($"Tổng cộng: {matchedGroups.Count} nhóm có sẵn + {ungroupedHandles.Count} dầm đơn = {resultGroups.Count} items.");
                 }
+
+                // === REFRESH XData before displaying (ensure As_Top/As_Bot are current) ===
+                RefreshGroupsFromXData(resultGroups);
 
                 // Show viewer dialog as MODELESS
                 var dialog = new UI.Forms.BeamGroupViewerDialog(resultGroups, ApplyBeamGroupResults);
@@ -2088,6 +2171,157 @@ namespace DTS_Engine.Commands
         }
 
         /// <summary>
+        /// CRITICAL FIX: Refresh As_Top/As_Bot/StirrupReq/WebReq from XData before viewer display.
+        /// This ensures data is current even if groups were created before SAP import.
+        /// </summary>
+        private void RefreshGroupsFromXData(List<BeamGroup> groups)
+        {
+            if (groups == null || groups.Count == 0) return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            var db = doc.Database;
+            var settings = DtsSettings.Instance;
+
+            UsingTransaction(tr =>
+            {
+                foreach (var group in groups)
+                {
+                    if (group.Spans == null) continue;
+
+                    foreach (var span in group.Spans)
+                    {
+                        // Get entity handle(s) for this span
+                        var handle = span.Segments?.FirstOrDefault()?.EntityHandle;
+                        if (string.IsNullOrWhiteSpace(handle)) continue;
+
+                        var objId = AcadUtils.GetObjectIdFromHandle(handle);
+                        if (objId == ObjectId.Null || objId.IsErased) continue;
+
+                        try
+                        {
+                            var obj = tr.GetObject(objId, OpenMode.ForRead);
+                            var designData = XDataUtils.ReadRebarData(obj);
+                            if (designData == null) continue;
+
+                            // Torsion distribution settings
+                            double torsTop = settings?.Beam?.TorsionDist_TopBar ?? 0.25;
+                            double torsBot = settings?.Beam?.TorsionDist_BotBar ?? 0.25;
+                            double torsSide = settings?.Beam?.TorsionDist_SideBar ?? 0.50;
+
+                            // Ensure arrays exist
+                            if (span.As_Top == null || span.As_Top.Length < 5) span.As_Top = new double[6];
+                            if (span.As_Bot == null || span.As_Bot.Length < 5) span.As_Bot = new double[6];
+                            if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
+                            if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+
+                            // Map 3 zones (Start/Mid/End) -> 6 positions (0,1)=Start, (2,3)=Mid, (4,5)=End
+                            for (int zi = 0; zi < 3; zi++)
+                            {
+                                double asTopReq = (designData.TopArea?[zi] ?? 0) + (designData.TorsionArea?[zi] ?? 0) * torsTop;
+                                double asBotReq = (designData.BotArea?[zi] ?? 0) + (designData.TorsionArea?[zi] ?? 0) * torsBot;
+                                int p0 = zi == 0 ? 0 : (zi == 1 ? 2 : 4);
+                                int p1 = p0 + 1;
+
+                                // Apply unified rounding
+                                asTopReq = Core.Algorithms.RebarCalculator.RoundRebarValue(asTopReq);
+                                asBotReq = Core.Algorithms.RebarCalculator.RoundRebarValue(asBotReq);
+
+                                span.As_Top[p0] = asTopReq;
+                                span.As_Top[p1] = asTopReq;
+                                span.As_Bot[p0] = asBotReq;
+                                span.As_Bot[p1] = asBotReq;
+
+                                span.StirrupReq[zi] = Core.Algorithms.RebarCalculator.RoundRebarValue(designData.ShearArea?[zi] ?? 0);
+                                span.WebReq[zi] = Core.Algorithms.RebarCalculator.RoundRebarValue((designData.TorsionArea?[zi] ?? 0) * torsSide);
+                            }
+                        }
+                        catch { /* Ignore individual beam failures */ }
+                    }
+                }
+            });
+        }
+
+        /// <summary>
+        /// XDATA-FIRST: Sync rebar solution strings từ SpanData back to XData của beam entities.
+        /// Gọi hàm này khi SAVE/APPLY trong Viewer để đảm bảo XData là Source of Truth.
+        /// </summary>
+        public static void SyncGroupSpansToXData(List<BeamGroup> groups)
+        {
+            if (groups == null || groups.Count == 0) return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    foreach (var group in groups)
+                    {
+                        if (group?.Spans == null) continue;
+
+                        foreach (var span in group.Spans)
+                        {
+                            if (span?.Segments == null) continue;
+
+                            // Get rebar strings from SpanData (3-zone: L, M, R -> indices 0, 2, 4)
+                            string[] topRebarZone = ExtractZoneStrings(span.TopRebar, 0);
+                            string[] botRebarZone = ExtractZoneStrings(span.BotRebar, 0);
+                            string[] stirrupZone = span.Stirrup ?? new string[3];
+                            string[] webBarZone = span.WebBar ?? new string[3];
+
+                            foreach (var seg in span.Segments)
+                            {
+                                if (string.IsNullOrWhiteSpace(seg?.EntityHandle)) continue;
+
+                                var objId = AcadUtils.GetObjectIdFromHandle(seg.EntityHandle);
+                                if (objId == ObjectId.Null || objId.IsErased) continue;
+
+                                var obj = tr.GetObject(objId, OpenMode.ForWrite);
+                                if (obj == null) continue;
+
+                                XDataUtils.UpdateBeamSolutionXData(
+                                    obj, tr,
+                                    topRebarZone,
+                                    botRebarZone,
+                                    stirrupZone,
+                                    webBarZone,
+                                    belongToGroup: group.GroupName,
+                                    beamType: group.GroupType);
+                            }
+                        }
+                    }
+                    tr.Commit();
+                }
+                catch (System.Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[SyncGroupSpansToXData] Error: {ex.Message}");
+                    tr.Abort();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Extract 3-zone strings from 2D TopRebar/BotRebar array [layer, position].
+        /// Returns [L, M, R] = positions [0, 2, 4] from layer 0.
+        /// </summary>
+        private static string[] ExtractZoneStrings(string[,] rebarArray, int layer = 0)
+        {
+            if (rebarArray == null || rebarArray.GetLength(0) <= layer || rebarArray.GetLength(1) < 5)
+                return new string[3];
+
+            return new[]
+            {
+                rebarArray[layer, 0] ?? "", // Left (position 0)
+                rebarArray[layer, 2] ?? "", // Mid (position 2)
+                rebarArray[layer, 4] ?? ""  // Right (position 4)
+            };
+        }
+
+        /// <summary>
         /// Sync dữ liệu từ XData (BeamResultData) sang BeamGroup.
         /// Tạo 3 BackboneOptions và populate SpanData.TopRebar/BotRebar/Stirrup.
         /// </summary>
@@ -2227,28 +2461,61 @@ namespace DTS_Engine.Commands
                         // Apply UNIFIED backbone to all positions
                         if (!hasUserData || span.TopRebar == null || string.IsNullOrEmpty(span.TopRebar[0, 0]))
                         {
-                            span.TopRebar[0, 0] = topBackbone;  // L1
-                            span.TopRebar[0, 2] = topBackbone;  // Mid
-                            span.TopRebar[0, 4] = topBackbone;  // L2
+                            // 6 positions: (0,1)=Start, (2,3)=Mid, (4,5)=End
+                            span.TopRebar[0, 0] = topBackbone;
+                            span.TopRebar[0, 1] = topBackbone;
+                            span.TopRebar[0, 2] = topBackbone;
+                            span.TopRebar[0, 3] = topBackbone;
+                            span.TopRebar[0, 4] = topBackbone;
+                            span.TopRebar[0, 5] = topBackbone;
 
                             span.BotRebar[0, 0] = botBackbone;
+                            span.BotRebar[0, 1] = botBackbone;
                             span.BotRebar[0, 2] = botBackbone;
+                            span.BotRebar[0, 3] = botBackbone;
                             span.BotRebar[0, 4] = botBackbone;
+                            span.BotRebar[0, 5] = botBackbone;
+                        }
 
-                            // Stirrup from XData (can vary per span)
-                            if (data != null)
+                        // ALWAYS sync REQUIRED values from XData (independent of user/provided layouts)
+                        if (data != null)
+                        {
+                            // Fill stirrup/web provided from XData if empty (can vary per span)
+                            if (span.Stirrup == null || span.Stirrup.Length < 3) span.Stirrup = new string[3];
+                            if (span.WebBar == null || span.WebBar.Length < 3) span.WebBar = new string[3];
+
+                            if (string.IsNullOrEmpty(span.Stirrup[0])) span.Stirrup[0] = data.StirrupString?.ElementAtOrDefault(0) ?? "";
+                            if (string.IsNullOrEmpty(span.Stirrup[1])) span.Stirrup[1] = data.StirrupString?.ElementAtOrDefault(1) ?? "";
+                            if (string.IsNullOrEmpty(span.Stirrup[2])) span.Stirrup[2] = data.StirrupString?.ElementAtOrDefault(2) ?? "";
+
+                            if (string.IsNullOrEmpty(span.WebBar[0])) span.WebBar[0] = data.WebBarString?.ElementAtOrDefault(0) ?? "";
+                            if (string.IsNullOrEmpty(span.WebBar[1])) span.WebBar[1] = data.WebBarString?.ElementAtOrDefault(1) ?? "";
+                            if (string.IsNullOrEmpty(span.WebBar[2])) span.WebBar[2] = data.WebBarString?.ElementAtOrDefault(2) ?? "";
+
+                            if (span.As_Top == null || span.As_Top.Length < 6) span.As_Top = new double[6];
+                            if (span.As_Bot == null || span.As_Bot.Length < 6) span.As_Bot = new double[6];
+                            if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
+                            if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+
+                            double torsTop = settings?.Beam?.TorsionDist_TopBar ?? 0.25;
+                            double torsBot = settings?.Beam?.TorsionDist_BotBar ?? 0.25;
+                            double torsSide = settings?.Beam?.TorsionDist_SideBar ?? 0.50;
+
+                            // 3 zones -> fill 6 positions
+                            for (int zi = 0; zi < 3; zi++)
                             {
-                                span.Stirrup[0] = data.StirrupString[0] ?? "";
-                                span.Stirrup[1] = data.StirrupString[1] ?? "";
-                                span.Stirrup[2] = data.StirrupString[2] ?? "";
-                                span.SideBar = data.WebBarString[1] ?? "";
+                                double asTopReq = (data.TopArea?.ElementAtOrDefault(zi) ?? 0) + (data.TorsionArea?.ElementAtOrDefault(zi) ?? 0) * torsTop;
+                                double asBotReq = (data.BotArea?.ElementAtOrDefault(zi) ?? 0) + (data.TorsionArea?.ElementAtOrDefault(zi) ?? 0) * torsBot;
+                                int p0 = zi == 0 ? 0 : (zi == 1 ? 2 : 4);
+                                int p1 = p0 + 1;
+                                span.As_Top[p0] = asTopReq;
+                                span.As_Top[p1] = asTopReq;
+                                span.As_Bot[p0] = asBotReq;
+                                span.As_Bot[p1] = asBotReq;
 
-                                span.As_Top[0] = data.TopArea[0];
-                                span.As_Top[2] = data.TopArea[1];
-                                span.As_Top[4] = data.TopArea[2];
-                                span.As_Bot[0] = data.BotArea[0];
-                                span.As_Bot[2] = data.BotArea[1];
-                                span.As_Bot[4] = data.BotArea[2];
+                                // Shear/Web required
+                                span.StirrupReq[zi] = (data.ShearArea?.ElementAtOrDefault(zi) ?? 0);
+                                span.WebReq[zi] = (data.TorsionArea?.ElementAtOrDefault(zi) ?? 0) * torsSide;
                             }
                         }
                     }
@@ -2488,7 +2755,19 @@ namespace DTS_Engine.Commands
                 }
 
                 // Update XData
-                XDataUtils.UpdateElementData(obj, data, tr);
+                // XData-first: update only Top/Bot solution keys (keep existing Stirrup/Web if any)
+                XDataUtils.UpdateBeamSolutionXData(
+                    obj,
+                    tr,
+                    data.TopRebarString,
+                    data.BotRebarString,
+                    null,
+                    null,
+                    group?.GroupName,
+                    group?.GroupType);
+
+                // RESET COLOR to ByLayer (256) to indicate processed
+                if (obj is Entity ent) ent.ColorIndex = 256;
             }
         }
 
@@ -2732,17 +3011,17 @@ namespace DTS_Engine.Commands
                                     var ent = tr.GetObject(objId, OpenMode.ForWrite) as Entity;
                                     if (ent != null)
                                     {
-                                        // Build rebar strings from Span data
-                                        string topRebar = BuildRebarString(span.TopRebar, 0);
-                                        string botRebar = BuildRebarString(span.BotRebar, 0);
-                                        string stirrup = span.Stirrup != null && span.Stirrup.Length > 1
-                                            ? span.Stirrup[1] ?? "" : "";
-                                        string sideBar = span.SideBar ?? "";
+                                        var zones = RebarXDataBridge.BuildSolutionZonesFromSpan(span);
 
-                                        // Write XData to entity
-                                        XDataUtils.WriteRebarXData(ent, tr,
-                                            topRebar, botRebar, stirrup, sideBar,
+                                        // XData-first: update only solution keys; preserve existing xType/other data
+                                        XDataUtils.UpdateBeamSolutionXData(
+                                            ent, tr,
+                                            zones.TopZones, zones.BotZones,
+                                            zones.StirrupZones, zones.WebZones,
                                             group.GroupName, group.GroupType);
+
+                                        // RESET COLOR to ByLayer (256)
+                                        ent.ColorIndex = 256;
 
                                         count++;
                                     }

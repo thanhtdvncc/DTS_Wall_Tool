@@ -402,6 +402,31 @@ namespace DTS_Engine.Core.Utils
             }
         }
 
+        /// <summary>
+        /// Đảm bảo layer tồn tại (tạo nếu chưa có) - Dùng trong Transaction đã có
+        /// </summary>
+        public static void EnsureLayerExists(string layerName, Transaction tr, short colorIndex = 7)
+        {
+            try
+            {
+                LayerTable lt = (LayerTable)tr.GetObject(Db.LayerTableId, OpenMode.ForRead);
+                if (!lt.Has(layerName))
+                {
+                    lt.UpgradeOpen();
+                    LayerTableRecord newLayer = new LayerTableRecord
+                    {
+                        Name = layerName,
+                        Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(
+                            Autodesk.AutoCAD.Colors.ColorMethod.ByAci, colorIndex)
+                    };
+
+                    lt.Add(newLayer);
+                    tr.AddNewlyCreatedDBObject(newLayer, true);
+                }
+            }
+            catch { /* Ignore if already exists or error */ }
+        }
+
         #endregion
 
         #region Drawing Helpers

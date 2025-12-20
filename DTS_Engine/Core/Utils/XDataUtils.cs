@@ -1,7 +1,9 @@
 ﻿using Autodesk.AutoCAD.DatabaseServices;
 using DTS_Engine.Core.Data;
+using DTS_Engine.Core.Algorithms;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Web.Script.Serialization;
 
@@ -292,6 +294,161 @@ namespace DTS_Engine.Core.Utils
                 BeamGroupName = dict.ContainsKey(KEY_BEAM_GROUP) ? dict[KEY_BEAM_GROUP]?.ToString() : null,
                 BeamType = dict.ContainsKey(KEY_BEAM_TYPE) ? dict[KEY_BEAM_TYPE]?.ToString() : "Beam"
             };
+        }
+
+        /// <summary>
+        /// Merge a small set of keys into XData without writing/overwriting xType.
+        /// Use this for lightweight updates (e.g., BeamName) where ElementData serialization could overwrite other schemas.
+        /// </summary>
+        public static void MergeRawData(DBObject obj, Transaction tr, IDictionary<string, object> updates, bool updateTimestamp = true)
+        {
+            if (obj == null || tr == null || updates == null || updates.Count == 0) return;
+
+            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
+            foreach (var kv in updates)
+                dict[kv.Key] = kv.Value;
+
+            if (updateTimestamp)
+                dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            SetRawData(obj, dict, tr);
+        }
+
+        /// <summary>
+        /// XData-first: cập nhật kết quả bố trí thép vào XData của phần tử, nhưng KHÔNG ghi đè các key khác (đặc biệt xType=BEAM).
+        /// Lưu các field của BeamResultData: TopRebarString/BotRebarString/StirrupString/WebBarString + TopAreaProv/BotAreaProv.
+        /// Đồng thời giữ tương thích ngược bằng cách update các key legacy (TopRebar/BotRebar/Stirrup/SideBar).
+        /// </summary>
+        public static void UpdateBeamSolutionXData(
+            DBObject obj,
+            Transaction tr,
+            string[] topRebarString,
+            string[] botRebarString,
+            string[] stirrupString,
+            string[] webBarString,
+            string belongToGroup = null,
+            string beamType = null)
+        {
+            if (obj == null || tr == null) return;
+
+            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
+
+            string[] top = null;
+            string[] bot = null;
+            string[] stir = null;
+            string[] web = null;
+
+            if (topRebarString != null)
+            {
+                top = Normalize3(topRebarString);
+                dict["TopRebarString"] = top;
+                dict["TopAreaProv"] = top.Select(RebarCalculator.ParseRebarArea).ToArray();
+                dict[KEY_TOP_REBAR] = top[1] ?? "";
+            }
+
+            if (botRebarString != null)
+            {
+                bot = Normalize3(botRebarString);
+                dict["BotRebarString"] = bot;
+                dict["BotAreaProv"] = bot.Select(RebarCalculator.ParseRebarArea).ToArray();
+                dict[KEY_BOT_REBAR] = bot[1] ?? "";
+            }
+
+            if (stirrupString != null)
+            {
+                stir = Normalize3(stirrupString);
+                dict["StirrupString"] = stir;
+                dict[KEY_STIRRUP] = stir[1] ?? "";
+            }
+
+            if (webBarString != null)
+            {
+                web = Normalize3(webBarString);
+                dict["WebBarString"] = web;
+                dict[KEY_SIDE_BAR] = web[1] ?? "";
+            }
+
+            if (!string.IsNullOrEmpty(belongToGroup)) dict["BelongToGroup"] = belongToGroup;
+            if (!string.IsNullOrEmpty(beamType)) dict["BeamType"] = beamType;
+
+            // Legacy meta
+            if (!string.IsNullOrEmpty(belongToGroup)) dict[KEY_BEAM_GROUP] = belongToGroup;
+            if (!string.IsNullOrEmpty(beamType)) dict[KEY_BEAM_TYPE] = beamType;
+            dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
+            SetRawData(obj, dict, tr);
+        }
+
+        /// <summary>
+        /// XData-first: cập nhật dữ liệu yêu cầu thép (từ SAP) vào XData của phần tử,
+        /// nhưng KHÔNG ghi đè các key layout/solution (TopRebarString/BotRebarString/StirrupString/WebBarString...).
+        /// Đồng thời KHÔNG ghi đè xType (thường là BEAM từ DTS_PLOT_FROM_SAP).
+        /// </summary>
+        public static void UpdateBeamRequiredXData(
+            DBObject obj,
+            Transaction tr,
+            double[] topArea,
+            double[] botArea,
+            double[] torsionArea,
+            double[] shearArea,
+            double[] ttArea,
+            string designCombo = null,
+            string sectionName = null,
+            double? width = null,
+            double? sectionHeight = null,
+            double? torsionFactorUsed = null,
+            string sapElementName = null,
+            string mappingSource = null)
+        {
+            if (obj == null || tr == null) return;
+
+            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
+
+            if (topArea != null) dict["TopArea"] = RoundArray8(Normalize3(topArea));
+            if (botArea != null) dict["BotArea"] = RoundArray8(Normalize3(botArea));
+            if (torsionArea != null) dict["TorsionArea"] = RoundArray8(Normalize3(torsionArea));
+            if (shearArea != null) dict["ShearArea"] = RoundArray8(Normalize3(shearArea));
+            if (ttArea != null) dict["TTArea"] = RoundArray8(Normalize3(ttArea));
+
+            if (!string.IsNullOrEmpty(designCombo)) dict["DesignCombo"] = designCombo;
+
+            if (!string.IsNullOrEmpty(sectionName)) dict["SectionName"] = sectionName;
+            if (width.HasValue) dict["Width"] = Math.Round(width.Value, 8);
+            if (sectionHeight.HasValue) dict["SectionHeight"] = Math.Round(sectionHeight.Value, 8);
+            if (torsionFactorUsed.HasValue) dict["TorsionFactorUsed"] = Math.Round(torsionFactorUsed.Value, 8);
+
+            if (!string.IsNullOrEmpty(sapElementName)) dict["SapElementName"] = sapElementName;
+            if (!string.IsNullOrEmpty(mappingSource)) dict["MappingSource"] = mappingSource;
+
+            dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            SetRawData(obj, dict, tr);
+        }
+
+        private static double[] Normalize3(double[] arr)
+        {
+            var res = new double[3];
+            if (arr == null) return res;
+            for (int i = 0; i < 3 && i < arr.Length; i++)
+                res[i] = arr[i];
+            return res;
+        }
+
+        private static double[] RoundArray8(double[] arr)
+        {
+            if (arr == null) return null;
+            var res = new double[arr.Length];
+            for (int i = 0; i < arr.Length; i++)
+                res[i] = Math.Round(arr[i], 8);
+            return res;
+        }
+
+        private static string[] Normalize3(string[] arr)
+        {
+            var res = new string[3];
+            if (arr == null) return res;
+            for (int i = 0; i < 3 && i < arr.Length; i++)
+                res[i] = arr[i] ?? "";
+            return res;
         }
 
         #endregion
@@ -775,14 +932,18 @@ namespace DTS_Engine.Core.Utils
 
         private static void EnsureRegApp(string regAppName, Transaction tr)
         {
-            RegAppTable rat = (RegAppTable)tr.GetObject(AcadUtils.Db.RegAppTableId, OpenMode.ForRead);
-            if (!rat.Has(regAppName))
+            try
             {
-                rat.UpgradeOpen();
-                RegAppTableRecord ratr = new RegAppTableRecord { Name = regAppName };
-                rat.Add(ratr);
-                tr.AddNewlyCreatedDBObject(ratr, true);
+                RegAppTable rat = (RegAppTable)tr.GetObject(AcadUtils.Db.RegAppTableId, OpenMode.ForRead);
+                if (!rat.Has(regAppName))
+                {
+                    rat.UpgradeOpen();
+                    RegAppTableRecord ratr = new RegAppTableRecord { Name = regAppName };
+                    rat.Add(ratr);
+                    tr.AddNewlyCreatedDBObject(ratr, true);
+                }
             }
+            catch { /* Ignore if already exists or locked */ }
         }
 
         /// <summary>

@@ -101,24 +101,27 @@
                 <label class="text-xs text-slate-400">Phương án:</label>
                 <select id="optionSelect" onchange="selectOption(this.value)"
                     class="bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded text-xs"></select>
-                <button id="lockBtn" onclick="lockDesign()" title="Chốt phương án này làm Official Design"
+                <button id="lockBtn" onclick="toggleLock()" title="Chốt/Mở khóa phương án"
                     class="px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs flex items-center gap-1">
                     <i class="fa-solid fa-lock"></i> Chốt
                 </button>
-                <span id="lockStatus" class="text-xs text-green-400 hidden">
+                <button id="lockStatus" onclick="restoreLockedDesign()" title="Click để restore phương án đã chốt"
+                    class="text-xs text-green-400 hover:text-green-300 cursor-pointer hidden flex items-center gap-1">
                     <i class="fa-solid fa-check-circle"></i> Đã chốt
-                </span>
-            </div>
-
-            <!-- Material Grades: Read-only display from settings -->
-            <div class="flex items-center gap-3 text-xs">
-                <span class="text-slate-400">BT: <span id="concreteDisplay"
-                        class="text-cyan-400 font-medium">B25</span></span>
-                <span class="text-slate-400">Thép: <span id="steelDisplay"
-                        class="text-orange-400 font-medium">CB400</span></span>
+                </button>
             </div>
 
             <div class="flex gap-2 items-center">
+                <!-- Undo/Redo Buttons -->
+                <button onclick="Beam.History.undo()" title="Undo (Ctrl+Z)"
+                    class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs">
+                    <i class="fa-solid fa-undo"></i>
+                </button>
+                <button onclick="Beam.History.redo()" title="Redo (Ctrl+Y)"
+                    class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs">
+                    <i class="fa-solid fa-redo"></i>
+                </button>
+                <div class="w-px h-4 bg-slate-600"></div>
                 <!-- Quick Calc Button -->
                 <button onclick="quickCalc()" title="Tính thép nhanh cho group này"
                     class="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs flex items-center gap-1">
@@ -148,13 +151,14 @@
         <div class="absolute inset-0 bg-white border-b border-slate-200 overflow-hidden" id="canvasContainer">
             <canvas id="beamCanvas" height="360"></canvas>
             <!-- View Mode Toggle: Mode 1 = Section, Mode 2 = Long Rebar, Mode 3 = Shear-Web Bar -->
-            <div class="absolute top-2 right-2 flex gap-1">
+            <div class="absolute top-12 right-2 flex gap-1 z-20">
                 <button onclick="setCanvasMode('section')" id="modeSection"
-                    class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500">Section</button>
+                    class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500 shadow">Section</button>
                 <button onclick="setCanvasMode('long')" id="modeLong"
-                    class="px-2 py-1 bg-blue-600 text-white text-[10px] rounded hover:bg-blue-500">Long Rebar</button>
+                    class="px-2 py-1 bg-blue-600 text-white text-[10px] rounded hover:bg-blue-500 shadow">Long
+                    Rebar</button>
                 <button onclick="setCanvasMode('shear')" id="modeShear"
-                    class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500">Shear-Web</button>
+                    class="px-2 py-1 bg-slate-600 text-white text-[10px] rounded hover:bg-slate-500 shadow">Shear-Web</button>
             </div>
             <!-- Zoom indicator -->
             <div id="zoomIndicator"
@@ -335,8 +339,143 @@
             MIN_SPAN_WIDTH: 80,
             MAX_CANVAS_WIDTH: 1600,
             CANVAS_PADDING: 30,
-            BEAM_HEIGHT: 80
+            BEAM_HEIGHT: 120
         };
+
+        // ============ HISTORY (UNDO/REDO) ============
+        Beam.History = {
+            stack: [],
+            ptr: -1,
+            maxSize: 20,
+            isLocked: false, // When locked, edits are disabled
+
+            // Take snapshot of current group rebar state
+            snapshot() {
+                if (!currentGroup) return null;
+                return JSON.stringify({
+                    spans: currentGroup.Spans?.map(s => ({
+                        SpanId: s.SpanId,
+                        TopRebar: s.TopRebar,
+                        BotRebar: s.BotRebar,
+                        Stirrup: s.Stirrup,
+                        WebBar: s.WebBar
+                    })),
+                    selectedBackbone: currentGroup.SelectedBackboneIndex
+                });
+            },
+
+            push() {
+                if (this.isLocked) return false;
+                const snap = this.snapshot();
+                if (!snap) return false;
+                // Skip if same as current
+                if (this.ptr > -1 && this.stack[this.ptr] === snap) return false;
+                // Truncate redo stack
+                if (this.ptr < this.stack.length - 1) {
+                    this.stack = this.stack.slice(0, this.ptr + 1);
+                }
+                this.stack.push(snap);
+                this.ptr++;
+                // Limit size
+                if (this.stack.length > this.maxSize) {
+                    this.stack.shift();
+                    this.ptr--;
+                }
+                return true;
+            },
+
+            restore(snapshot) {
+                if (!currentGroup || !snapshot) return;
+                try {
+                    const d = JSON.parse(snapshot);
+                    if (d.spans) {
+                        d.spans.forEach(sr => {
+                            const span = currentGroup.Spans?.find(s => s.SpanId === sr.SpanId);
+                            if (span) {
+                                span.TopRebar = sr.TopRebar;
+                                span.BotRebar = sr.BotRebar;
+                                span.Stirrup = sr.Stirrup;
+                                span.WebBar = sr.WebBar;
+                            }
+                        });
+                    }
+                    if (d.selectedBackbone !== undefined) {
+                        currentGroup.SelectedBackboneIndex = d.selectedBackbone;
+                    }
+                    renderCanvas();
+                    maybeRenderTable();
+                    updateMetrics();
+                } catch (e) { console.error('History restore error', e); }
+            },
+
+            undo() {
+                if (this.ptr > 0) {
+                    this.ptr--;
+                    this.restore(this.stack[this.ptr]);
+                }
+            },
+
+            redo() {
+                if (this.ptr < this.stack.length - 1) {
+                    this.ptr++;
+                    this.restore(this.stack[this.ptr]);
+                }
+            },
+
+            clear() {
+                this.stack = [];
+                this.ptr = -1;
+            }
+        };
+
+        // ============ LOCK/UNLOCK ============
+        let lockedSnapshot = null; // Snapshot at lock time
+
+        function toggleLock() {
+            if (!currentGroup) return;
+
+            if (currentGroup.SelectedDesign) {
+                // Unlock
+                currentGroup.SelectedDesign = null;
+                currentGroup.LockedAt = null;
+                Beam.History.isLocked = false;
+                lockedSnapshot = null;
+            } else {
+                // Lock current design
+                const opt = getSelectedOption();
+                if (!opt) return;
+                currentGroup.SelectedDesign = JSON.parse(JSON.stringify(opt));
+                currentGroup.LockedAt = new Date().toISOString();
+                Beam.History.isLocked = true;
+                lockedSnapshot = Beam.History.snapshot();
+            }
+            updateLockStatus();
+            populateOptionSelect();
+        }
+
+        function restoreLockedDesign() {
+            if (!currentGroup?.SelectedDesign || !lockedSnapshot) return;
+            Beam.History.restore(lockedSnapshot);
+        }
+
+        function updateLockStatus() {
+            const btn = document.getElementById('lockBtn');
+            const status = document.getElementById('lockStatus');
+            if (!currentGroup) return;
+
+            const isLocked = !!currentGroup.SelectedDesign;
+            Beam.History.isLocked = isLocked;
+
+            if (isLocked) {
+                btn.innerHTML = '<i class="fa-solid fa-lock-open"></i> Mở';
+                btn.className = 'px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs flex items-center gap-1';
+                status.classList.remove('hidden');
+            } else {
+                btn.innerHTML = '<i class="fa-solid fa-lock"></i> Chốt';
+                btn.className = 'px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs flex items-center gap-1';
+                status.classList.add('hidden');
+            }
+        }
 
         // Aliases for backward compatibility (refactor gradually)
         let currentGroupIndex = 0;
@@ -344,10 +483,16 @@
         let selectedOptionKey = null;
         let highlightedSpanIndex = -1;
         let spanBounds = [];
+        let rebarLabelBounds = [];
         const MIN_SPAN_WIDTH = 80;
         const MAX_CANVAS_WIDTH = 1600;
         const CANVAS_PADDING = 30;
-        const BEAM_HEIGHT = 80;
+        const BEAM_HEIGHT = 120;
+        const FIXED_SPAN_WIDTH = 473; // -25% from 630
+
+        // Inline canvas label editor (DOM overlay)
+        let labelEditorEl = null;
+        let activeLabelEdit = null;
         let highlightModeEnabled = false;
         let canvasMode = 'long';
         let canvasZoom = 1.0;
@@ -362,6 +507,12 @@
         let boxZoomEndX = 0;
         let boxZoomEndY = 0;
         let tablePanelCollapsed = false;
+
+        function maybeRenderTable() {
+            // Avoid heavy table re-render during canvas-first workflow when panel is collapsed.
+            // When user expands the panel, we'll re-render once.
+            if (!tablePanelCollapsed) renderTable();
+        }
 
         function toggleTablePanel() {
             tablePanelCollapsed = !tablePanelCollapsed;
@@ -381,6 +532,9 @@
                 content.classList.remove('hidden');
                 icon.classList.remove('fa-chevron-up');
                 icon.classList.add('fa-chevron-down');
+
+                // Panel just expanded: refresh table to reflect any canvas edits made while collapsed.
+                renderTable();
             }
         }
 
@@ -402,11 +556,18 @@
         }
 
         function autoLockOnEdit() {
+            // Block edits when locked
+            if (Beam.History.isLocked) return false;
+
+            // Push to history stack BEFORE change
+            Beam.History.push();
+
             // When user manually edits, mark span as user-edited
             if (currentGroup && highlightedSpanIndex >= 0) {
                 const span = currentGroup.Spans[highlightedSpanIndex];
                 if (span) span._userEdited = true;
             }
+            return true;
         }
 
         function toggleHighlightMode(enabled) {
@@ -448,7 +609,13 @@
             requestAnimationFrame(resizeCanvas);
             setTimeout(resizeCanvas, 100);
             setTimeout(resizeCanvas, 300);
-            window.addEventListener('resize', resizeCanvas);
+            window.addEventListener('resize', () => { hideInlineLabelEditor(); resizeCanvas(); });
+
+            const canvasContainer = document.getElementById('canvasContainer');
+            if (canvasContainer) {
+                canvasContainer.addEventListener('scroll', () => hideInlineLabelEditor());
+                canvasContainer.addEventListener('wheel', () => hideInlineLabelEditor(), { passive: true });
+            }
 
             // Sync material grades from DtsSettings to read-only display
             if (data.settings) {
@@ -467,15 +634,70 @@
             // Initialize canvas interaction system (inline, no external dependency)
             const canvas = document.getElementById('beamCanvas');
             if (canvas) {
-                // Click to select span
+                // Inline label editor overlay (canvas-first editing)
+                const canvasContainer = document.getElementById('canvasContainer');
+                if (canvasContainer && !labelEditorEl) {
+                    // ensure positioning context
+                    if (!canvasContainer.style.position) canvasContainer.style.position = 'relative';
+                    labelEditorEl = document.createElement('input');
+                    labelEditorEl.type = 'text';
+                    labelEditorEl.className = 'hidden absolute z-50 border border-slate-300 rounded px-1 py-0.5 text-[11px] bg-white';
+                    labelEditorEl.style.minWidth = '60px';
+                    labelEditorEl.style.height = '20px';
+                    labelEditorEl.addEventListener('keydown', (ev) => {
+                        if (ev.key === 'Enter') {
+                            commitInlineLabelEdit();
+                        } else if (ev.key === 'Escape') {
+                            cancelInlineLabelEdit();
+                        }
+                        ev.stopPropagation();
+                    });
+                    labelEditorEl.addEventListener('blur', () => {
+                        if (labelEditorEl && !labelEditorEl.classList.contains('hidden')) commitInlineLabelEdit();
+                    });
+                    canvasContainer.appendChild(labelEditorEl);
+                }
+
+                // Click: label edit (priority) or span select/copy-format
                 canvas.addEventListener('click', (e) => {
                     const rect = canvas.getBoundingClientRect();
                     const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
                     const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
+
+                    // Label hit => edit
+                    for (let i = 0; i < rebarLabelBounds.length; i++) {
+                        const lb = rebarLabelBounds[i];
+                        if (x >= lb.x && x <= lb.x + lb.width && y >= lb.y && y <= lb.y + lb.height) {
+                            startInlineLabelEdit(lb);
+                            return;
+                        }
+                    }
+
                     for (let i = 0; i < spanBounds.length; i++) {
                         const b = spanBounds[i];
                         if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
-                            highlightSpan(i);
+                            const spanIndex = b.index;
+                            // Copy format mode
+                            if (copyFormatMode) {
+                                if (!copySourceSpan) {
+                                    copySourceSpan = currentGroup.Spans[spanIndex];
+                                    showToast('Chọn nhịp đích...');
+                                } else {
+                                    const dest = currentGroup.Spans[spanIndex];
+                                    dest.TopRebar = JSON.parse(JSON.stringify(copySourceSpan.TopRebar || []));
+                                    dest.BotRebar = JSON.parse(JSON.stringify(copySourceSpan.BotRebar || []));
+                                    dest.Stirrup = [...(copySourceSpan.Stirrup || [])];
+                                    copyFormatMode = false;
+                                    copySourceSpan = null;
+                                    document.body.style.cursor = 'default';
+                                    renderCanvas();
+                                    renderTable();
+                                    showToast('✓ Copied format to ' + dest.SpanId);
+                                }
+                                return;
+                            }
+
+                            highlightSpan(spanIndex);
 
                             // Expand table panel if collapsed
                             const panel = document.getElementById('tablePanel');
@@ -484,7 +706,7 @@
                             }
 
                             // Scroll to row within tablePanelContent
-                            const row = document.querySelector(`[data-span-index="${i}"]`);
+                            const row = document.querySelector(`[data-span-index="${spanIndex}"]`);
                             if (row) {
                                 const container = document.getElementById('tablePanelContent');
                                 if (container) {
@@ -527,11 +749,26 @@
                         // Hover detection
                         const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
                         const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
+
+                        // Hover label => pointer cursor
+                        let overLabel = false;
+                        for (let i = 0; i < rebarLabelBounds.length; i++) {
+                            const lb = rebarLabelBounds[i];
+                            if (x >= lb.x && x <= lb.x + lb.width && y >= lb.y && y <= lb.y + lb.height) {
+                                overLabel = true;
+                                break;
+                            }
+                        }
+                        if (overLabel) {
+                            canvas.style.cursor = 'pointer';
+                        } else if (!canvasDragging && !boxZoomActive) {
+                            canvas.style.cursor = 'default';
+                        }
                         let found = -1;
                         for (let i = 0; i < spanBounds.length; i++) {
                             const b = spanBounds[i];
                             if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
-                                found = i;
+                                found = b.index;
                                 break;
                             }
                         }
@@ -546,6 +783,7 @@
                 // Middle click or Alt+click to start pan, Ctrl+click or left-click-hold to start box zoom
                 let boxZoomTimer = null;
                 canvas.addEventListener('mousedown', (e) => {
+                    hideInlineLabelEditor();
                     const rect = canvas.getBoundingClientRect();
 
                     // Ctrl+Left click = Immediate Box Zoom
@@ -663,13 +901,24 @@
                     renderCanvas();
                 }, { passive: false });
 
-                // Double click to reset and center view
-                canvas.addEventListener('dblclick', () => {
+                // Double click: label edit (priority) or reset view
+                canvas.addEventListener('dblclick', (e) => {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
+                    const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
+                    for (let i = 0; i < rebarLabelBounds.length; i++) {
+                        const lb = rebarLabelBounds[i];
+                        if (x >= lb.x && x <= lb.x + lb.width && y >= lb.y && y <= lb.y + lb.height) {
+                            startInlineLabelEdit(lb);
+                            return;
+                        }
+                    }
+
                     canvasZoom = 1.0;
                     canvasPanX = 0;
                     canvasPanY = 0;
                     renderCanvas();
-                    centerCanvas(); // Center content instead of going to corner
+                    centerCanvas();
                 });
 
                 console.log('Canvas interaction system initialized');
@@ -762,6 +1011,15 @@
             updateGroupInfo();
             loadMaterialSelects();
             updateLockStatus();
+
+            // Initialize history for this group
+            Beam.History.clear();
+            Beam.History.push();
+
+            // Restore locked snapshot if design is locked
+            if (currentGroup?.SelectedDesign) {
+                lockedSnapshot = Beam.History.snapshot();
+            }
         }
 
         // Center canvas viewport on content
@@ -780,13 +1038,7 @@
             const contentCenterX = (minX + maxX) / 2;
             const contentCenterY = (minY + maxY) / 2;
 
-            // Fit content in canvas with padding
-            const padX = 40, padY = 30;
-            const scaleX = (canvas.width - padX * 2) / contentW;
-            const scaleY = (canvas.height - padY * 2) / contentH;
-            canvasZoom = Math.min(scaleX, scaleY, 2.0); // Max 2x
-
-            // Center content
+            // Center content only (DO NOT change zoom). This keeps each span's visual length stable.
             canvasPanX = canvas.width / 2 - contentCenterX * canvasZoom;
             canvasPanY = canvas.height / 2 - contentCenterY * canvasZoom;
 
@@ -797,6 +1049,326 @@
         function updateZoomIndicator() {
             const el = document.getElementById('zoomIndicator');
             if (el) el.textContent = Math.round(canvasZoom * 100) + '%';
+        }
+
+        function startInlineLabelEdit(label) {
+            if (!label || !currentGroup?.Spans?.[label.spanIndex]) return;
+            if (!labelEditorEl) {
+                // Fallback to prompt-based edit if overlay couldn't be created
+                const span = currentGroup.Spans[label.spanIndex];
+                if (label.type === 'Stirrup' || label.type === 'WebBar') {
+                    const idx = Number.isFinite(label.pos) ? label.pos : 0;
+                    const isStirrup = label.type === 'Stirrup';
+                    const currentVal = (isStirrup ? (span?.Stirrup?.[idx] || '') : (span?.WebBar?.[idx] || '')).toString();
+                    const title = `${isStirrup ? 'ĐAI' : 'SƯỜN'} - Nhịp ${span.SpanId || (label.spanIndex + 1)} (${idx === 0 ? 'L1' : (idx === 1 ? 'Giữa' : 'L2')})`;
+                    const nextVal = prompt(title, currentVal);
+                    if (nextVal === null) return;
+                    if (isStirrup) updateStirrup(label.spanIndex, idx, nextVal);
+                    else updateWebBar(label.spanIndex, idx, nextVal);
+                    maybeRenderTable();
+                    return;
+                }
+                const layer = Number.isFinite(label.layer) ? label.layer : 0;
+                const pos = Number.isFinite(label.pos) ? label.pos : 2;
+                const currentVal = getLayerRebarText(span, label.type, layer, pos);
+                const posName = (pos === 0 ? 'Trái' : (pos === 4 ? 'Phải' : 'Giữa'));
+                const title = `${label.type === 'Top' ? 'THÉP TRÊN' : 'THÉP DƯỚI'} - Nhịp ${span.SpanId || (label.spanIndex + 1)} (Layer ${layer + 1}, ${posName})`;
+                const nextVal = prompt(title, currentVal);
+                if (nextVal === null) return;
+                updateLayerRebar(label.spanIndex, label.type, layer, pos, nextVal);
+                maybeRenderTable();
+                return;
+            }
+
+            activeLabelEdit = label;
+
+            const canvas = document.getElementById('beamCanvas');
+            const container = document.getElementById('canvasContainer');
+            if (!canvas || !container) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+
+            // Convert label world coords to canvas screen coords
+            const sx = label.x * canvasZoom + canvasPanX;
+            const sy = label.y * canvasZoom + canvasPanY;
+            const sw = label.width * canvasZoom;
+            const sh = label.height * canvasZoom;
+
+            // Position relative to container
+            const left = (rect.left - containerRect.left) + sx;
+            const top = (rect.top - containerRect.top) + sy;
+
+            labelEditorEl.style.left = Math.max(0, left) + 'px';
+            labelEditorEl.style.top = Math.max(0, top) + 'px';
+            labelEditorEl.style.width = Math.max(60, sw) + 'px';
+            labelEditorEl.style.height = Math.max(18, sh) + 'px';
+
+            const span = currentGroup.Spans[label.spanIndex];
+            if (label.type === 'Stirrup') {
+                const idx = Number.isFinite(label.pos) ? label.pos : 0;
+                labelEditorEl.value = (span?.Stirrup?.[idx] || '').toString();
+            } else if (label.type === 'WebBar') {
+                const idx = Number.isFinite(label.pos) ? label.pos : 0;
+                labelEditorEl.value = (span?.WebBar?.[idx] || '').toString();
+            } else {
+                const layer = Number.isFinite(label.layer) ? label.layer : 0;
+                const pos = Number.isFinite(label.pos) ? label.pos : 2;
+                labelEditorEl.value = getLayerRebarText(span, label.type, layer, pos);
+            }
+            labelEditorEl.classList.remove('hidden');
+            labelEditorEl.focus();
+            labelEditorEl.select();
+        }
+
+        function commitInlineLabelEdit() {
+            if (!activeLabelEdit || !labelEditorEl) {
+                hideInlineLabelEditor();
+                return;
+            }
+            const nextVal = labelEditorEl.value;
+            if (activeLabelEdit.type === 'Stirrup') {
+                const idx = Number.isFinite(activeLabelEdit.pos) ? activeLabelEdit.pos : 0;
+                updateStirrup(activeLabelEdit.spanIndex, idx, nextVal);
+                maybeRenderTable();
+                renderCanvas();
+                hideInlineLabelEditor();
+                return;
+            }
+            if (activeLabelEdit.type === 'WebBar') {
+                const idx = Number.isFinite(activeLabelEdit.pos) ? activeLabelEdit.pos : 0;
+                updateWebBar(activeLabelEdit.spanIndex, idx, nextVal);
+                maybeRenderTable();
+                renderCanvas();
+                hideInlineLabelEditor();
+                return;
+            }
+            const layer = Number.isFinite(activeLabelEdit.layer) ? activeLabelEdit.layer : 0;
+            const pos = Number.isFinite(activeLabelEdit.pos) ? activeLabelEdit.pos : 2;
+            updateLayerRebar(activeLabelEdit.spanIndex, activeLabelEdit.type, layer, pos, nextVal);
+            maybeRenderTable();
+            renderCanvas(); // Ensure canvas refreshes to clear old labels
+            hideInlineLabelEditor();
+        }
+
+        function cancelInlineLabelEdit() {
+            hideInlineLabelEditor();
+        }
+
+        function hideInlineLabelEditor() {
+            activeLabelEdit = null;
+            if (!labelEditorEl) return;
+            labelEditorEl.classList.add('hidden');
+            labelEditorEl.value = '';
+        }
+
+        function getLayerRebarText(span, type, layer, pos) {
+            if (!span) return '';
+            const arr = (type === 'Top') ? span.TopRebar : span.BotRebar;
+            const layerArr = arr?.[layer] || [];
+            const v = layerArr?.[pos];
+            return (v === undefined || v === null) ? '' : String(v);
+        }
+
+        // Backward compatible helper (kept for other UI pieces)
+        function getSpanRebarText(span, type) {
+            const t = getLayerRebarText(span, type, 0, 2);
+            if (t && t.trim().length > 0) return t;
+            const l = getLayerRebarText(span, type, 0, 0);
+            if (l && l.trim().length > 0) return l;
+            const r = getLayerRebarText(span, type, 0, 4);
+            return r;
+        }
+
+        function drawEditableLabel(ctx, text, centerX, centerY, color, meta) {
+            const raw = (text === undefined || text === null) ? '' : String(text);
+            const t = raw.trim();
+            const isEmpty = t.length === 0;
+            ctx.save();
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const padX = 4;
+            const showText = isEmpty ? '' : t;
+            const w = Math.max(24, ctx.measureText(showText || '00').width + padX * 2);
+            const h = 14;
+            const x = centerX - w / 2;
+            const y = centerY - h / 2;
+
+            // Background pill
+            ctx.fillStyle = isEmpty ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.85)';
+            ctx.strokeStyle = isEmpty ? 'rgba(203,213,225,0.9)' : 'rgba(148,163,184,0.9)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            const r = 6;
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            if (!isEmpty) {
+                ctx.fillStyle = color;
+                ctx.fillText(showText, centerX, centerY);
+            }
+            ctx.restore();
+
+            rebarLabelBounds.push({ x, y, width: w, height: h, ...meta });
+        }
+
+        function drawInfoLabel(ctx, text, centerX, centerY, color) {
+            const raw = (text === undefined || text === null) ? '' : String(text);
+            const t = raw.trim();
+            if (t.length === 0) return;
+
+            ctx.save();
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const padX = 4;
+            const w = Math.max(26, ctx.measureText(t).width + padX * 2);
+            const h = 14;
+            const x = centerX - w / 2;
+            const y = centerY - h / 2;
+
+            ctx.fillStyle = 'rgba(255,255,255,0.9)';
+            ctx.strokeStyle = 'rgba(148,163,184,0.9)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            const r = 6;
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = color;
+            ctx.fillText(t, centerX, centerY);
+            ctx.restore();
+        }
+
+        // ===== UNIFIED ROUNDING: <1 → 4 decimals, ≥1 → 2 decimals =====
+        function formatRebarValue(n) {
+            if (!Number.isFinite(n) || n <= 0) return '-';
+            if (n < 1) return n.toFixed(4);
+            return n.toFixed(2);
+        }
+
+        // Calculate As_prov from rebar string (e.g., "3D20" → 9.42 cm²)
+        function parseRebarArea(rebarStr) {
+            if (!rebarStr || typeof rebarStr !== 'string') return 0;
+            let total = 0;
+            // Split by '+' for combined bars (e.g., "2D16+2D18")
+            const parts = rebarStr.split('+');
+            for (const part of parts) {
+                const match = part.trim().match(/(\d+)D(\d+)/i);
+                if (match) {
+                    const count = parseInt(match[1]) || 0;
+                    const dia = parseInt(match[2]) || 0;
+                    total += count * Math.PI * (dia / 10) * (dia / 10) / 4; // cm²
+                }
+            }
+            return total;
+        }
+
+        // Get As_prov/As_req text for display (replaces getAsReqText)
+        function getAsRatioText(span, type, posName) {
+            // As_req from XData
+            const reqArr = (type === 'Top') ? span?.As_Top : span?.As_Bot;
+            const idx = (posName === 'L') ? 0 : (posName === 'R' ? 4 : 2);
+            const asReq = Number(reqArr?.[idx]) || 0;
+
+            // As_prov from rebar strings
+            const rebarArr = (type === 'Top') ? span?.TopRebar : span?.BotRebar;
+            const rebarStr = rebarArr?.[0]?.[idx] || ''; // Layer 0, position idx
+            const asProv = parseRebarArea(rebarStr);
+
+            // Format display
+            const reqText = formatRebarValue(asReq);
+            const provText = formatRebarValue(asProv);
+
+            if (asReq <= 0 && asProv <= 0) return '';
+            if (asProv > 0 && asReq > 0) return `${provText}/${reqText}`;
+            if (asReq > 0) return reqText;
+            return provText;
+        }
+
+        // Get Stirrup/WebBar requirement text with As_prov/As_req format
+        function getShearRatioText(span, provKind, reqKind, idx) {
+            // provKind: 'Stirrup' or 'WebBar'
+            // reqKind: 'StirrupReq' or 'WebReq'
+            const provArr = span?.[provKind];
+            const reqArr = span?.[reqKind];
+
+            const provStr = Array.isArray(provArr) ? (provArr[idx] || '') : '';
+            const reqVal = Number(Array.isArray(reqArr) ? reqArr[idx] : 0) || 0;
+
+            // For stirrup/web, parse asProv differently (e.g., "D8@150" not bar area)
+            // Just show strings as-is with req value
+            const reqText = formatRebarValue(reqVal);
+
+            if (provStr && reqVal > 0) return `${provStr} (${reqText})`;
+            if (provStr) return provStr;
+            if (reqVal > 0) return `req:${reqText}`;
+            return '';
+        }
+
+        function editCanvasRebarLabel(label) {
+            if (labelEditorEl) {
+                startInlineLabelEdit(label);
+                return;
+            }
+            if (!label || !currentGroup?.Spans?.[label.spanIndex]) return;
+            if (label.type === 'Stirrup') {
+                const span = currentGroup.Spans[label.spanIndex];
+                const idx = Number.isFinite(label.pos) ? label.pos : 0;
+                const currentVal = (span?.Stirrup?.[idx] || '').toString();
+                const title = `ĐAI - Nhịp ${span.SpanId || (label.spanIndex + 1)} (${idx === 0 ? 'L1' : (idx === 1 ? 'Giữa' : 'L2')})`;
+                const nextVal = prompt(title, currentVal);
+                if (nextVal === null) return;
+                updateStirrup(label.spanIndex, idx, nextVal);
+                maybeRenderTable();
+                renderCanvas();
+                return;
+            }
+            if (label.type === 'WebBar') {
+                const span = currentGroup.Spans[label.spanIndex];
+                const idx = Number.isFinite(label.pos) ? label.pos : 0;
+                const currentVal = (span?.WebBar?.[idx] || '').toString();
+                const title = `SƯỜN - Nhịp ${span.SpanId || (label.spanIndex + 1)} (${idx === 0 ? 'L1' : (idx === 1 ? 'Giữa' : 'L2')})`;
+                const nextVal = prompt(title, currentVal);
+                if (nextVal === null) return;
+                updateWebBar(label.spanIndex, idx, nextVal);
+                maybeRenderTable();
+                renderCanvas();
+                return;
+            }
+            const span = currentGroup.Spans[label.spanIndex];
+            const layer = Number.isFinite(label.layer) ? label.layer : 0;
+            const pos = Number.isFinite(label.pos) ? label.pos : 2;
+            const currentVal = getLayerRebarText(span, label.type, layer, pos);
+            const posName = (pos === 0 ? 'Trái' : (pos === 4 ? 'Phải' : 'Giữa'));
+            const title = `${label.type === 'Top' ? 'THÉP TRÊN' : 'THÉP DƯỚI'} - Nhịp ${span.SpanId || (label.spanIndex + 1)} (Layer ${layer + 1}, ${posName})`;
+            const nextVal = prompt(title, currentVal);
+            if (nextVal === null) return;
+            updateLayerRebar(label.spanIndex, label.type, layer, pos, nextVal);
+            maybeRenderTable();
         }
 
         function prevGroup() { if (currentGroupIndex > 0) loadGroup(currentGroupIndex - 1); }
@@ -918,54 +1490,9 @@
             });
         }
 
-        // ===== SELECTED DESIGN (Phương án Chốt) =====
-        function lockDesign() {
-            if (!currentGroup) return;
-
-            const selectedIdx = currentGroup.SelectedBackboneIndex || 0;
-            const option = currentGroup.BackboneOptions?.[selectedIdx];
-
-            if (!option) {
-                showToast('⚠️ Không có phương án để chốt!', 'error');
-                return;
-            }
-
-            // Clone option vào SelectedDesign
-            currentGroup.SelectedDesign = JSON.parse(JSON.stringify(option));
-            currentGroup.LockedAt = new Date().toISOString();
-            currentGroup.LockedBy = 'User';
-
-            updateLockStatus();
-            showToast('🔒 Đã CHỐT phương án làm Official Design!', 'success');
-
-            // Notify C# để save
-            window.chrome.webview?.postMessage('LOCK_DESIGN|' + currentGroupIndex);
-        }
-
-        function unlockDesign() {
-            if (!currentGroup) return;
-
-            if (!confirm('Bạn có chắc muốn HỦY CHỐT? Phương án đã lưu sẽ bị xóa.')) return;
-
-            currentGroup.SelectedDesign = null;
-            currentGroup.LockedAt = null;
-            currentGroup.LockedBy = null;
-
-            updateLockStatus();
-            showToast('🔓 Đã hủy chốt phương án.', 'info');
-
-            window.chrome.webview?.postMessage('UNLOCK_DESIGN|' + currentGroupIndex);
-        }
-
         // ===== QUICK CALC (Tính thép nhanh) =====
         function quickCalc() {
-            if (!currentGroup) {
-                showToast('⚠️ Không có group để tính!', 'error');
-                return;
-            }
-
-            showToast('⏳ Đang tính thép...', 'info');
-
+            if (!currentGroup) return;
             // Send message to C# to run rebar calculation
             window.chrome.webview?.postMessage('QUICK_CALC|' + currentGroupIndex);
         }
@@ -986,61 +1513,18 @@
                     updateMetrics();
                     renderCanvas();
                     renderTable();
-                }
 
-                showToast('✓ Đã tính lại và cập nhật phương án');
+                    // Reinitialize history for updated group
+                    Beam.History.clear();
+                    Beam.History.push();
+                }
             } catch (e) {
                 console.log('onGroupUpdated error', e);
             }
         }
 
-        function updateLockStatus() {
-            const lockBtn = document.getElementById('lockBtn');
-            const lockStatus = document.getElementById('lockStatus');
-
-            if (!lockBtn || !lockStatus) return;
-
-            const isLocked = currentGroup?.SelectedDesign != null;
-            const isInvalid = currentGroup?.SelectedDesign?.IsValid === false;
-
-            if (isLocked) {
-                lockBtn.innerHTML = '<i class="fa-solid fa-unlock"></i> Hủy chốt';
-                lockBtn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
-                lockBtn.classList.add('bg-slate-600', 'hover:bg-slate-500');
-                lockBtn.onclick = unlockDesign;
-
-                // Show status with warning if invalid
-                if (isInvalid) {
-                    lockStatus.innerHTML = '<i class="fa-solid fa-exclamation-triangle"></i> THIẾU THÉP!';
-                    lockStatus.classList.remove('hidden', 'text-green-400');
-                    lockStatus.classList.add('text-red-500', 'font-bold');
-                } else {
-                    lockStatus.innerHTML = '<i class="fa-solid fa-check-circle"></i> Đã chốt';
-                    lockStatus.classList.remove('hidden', 'text-red-500', 'font-bold');
-                    lockStatus.classList.add('text-green-400');
-                }
-            } else {
-                lockBtn.innerHTML = '<i class="fa-solid fa-lock"></i> Chốt';
-                lockBtn.classList.add('bg-amber-600', 'hover:bg-amber-500');
-                lockBtn.classList.remove('bg-slate-600', 'hover:bg-slate-500');
-                lockBtn.onclick = lockDesign;
-                lockStatus.classList.add('hidden');
-            }
-        }
-
-        // ===== AUTO-LOCK ON MANUAL EDIT =====
-        // Gọi hàm này khi User chỉnh sửa thủ công (diameter, count, cut, etc.)
-        function autoLockOnEdit() {
-            if (!currentGroup) return;
-
-            // Nếu chưa có SelectedDesign, auto-lock ngay
-            if (!currentGroup.SelectedDesign) {
-                lockDesign();
-                showToast('🔒 Auto-lock: Phương án đã được chốt tự động khi sửa tay!', 'info');
-            }
-            // Đánh dấu đã sửa thủ công
-            currentGroup.IsManuallyEdited = true;
-        }
+        // NOTE: lockDesign, unlockDesign, toggleLock, restoreLockedDesign, updateLockStatus 
+        // are now defined in the Beam.History section at the top of the script
 
         // Wrapper để gọi khi bất kỳ edit nào xảy ra
         function onManualEdit(spanIndex, field, value) {
@@ -1104,24 +1588,17 @@
             }
 
             spanBounds = [];
+            rebarLabelBounds = [];
             const spans = currentGroup.Spans;
 
-            // Calculate span widths: each span has width proportional to length
-            // with MIN = 1/5 of max length span width for consistency
-            const lengths = spans.map(s => s.Length || 1);
-            const maxLen = Math.max(...lengths);
-            const minLen = Math.min(...lengths);
-
-            // Calculate base width for max-length span (+30% increase)
-            const maxSpanWidth = Math.min(260, (MAX_CANVAS_WIDTH - CANVAS_PADDING * 2 - spans.length * 15) / Math.max(1, spans.length)) * 1.3;
-            const minSpanWidth = Math.max(MIN_SPAN_WIDTH * 1.3, maxSpanWidth / 5); // Min is 1/5 of max
+            // FIXED SPAN WIDTHS: all spans have the SAME visual width (independent of span count)
+            const SUPPORT_GAP = 15; // Gap for support symbols
+            const equalSpanWidth = FIXED_SPAN_WIDTH;
 
             let totalWidth = CANVAS_PADDING * 2;
-            const spanWidths = lengths.map(len => {
-                const ratio = len / maxLen;
-                const w = minSpanWidth + (maxSpanWidth - minSpanWidth) * ratio;
-                totalWidth += w + 15; // +15 for support gap
-                return w;
+            const spanWidths = spans.map(() => {
+                totalWidth += equalSpanWidth + SUPPORT_GAP;
+                return equalSpanWidth;
             });
 
             // Use canvas size from resizeCanvas (don't override here)
@@ -1135,7 +1612,8 @@
             ctx.scale(canvasZoom, canvasZoom);
 
             let x = CANVAS_PADDING;
-            const beamY = 60;
+            // Give more vertical room for outside required labels
+            const beamY = 90;
 
             // Draw beams
             spans.forEach((span, i) => {
@@ -1161,17 +1639,91 @@
                 // Draw rebar lines
                 drawRebarLines(ctx, x, beamY, w, span);
 
+                const labelXs = [x + w * 0.20, x + w * 0.50, x + w * 0.80];
+                const labelPos = [0, 2, 4];
+
+                if (canvasMode === 'long') {
+                    // Editable long rebar labels: backbone (layer 0) + reinforcement layers (1..MaxLayers-1)
+                    const maxLayers = data.settings?.MaxLayers || 2;
+
+                    // Backbone label rows (inside beam)
+                    const topBaseY = beamY + 12;
+                    const botBaseY = beamY + BEAM_HEIGHT - 12;
+                    for (let li = 0; li < labelXs.length; li++) {
+                        const cx = labelXs[li];
+                        const pos = labelPos[li];
+                        drawEditableLabel(ctx, getLayerRebarText(span, 'Top', 0, pos), cx, topBaseY, '#ef4444', { spanIndex: i, type: 'Top', layer: 0, pos });
+                        drawEditableLabel(ctx, getLayerRebarText(span, 'Bot', 0, pos), cx, botBaseY, '#3b82f6', { spanIndex: i, type: 'Bot', layer: 0, pos });
+                    }
+
+                    // Reinforcement layers (gia cường) - per span
+                    // Stack inward to avoid collisions; typically MaxLayers=2 so only one extra row.
+                    for (let layer = 1; layer < maxLayers; layer++) {
+                        const dy = 14 * layer;
+                        const topY = topBaseY + dy;
+                        const botY = botBaseY - dy;
+                        for (let li = 0; li < labelXs.length; li++) {
+                            const cx = labelXs[li];
+                            const pos = labelPos[li];
+                            drawEditableLabel(ctx, getLayerRebarText(span, 'Top', layer, pos), cx, topY, '#f97316', { spanIndex: i, type: 'Top', layer, pos });
+                            drawEditableLabel(ctx, getLayerRebarText(span, 'Bot', layer, pos), cx, botY, '#0ea5e9', { spanIndex: i, type: 'Bot', layer, pos });
+                        }
+                    }
+
+                    // Required labels (outside beam): 6 positions
+                    const reqTopY = beamY - 24;
+                    const reqBotY = beamY + BEAM_HEIGHT + 24;
+                    const posNames = ['L', 'M', 'R'];
+                    for (let li = 0; li < labelXs.length; li++) {
+                        const cx = labelXs[li];
+                        const pn = posNames[li];
+                        drawInfoLabel(ctx, getAsRatioText(span, 'Top', pn), cx, reqTopY, '#b91c1c');
+                        drawInfoLabel(ctx, getAsRatioText(span, 'Bot', pn), cx, reqBotY, '#1d4ed8');
+                    }
+                } else if (canvasMode === 'shear') {
+                    // Shear-web mode: editable stirrup labels (provided) outside beam
+                    const stirrupY = beamY + BEAM_HEIGHT + 22;
+                    const webY = stirrupY + 18;
+                    const stirrup = span.Stirrup || [];
+                    const webBar = span.WebBar || [];
+                    const stirrupXs = [x + w * 0.125, x + w * 0.50, x + w * 0.875];
+                    for (let si = 0; si < stirrupXs.length; si++) {
+                        drawEditableLabel(
+                            ctx,
+                            (stirrup[si] || ''),
+                            stirrupXs[si],
+                            stirrupY,
+                            '#475569',
+                            { spanIndex: i, type: 'Stirrup', layer: 0, pos: si }
+                        );
+                        drawEditableLabel(
+                            ctx,
+                            (webBar[si] || ''),
+                            stirrupXs[si],
+                            webY,
+                            '#0f766e',
+                            { spanIndex: i, type: 'WebBar', layer: 0, pos: si }
+                        );
+                    }
+
+                    // Optional required labels (outside beam): up to 6 positions if data exists
+                    // - StirrupReq at top
+                    // - WebReq at bottom
+                    const reqTopY = beamY - 24;
+                    const reqBotY = webY + 36;
+                    for (let si = 0; si < stirrupXs.length; si++) {
+                        drawInfoLabel(ctx, getShearRatioText(span, 'Stirrup', 'StirrupReq', si), stirrupXs[si], reqTopY, '#b45309');
+                        drawInfoLabel(ctx, getShearRatioText(span, 'WebBar', 'WebReq', si), stirrupXs[si], reqBotY, '#0f766e');
+                    }
+                }
+
                 // Span label
                 ctx.fillStyle = '#1e293b';
                 ctx.font = 'bold 11px sans-serif';
                 ctx.textAlign = 'center';
                 ctx.fillText(span.SpanId, x + w / 2, beamY + BEAM_HEIGHT / 2 + 4);
 
-                // Dimension
-                ctx.fillStyle = '#64748b';
-                ctx.font = '10px sans-serif';
-                ctx.fillText(`${(span.Length || 0).toFixed(2)}m`, x + w / 2, beamY + BEAM_HEIGHT + 12);
-                ctx.fillText(`${span.Width || 0}×${span.Height || 0}`, x + w / 2, beamY - 5);
+                // Removed size/dimension labels to free space for required labels
 
                 x += w;
 
@@ -1208,11 +1760,13 @@
             }
 
             // Scroll to highlighted span (only when not interacting)
-            if (!canvasDragging && !boxZoomActive && highlightedSpanIndex >= 0 && spanBounds[highlightedSpanIndex]) {
-                const bound = spanBounds[highlightedSpanIndex];
+            if (!canvasDragging && !boxZoomActive && highlightedSpanIndex >= 0) {
+                const bound = spanBounds.find(b => b.index === highlightedSpanIndex);
                 const container = document.getElementById('canvasContainer');
-                const scrollTarget = (bound.x * canvasZoom + canvasPanX) - container.clientWidth / 2 + (bound.width * canvasZoom) / 2;
-                container.scrollTo({ left: scrollTarget, behavior: 'smooth' });
+                if (bound && container) {
+                    const scrollTarget = (bound.x * canvasZoom + canvasPanX) - container.clientWidth / 2 + (bound.width * canvasZoom) / 2;
+                    container.scrollTo({ left: scrollTarget, behavior: 'smooth' });
+                }
             }
         }
 
@@ -1251,72 +1805,8 @@
 
             // MODE-SPECIFIC RENDERING
             if (canvasMode === 'long') {
-                // LONG REBAR MODE - Show As_req/As_prov and rebar text at 6 positions
-                ctx.font = 'bold 9px sans-serif';
-                ctx.textAlign = 'center';
-
-                const positions = [
-                    { pos: 'L', xOff: 0.15 },
-                    { pos: 'M', xOff: 0.50 },
-                    { pos: 'R', xOff: 0.85 }
-                ];
-
-                // Top rebar values (above span)
-                ctx.fillStyle = '#dc2626'; // red
-                positions.forEach(p => {
-                    const pX = x + w * p.xOff;
-                    const asReq = span.AsReq?.Top?.[p.pos] || 0;
-                    const asProv = span.AsProv?.Top?.[p.pos] || 0;
-                    const rebarText = span.TopRebar?.[0]?.[p.pos === 'L' ? 0 : p.pos === 'M' ? 2 : 4] || '';
-
-                    // Draw circle marker
-                    ctx.beginPath();
-                    ctx.arc(pX, topY, 3, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    // As values text - show both req and prov
-                    if (asReq > 0 || rebarText) {
-                        ctx.fillStyle = asProv >= asReq ? '#16a34a' : '#dc2626';
-                        const label = rebarText ? `${rebarText}` : `${asReq.toFixed(0)}`;
-                        const subLabel = asReq > 0 ? `(${asReq.toFixed(0)})` : '';
-                        ctx.fillText(label, pX, topY - 8);
-                        if (!rebarText && asReq > 0) {
-                            ctx.font = '7px sans-serif';
-                            ctx.fillStyle = '#94a3b8';
-                            ctx.fillText('req', pX, topY - 18);
-                            ctx.font = 'bold 9px sans-serif';
-                        }
-                        ctx.fillStyle = '#dc2626';
-                    }
-                });
-
-                // Bottom rebar values (below span)
-                ctx.fillStyle = '#2563eb'; // blue
-                positions.forEach(p => {
-                    const pX = x + w * p.xOff;
-                    const asReq = span.AsReq?.Bot?.[p.pos] || 0;
-                    const asProv = span.AsProv?.Bot?.[p.pos] || 0;
-                    const rebarText = span.BotRebar?.[0]?.[p.pos === 'L' ? 0 : p.pos === 'M' ? 2 : 4] || '';
-
-                    // Draw circle marker
-                    ctx.beginPath();
-                    ctx.arc(pX, botY, 3, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    // As values text
-                    if (asReq > 0 || rebarText) {
-                        ctx.fillStyle = asProv >= asReq ? '#16a34a' : '#2563eb';
-                        const label = rebarText ? `${rebarText}` : `${asReq.toFixed(0)}`;
-                        ctx.fillText(label, pX, botY + 14);
-                        if (!rebarText && asReq > 0) {
-                            ctx.font = '7px sans-serif';
-                            ctx.fillStyle = '#94a3b8';
-                            ctx.fillText('req', pX, botY + 24);
-                            ctx.font = 'bold 9px sans-serif';
-                        }
-                        ctx.fillStyle = '#2563eb';
-                    }
-                });
+                // LONG REBAR MODE - Editable labels are already drawn above via drawEditableLabel().
+                // No additional rendering needed here to avoid duplicate labels.
             } else if (canvasMode === 'shear') {
                 // SHEAR/WEB BAR MODE - Show stirrup layout as vertical lines
                 const stirrups = span.Stirrup || [];
@@ -1351,13 +1841,7 @@
                     }
                 });
 
-                // Show stirrup text labels
-                ctx.font = '8px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillStyle = '#475569';
-                if (stirrups[0]) ctx.fillText(stirrups[0], x + w * 0.125, y + BEAM_HEIGHT + 25);
-                if (stirrups[1]) ctx.fillText(stirrups[1], x + w * 0.5, y + BEAM_HEIGHT + 25);
-                if (stirrups[2]) ctx.fillText(stirrups[2], x + w * 0.875, y + BEAM_HEIGHT + 25);
+                // Stirrup text labels are drawn as editable labels in renderCanvas() (canvas-first).
             } else {
                 // SECTION mode - draw addon bars (dashed) like before
                 const topRebar = span.TopRebar?.[0];
@@ -1452,15 +1936,16 @@
 
             positions.forEach((pos, idx) => {
                 const val = layerData[pos] || '';
-                const asReq = span.AsReq?.[type]?.[posNames[idx]] || 0;
-                const asProv = span.AsProv?.[type]?.[posNames[idx]] || 0;
-                const isUnder = asProv > 0 && asProv < asReq;
+                const reqArr = (type === 'Top') ? span.As_Top : span.As_Bot;
+                const reqIdx = (pos === 0) ? 0 : (pos === 4 ? 4 : 2);
+                const asReq = Array.isArray(reqArr) ? (Number(reqArr[reqIdx]) || 0) : 0;
+                const isUnder = false;
 
                 html += `<td class="p-0.5 ${bgClass} w-12">
                     <input type="text" value="${val}" 
                         onchange="updateLayerRebar(${spanIndex}, '${type}', ${layer}, ${pos}, this.value)"
                         placeholder=""
-                        title="As_req: ${asReq > 0 ? asReq.toFixed(1) : '-'} / As_prov: ${asProv > 0 ? asProv.toFixed(1) : '-'}"
+                        title="As_req: ${asReq > 0 ? asReq.toFixed(1) : '-'}"
                         class="w-full min-w-0 border ${isUnder ? 'border-red-400 bg-red-50' : 'border-slate-200'} rounded px-0.5 py-0.5 text-center text-[10px] bg-white">
                 </td>`;
             });
@@ -1487,10 +1972,28 @@
 
         // Update rebar value for a specific layer
         function updateLayerRebar(spanIndex, type, layer, pos, value) {
-            const span = currentGroup.Spans[spanIndex];
             const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
 
-            // Initialize layers if needed
+            // BACKBONE LOGIC: Layer 0 is continuous across ALL spans
+            if (layer === 0) {
+                // Update ALL spans, ALL positions (0, 2, 4) for Layer 0
+                currentGroup.Spans.forEach(span => {
+                    if (!span[arr]) span[arr] = [];
+                    while (span[arr].length <= layer) span[arr].push([]);
+                    if (!span[arr][layer]) span[arr][layer] = [];
+                    span[arr][layer][0] = value; // Left
+                    span[arr][layer][2] = value; // Mid
+                    span[arr][layer][4] = value; // Right
+                });
+                autoLockOnEdit();
+                showToast(`✓ Cốt chủ ${type} đã cập nhật toàn bộ nhịp: ${value}`);
+                maybeRenderTable();
+                renderCanvas();
+                return;
+            }
+
+            // ADDON LOGIC: Layer 1+ is per-span, per-position
+            const span = currentGroup.Spans[spanIndex];
             if (!span[arr]) span[arr] = [];
             while (span[arr].length <= layer) span[arr].push([]);
             if (!span[arr][layer]) span[arr][layer] = [];
@@ -1500,7 +2003,7 @@
             // Mark as user edited
             autoLockOnEdit();
 
-            // Auto apply to subsequent spans
+            // Auto apply to subsequent spans (for Layer 1+)
             if (document.getElementById('autoApply').checked) {
                 for (let i = spanIndex + 1; i < currentGroup.Spans.length; i++) {
                     if (currentGroup.Spans[i].IsActive !== false) {
@@ -1511,7 +2014,7 @@
                         s[arr][layer][pos] = value;
                     }
                 }
-                renderTable();
+                maybeRenderTable();
             }
             renderCanvas();
         }
@@ -1541,7 +2044,7 @@
                         currentGroup.Spans[i][arr][0][pos] = value;
                     }
                 }
-                renderTable();
+                maybeRenderTable();
             }
             renderCanvas();
         }
@@ -1553,6 +2056,21 @@
 
             // ===== AUTO-LOCK: Tự động chốt khi sửa tay =====
             autoLockOnEdit();
+
+            maybeRenderTable();
+            renderCanvas();
+        }
+
+        function updateWebBar(spanIndex, pos, value) {
+            const span = currentGroup.Spans[spanIndex];
+            if (!span.WebBar) span.WebBar = [];
+            span.WebBar[pos] = value;
+
+            // ===== AUTO-LOCK: Tự động chốt khi sửa tay =====
+            autoLockOnEdit();
+
+            maybeRenderTable();
+            renderCanvas();
         }
 
         function updateSideBar(spanIndex, value) {
@@ -1671,51 +2189,11 @@
         function applyToDrawing() { window.chrome.webview.postMessage('APPLY|' + JSON.stringify(data)); }
 
         // ============ TOAST ============
+        // DISABLED per user request - no popup notifications to avoid disruption
         function showToast(msg) {
-            const existing = document.querySelector('.toast');
-            if (existing) existing.remove();
-
-            const toast = document.createElement('div');
-            toast.className = 'toast fixed bottom-16 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-2 rounded shadow-lg text-sm z-50';
-            toast.textContent = msg;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
+            // Intentionally do nothing - all popups disabled
+            console.log('[Toast disabled]', msg);
         }
-
-        // ============ CANVAS EVENTS ============
-        document.getElementById('beamCanvas').addEventListener('click', function (e) {
-            const rect = this.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            for (const bound of spanBounds) {
-                if (x >= bound.x && x <= bound.x + bound.width && y >= bound.y && y <= bound.y + bound.height) {
-                    if (copyFormatMode) {
-                        if (!copySourceSpan) {
-                            copySourceSpan = currentGroup.Spans[bound.index];
-                            showToast('Chọn nhịp đích...');
-                        } else {
-                            const dest = currentGroup.Spans[bound.index];
-                            dest.TopRebar = JSON.parse(JSON.stringify(copySourceSpan.TopRebar || []));
-                            dest.BotRebar = JSON.parse(JSON.stringify(copySourceSpan.BotRebar || []));
-                            dest.Stirrup = [...(copySourceSpan.Stirrup || [])];
-                            copyFormatMode = false;
-                            document.body.style.cursor = 'default';
-                            renderTable();
-                            showToast('✓ Copied format to ' + dest.SpanId);
-                        }
-                    } else {
-                        // Scroll table to row
-                        const row = document.querySelector(`tr[data-span-index="${bound.index}"]`);
-                        if (row) {
-                            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            highlightSpan(bound.index);
-                        }
-                    }
-                    break;
-                }
-            }
-        });
 
         // Init
         init();
@@ -1736,8 +2214,8 @@
             applyOptionToSpans,
 
             // Lock/Unlock
-            lockDesign,
-            unlockDesign,
+            toggleLock,
+            restoreLockedDesign,
             updateLockStatus,
 
             // Rendering
@@ -1788,6 +2266,14 @@
         // Sync state to namespace
         Beam.State.currentGroupIndex = currentGroupIndex;
         Beam.State.currentGroup = currentGroup;
+
+        // Keyboard shortcuts for Undo/Redo
+        document.addEventListener('keydown', (e) => {
+            // Skip if focus is in input
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.ctrlKey && e.key === 'z') { e.preventDefault(); Beam.History.undo(); }
+            if (e.ctrlKey && e.key === 'y') { e.preventDefault(); Beam.History.redo(); }
+        });
 
         console.log('Beam Viewer initialized with namespace:', Object.keys(Beam));
     </script>

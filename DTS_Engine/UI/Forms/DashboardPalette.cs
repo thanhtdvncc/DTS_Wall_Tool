@@ -18,7 +18,6 @@ namespace DTS_Engine.UI.Forms
         private static bool _lastCadMinimized;
         private static bool _userDragged = false;  // Track if user has manually moved the dashboard
         private static Point _userPosition = Point.Empty;  // Remember user's custom position
-        private static bool _lastCadFocused = true;  // Track AutoCAD focus state
         private static bool _isUpdatingPosition = false;  // Flag to prevent LocationChanged during programmatic update
 
         // Offset from AutoCAD window top-right corner
@@ -127,7 +126,6 @@ namespace DTS_Engine.UI.Forms
             // Init last position
             _lastCadRect = GetCadWindowRect();
             _lastCadMinimized = IsCadMinimized();
-            _lastCadFocused = true;
         }
 
         private static void SyncTimer_Tick(object sender, EventArgs e)
