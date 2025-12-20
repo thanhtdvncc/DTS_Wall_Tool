@@ -31,9 +31,22 @@
             const isHighlighted = index === global.Beam?.State?.highlightedSpanIndex;
             const rowClass = isHighlighted ? 'bg-blue-50' : (index % 2 ? 'bg-slate-50' : '');
 
-            // Get rebar strings
-            const topRebar = this._getRebarString(span.TopRebar);
-            const botRebar = this._getRebarString(span.BotRebar);
+            // Get rebar strings using structured RebarInfo if available
+            let topRebar = '-';
+            let botRebar = '-';
+
+            if (span.TopBackbone) {
+                topRebar = this._getMergedLabel(span.TopBackbone, span.TopAddLeft, span.TopAddRight);
+            } else {
+                topRebar = this._getLegacyRebarString(span.TopRebar);
+            }
+
+            if (span.BotBackbone) {
+                botRebar = this._getMergedLabel(span.BotBackbone, span.BotAddMid);
+            } else {
+                botRebar = this._getLegacyRebarString(span.BotRebar);
+            }
+
             const stirrup = span.Stirrup?.[1] || '-';
 
             return `
@@ -57,13 +70,35 @@
             `;
         },
 
-        /**
-         * Get display string for rebar array
-         */
-        _getRebarString(rebarArray) {
-            if (!rebarArray || !Array.isArray(rebarArray)) return '-';
+        _getMergedLabel(backbone, ...adds) {
+            if (!backbone) return '-';
 
-            // Flatten and filter
+            // Find max add
+            let maxAdd = null;
+            let maxCount = 0;
+            adds.forEach(a => {
+                if (a && a.Count > maxCount) {
+                    maxCount = a.Count;
+                    maxAdd = a;
+                }
+            });
+
+            if (!maxAdd) return backbone.DisplayString || '-';
+
+            // Merge if same diameter
+            if (backbone.Diameter === maxAdd.Diameter) {
+                const total = backbone.Count + maxAdd.Count;
+                return `${total}D${backbone.Diameter}`;
+            }
+
+            return `${backbone.DisplayString} + ${maxAdd.DisplayString}`;
+        },
+
+        /**
+         * Legacy support for string arrays
+         */
+        _getLegacyRebarString(rebarArray) {
+            if (!rebarArray || !Array.isArray(rebarArray)) return '-';
             const parts = [];
             for (let layer = 0; layer < rebarArray.length; layer++) {
                 const layerData = rebarArray[layer];
@@ -72,7 +107,6 @@
                     if (val && typeof val === 'string') parts.push(val);
                 }
             }
-
             return parts.length > 0 ? parts.join(' + ') : '-';
         },
 

@@ -151,26 +151,63 @@
         },
 
         /**
-         * Draw rebar lines
+         * Draw rebar lines (N-layers, Backbone + Add)
          */
         _drawRebar(ctx, x, y, w, span) {
-            const topY = y + 8;
-            const botY = y + this.BEAM_HEIGHT - 8;
+            const topY = y + 6;
+            const botY = y + this.BEAM_HEIGHT - 6;
+            const layerOffset = 4; // Distance between layers
 
-            // Top rebar (red)
-            ctx.strokeStyle = this.colors.rebarTop;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x + 5, topY);
-            ctx.lineTo(x + w - 5, topY);
-            ctx.stroke();
+            // --- TOP REBAR ---
+            // 1. Backbone (Run full length)
+            if (span.TopBackbone) {
+                this._drawRebarGroup(ctx, x, topY, w, span.TopBackbone, 'top', 0);
+            }
 
-            // Bottom rebar (blue)
-            ctx.strokeStyle = this.colors.rebarBot;
-            ctx.beginPath();
-            ctx.moveTo(x + 5, botY);
-            ctx.lineTo(x + w - 5, botY);
-            ctx.stroke();
+            // 2. Additional (Left, Mid, Right)
+            // Stacking: If backbone exists, add sits below it (higher Y)
+            let baseLayer = span.TopBackbone ? (span.TopBackbone.LayerCounts?.length || 1) : 0;
+
+            if (span.TopAddLeft) {
+                // Draw items Left (0 to 0.25L)
+                this._drawRebarGroup(ctx, x, topY, w * 0.25, span.TopAddLeft, 'top', baseLayer);
+            }
+            if (span.TopAddRight) {
+                // Draw items Right (0.75L to L)
+                this._drawRebarGroup(ctx, x + w * 0.75, topY, w * 0.25, span.TopAddRight, 'top', baseLayer);
+            }
+
+            // --- BOT REBAR ---
+            // 1. Backbone
+            if (span.BotBackbone) {
+                this._drawRebarGroup(ctx, x, botY, w, span.BotBackbone, 'bot', 0);
+            }
+            // 2. Additional Mid
+            baseLayer = span.BotBackbone ? (span.BotBackbone.LayerCounts?.length || 1) : 0;
+            if (span.BotAddMid) {
+                // Draw items Mid (0.15L to 0.85L)
+                this._drawRebarGroup(ctx, x + w * 0.15, botY, w * 0.7, span.BotAddMid, 'bot', baseLayer);
+            }
+        },
+
+        _drawRebarGroup(ctx, startX, startY, length, info, pos, startLayer) {
+            const isTop = pos === 'top';
+            const color = isTop ? this.colors.rebarTop : this.colors.rebarBot;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2; // Fixed thickness for now
+
+            const layers = info.LayerCounts || [info.Count];
+
+            layers.forEach((count, idx) => {
+                if (count <= 0) return;
+                const layerIdx = startLayer + idx;
+                const offset = layerIdx * 4 * (isTop ? 1 : -1); // Top goes down (+), Bot goes up (-)
+
+                ctx.beginPath();
+                ctx.moveTo(startX, startY + offset);
+                ctx.lineTo(startX + length, startY + offset);
+                ctx.stroke();
+            });
         },
 
         /**
@@ -181,15 +218,53 @@
             ctx.fillStyle = this.colors.label;
             ctx.font = 'bold 11px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText(span.SpanId || '', x + w / 2, y + this.BEAM_HEIGHT / 2 + 4);
+            ctx.textBaseline = 'middle';
+            ctx.fillText(span.SpanId || '', x + w / 2, y + this.BEAM_HEIGHT / 2);
+
+            // Rebar Labels based on RebarInfo
+            ctx.font = '10px sans-serif';
+
+            // Top Label (Max of Left/Mid/Right)
+            const topLabel = this._getMergedLabel(span.TopBackbone, span.TopAddLeft, span.TopAddRight);
+            ctx.fillStyle = this.colors.rebarTop;
+            ctx.fillText(topLabel, x + w / 2, y - 12);
+
+            // Bot Label
+            const botLabel = this._getMergedLabel(span.BotBackbone, span.BotAddMid);
+            ctx.fillStyle = this.colors.rebarBot;
+            ctx.fillText(botLabel, x + w / 2, y + this.BEAM_HEIGHT + 24);
 
             // Length dimension
             ctx.fillStyle = this.colors.dimension;
-            ctx.font = '10px sans-serif';
             ctx.fillText(`${(span.Length || 0).toFixed(2)}m`, x + w / 2, y + this.BEAM_HEIGHT + 12);
 
             // Section size
-            ctx.fillText(`${span.Width || 0}×${span.Height || 0}`, x + w / 2, y - 5);
+            ctx.fillText(`${span.Width || 0}×${span.Height || 0}`, x + w / 2, y - 2);
+        },
+
+        _getMergedLabel(backbone, ...adds) {
+            if (!backbone) return '';
+
+            // Find max add to combine with
+            let maxAdd = null;
+            let maxCount = 0;
+            adds.forEach(a => {
+                if (a && a.Count > maxCount) {
+                    maxCount = a.Count;
+                    maxAdd = a;
+                }
+            });
+
+            if (!maxAdd) return backbone.DisplayString || '';
+
+            // Merge if same diameter
+            if (backbone.Diameter === maxAdd.Diameter) {
+                const total = backbone.Count + maxAdd.Count;
+                return `${total}D${backbone.Diameter}`;
+            }
+
+            // Otherwise concat
+            return `${backbone.DisplayString} + ${maxAdd.DisplayString}`;
         }
     };
 

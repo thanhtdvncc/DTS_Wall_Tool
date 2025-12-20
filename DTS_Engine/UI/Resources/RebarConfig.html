@@ -505,6 +505,12 @@
                                     id="WebBarMinHeight">
                             </div>
                         </div>
+                        <div class="row">
+                            <div class="col"><label>Density Heuristic (Width/N)</label><input type="number"
+                                    id="DensityHeuristic" value="180" min="100" max="300"></div>
+                            <div class="col"></div>
+                            <div class="col"></div>
+                        </div>
                         <div class="check-row"><input type="checkbox" id="PreferSingleDiameter"><label
                                 for="PreferSingleDiameter">Ưu tiên cùng 1 đường kính (các lớp)</label></div>
                         <div class="check-row"><input type="checkbox" id="PreferSymmetric"><label
@@ -969,6 +975,29 @@
                 </div>
             </div>
 
+            <!-- RULES & PENALTIES (NEW) -->
+            <div class="section" style="background:#ffebee;border:1px solid #ef5350;">
+                <div class="section-header" style="background:#ef5350;color:white;">⚠️ Quy tắc & Điểm phạt (Rules &
+                    Penalties)
+                </div>
+                <div class="section-body">
+                    <div class="row">
+                        <div class="col">
+                            <label>Phạt thép lãng phí (Waste)</label>
+                            <input type="number" id="WastePenaltyScore" value="20">
+                        </div>
+                        <div class="col">
+                            <label>Phạt lệch pha (Alignment)</label>
+                            <input type="number" id="AlignmentPenaltyScore" value="25">
+                        </div>
+                        <div class="col">
+                            <label>Pyramid Penalty (Critical)</label>
+                            <input type="number" id="PyramidPenaltyScore" value="100">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- CURTAILMENT SETTINGS (Vùng cắt thép gia cường) -->
             <div class="section" style="background:#fff9e6;border:1px solid #f59e0b;">
                 <div class="section-header" style="background:#f59e0b;color:white;">✂️ Vùng cắt thép gia cường
@@ -978,43 +1007,33 @@
                         Quy định điểm cắt thép gia cường tại vị trí gối và nhịp. Tính theo tỷ lệ nhịp (L).
                     </div>
 
-                    <!-- Dầm phụ (Beam) -->
-                    <div style="margin-bottom:12px;">
-                        <label style="font-weight:600;color:#374151;">📐 Dầm phụ (Beam)</label>
-                        <div class="row">
-                            <div class="col">
-                                <label>Thép mũ vươn ra nhịp (×L)</label>
-                                <input type="number" id="BeamTopSupportExtRatio" step="0.01" min="0.1" max="0.5"
-                                    value="0.25" placeholder="0.25 = L/4">
-                            </div>
-                            <div class="col">
-                                <label>Cắt thép bụng tại (×L từ gối)</label>
-                                <input type="number" id="BeamBotSpanCutRatio" step="0.01" min="0.1" max="0.5"
-                                    value="0.20" placeholder="0.20 = 0.2L">
-                            </div>
+                    <div class="row">
+                        <div class="col">
+                            <label>Top Ext (Gối ra nhịp)</label>
+                            <input type="number" id="TopSupportExtRatio" step="0.01" min="0.1" max="0.5" value="0.25"
+                                placeholder="0.25 = L/4">
+                        </div>
+                        <div class="col">
+                            <label>Bot Cut (Gối vào nhịp)</label>
+                            <input type="number" id="BotSpanCutRatio" step="0.01" min="0.1" max="0.5" value="0.15"
+                                placeholder="0.15 = 0.15L">
                         </div>
                     </div>
-
-                    <!-- Dầm chính (Girder) -->
-                    <div>
-                        <label style="font-weight:600;color:#374151;">🏗️ Dầm chính (Girder)</label>
-                        <div class="row">
-                            <div class="col">
-                                <label>Thép mũ vươn ra nhịp (×L)</label>
-                                <input type="number" id="GirderTopSupportExtRatio" step="0.01" min="0.1" max="0.5"
-                                    value="0.33" placeholder="0.33 = L/3">
-                            </div>
-                            <div class="col">
-                                <label>Cắt thép bụng tại (×L từ gối)</label>
-                                <input type="number" id="GirderBotSpanCutRatio" step="0.01" min="0.1" max="0.5"
-                                    value="0.15" placeholder="0.15 = 0.15L">
-                            </div>
+                    <div class="row">
+                        <div class="col">
+                            <label>Support Reinf Length (Weight calc)</label>
+                            <input type="number" id="SupportReinfRatio" step="0.01" min="0.1" max="1.0" value="0.33"
+                                placeholder="0.33">
+                        </div>
+                        <div class="col">
+                            <label>MidSpan Reinf Length (Weight calc)</label>
+                            <input type="number" id="MidSpanReinfRatio" step="0.01" min="0.1" max="1.0" value="0.8"
+                                placeholder="0.8">
                         </div>
                     </div>
 
                     <div class="hint" style="margin-top:8px;">
-                        Thép mũ (Top) = kéo dài từ mặt gối ra nhịp. Thép bụng (Bot) = cắt tại vị trí tính từ mép gối vào
-                        nhịp.
+                        Các hệ số trên dùng để tính toán chiều dài và trọng lượng thép (Weight Calculation).
                     </div>
                 </div>
             </div>
@@ -1836,6 +1855,7 @@
                 setId('MaxLayers', data.Beam?.MaxLayers ?? 2);
                 setId('MinBarsPerLayer', data.Beam?.MinBarsPerLayer ?? 2);
                 setId('WebBarMinHeight', data.Beam?.WebBarMinHeight);
+                setId('DensityHeuristic', data.Beam?.DensityHeuristic ?? 180); // NEW
                 setChk('PreferSingleDiameter', data.Beam?.PreferSingleDiameter ?? true);
                 setChk('PreferSymmetric', data.Beam?.PreferSymmetric);
                 setChk('PreferFewerBars', data.Beam?.PreferFewerBars ?? true);
@@ -1928,11 +1948,16 @@
                     document.getElementById('GirderBotSpliceZone').value = data.Detailing?.GirderRule?.BotSpliceZone ?? 0;
                     setChk('GirderAllowLapInJoint', data.Detailing?.GirderRule?.AllowLapSpliceInJoint ?? true);
 
+                    // Rules & Penalties (NEW)
+                    setId('WastePenaltyScore', data.Rules?.WastePenaltyScore ?? 20);
+                    setId('AlignmentPenaltyScore', data.Rules?.AlignmentPenaltyScore ?? 25);
+                    setId('PyramidPenaltyScore', data.Rules?.PyramidPenaltyScore ?? 100);
+
                     // Curtailment Settings (NEW)
-                    setId('BeamTopSupportExtRatio', data.Beam?.BeamCurtailment?.TopSupportExtRatio ?? 0.25);
-                    setId('BeamBotSpanCutRatio', data.Beam?.BeamCurtailment?.BotSpanCutRatio ?? 0.20);
-                    setId('GirderTopSupportExtRatio', data.Beam?.GirderCurtailment?.TopSupportExtRatio ?? 0.33);
-                    setId('GirderBotSpanCutRatio', data.Beam?.GirderCurtailment?.BotSpanCutRatio ?? 0.15);
+                    setId('TopSupportExtRatio', data.Curtailment?.TopSupportExtRatio ?? 0.25);
+                    setId('BotSpanCutRatio', data.Curtailment?.BotSpanCutRatio ?? 0.15);
+                    setId('SupportReinfRatio', data.Curtailment?.SupportReinfRatio ?? 0.33);
+                    setId('MidSpanReinfRatio', data.Curtailment?.MidSpanReinfRatio ?? 0.8);
                 }
 
                 // Tab 4: Anchorage - Initialize saved presets and matrix
@@ -2199,6 +2224,7 @@
                         MaxLayers: getVal('MaxLayers') || 2,
                         MinBarsPerLayer: getVal('MinBarsPerLayer') || 2,
                         WebBarMinHeight: getVal('WebBarMinHeight'),
+                        DensityHeuristic: getVal('DensityHeuristic') || 180, // NEW
                         PreferSingleDiameter: getChk('PreferSingleDiameter'),
                         PreferSymmetric: getChk('PreferSymmetric'),
                         PreferFewerBars: getChk('PreferFewerBars'),
@@ -2214,16 +2240,7 @@
                         MaxDiameterDiff: getVal('MaxDiameterDiff') || 1,
                         StandardBarLength: getVal('StandardBarLength') || 11700,
                         LapSpliceMultiplier: getVal('BeamLapSpliceMultiplier') || 40,
-                        MatchTopLayerBars: getChk('MatchTopLayerBars'),
-                        // Curtailment Settings (NEW)
-                        BeamCurtailment: {
-                            TopSupportExtRatio: getVal('BeamTopSupportExtRatio') || 0.25,
-                            BotSpanCutRatio: getVal('BeamBotSpanCutRatio') || 0.20
-                        },
-                        GirderCurtailment: {
-                            TopSupportExtRatio: getVal('GirderTopSupportExtRatio') || 0.33,
-                            BotSpanCutRatio: getVal('GirderBotSpanCutRatio') || 0.15
-                        }
+                        MatchTopLayerBars: getChk('MatchTopLayerBars')
                     },
                     Column: {
                         MainBarRange: getVal('ColMainBarRange') || '16-28',
@@ -2247,6 +2264,17 @@
                     StoryTolerance: getVal('StoryTolerance') || 500,
                     StoryConfigs: collectStoryConfigs(),
                     Anchorage: collectAnchorageData(),
+                    Curtailment: {
+                        TopSupportExtRatio: getVal('TopSupportExtRatio') || 0.25,
+                        BotSpanCutRatio: getVal('BotSpanCutRatio') || 0.15,
+                        SupportReinfRatio: getVal('SupportReinfRatio') || 0.33,
+                        MidSpanReinfRatio: getVal('MidSpanReinfRatio') || 0.8
+                    },
+                    Rules: {
+                        WastePenaltyScore: getVal('WastePenaltyScore') || 20,
+                        AlignmentPenaltyScore: getVal('AlignmentPenaltyScore') || 25,
+                        PyramidPenaltyScore: getVal('PyramidPenaltyScore') || 100
+                    },
                     Detailing: {
                         MaxBarLength: getVal('MaxBarLength') || 11700,
                         MinBarLength: getVal('MinBarLength') || 2000,
