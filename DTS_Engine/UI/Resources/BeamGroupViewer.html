@@ -143,10 +143,9 @@
     </header>
 
     <!-- MAIN -->
-    <main class="flex-1 flex flex-col overflow-hidden">
-        <!-- CANVAS CONTAINER - Expanded to fill available space -->
-        <div class="flex-1 bg-white border-b border-slate-200 overflow-x-auto overflow-y-hidden relative"
-            id="canvasContainer">
+    <main class="flex-1 flex flex-col overflow-hidden relative">
+        <!-- CANVAS CONTAINER - Full height, table overlays on top -->
+        <div class="absolute inset-0 bg-white border-b border-slate-200 overflow-hidden" id="canvasContainer">
             <canvas id="beamCanvas" height="360"></canvas>
             <!-- View Mode Toggle: Mode 1 = Section, Mode 2 = Long Rebar, Mode 3 = Shear-Web Bar -->
             <div class="absolute top-2 right-2 flex gap-1">
@@ -161,13 +160,13 @@
             <div id="zoomIndicator"
                 class="absolute bottom-2 right-2 bg-slate-800/70 text-white text-[10px] px-2 py-0.5 rounded">100%</div>
             <!-- Help overlay -->
-            <div class="absolute bottom-2 left-2 text-[9px] text-slate-400 bg-white/70 px-1 rounded">Alt+Drag: Pan |
-                Ctrl+Drag: Box Zoom | Wheel: Zoom | DblClick: Reset</div>
+            <div class="absolute bottom-2 left-2 text-[9px] text-slate-400 bg-white/70 px-1 rounded">Drag: Box Zoom |
+                Alt+Drag: Pan | Wheel: Zoom | DblClick: Reset</div>
         </div>
 
-        <!-- METRICS BAR -->
-        <div
-            class="flex-none bg-slate-50 border-b border-slate-200 px-4 py-2 flex items-center gap-6 text-xs flex-wrap">
+        <!-- METRICS BAR - Overlay at top -->
+        <div id="metricsBar"
+            class="absolute top-0 left-0 right-0 bg-slate-50/95 backdrop-blur border-b border-slate-200 px-4 py-2 flex items-center gap-6 text-xs flex-wrap z-10">
             <div class="flex items-center gap-2">
                 <span class="text-slate-500">Backbone:</span>
                 <span class="font-bold text-blue-600" id="metricBackbone">-</span>
@@ -191,9 +190,9 @@
             <div id="warningsContainer" class="flex gap-2"></div>
         </div>
 
-        <!-- COLLAPSIBLE TABLE SECTION -->
+        <!-- COLLAPSIBLE TABLE SECTION - Overlay at bottom -->
         <div id="tablePanel"
-            class="flex-none bg-slate-50 border-t border-slate-300 transition-all duration-300 ease-in-out max-h-[300px] overflow-hidden">
+            class="absolute bottom-0 left-0 right-0 bg-slate-50/95 backdrop-blur border-t border-slate-300 transition-all duration-300 ease-in-out max-h-[300px] overflow-hidden z-10">
             <!-- Toggle Button -->
             <button onclick="toggleTablePanel()"
                 class="w-full py-1 bg-slate-200 hover:bg-slate-300 flex items-center justify-center gap-2 text-xs text-slate-600">
@@ -216,7 +215,7 @@
                 </div>
 
                 <div class="bg-white rounded border border-slate-200 overflow-hidden">
-                    <table class="w-full text-xs">
+                    <table class="table-fixed w-max text-xs whitespace-nowrap">
                         <thead class="bg-slate-100 sticky top-0">
                             <tr>
                                 <th class="p-1 text-left w-14" rowspan="2">Nhịp</th>
@@ -232,15 +231,15 @@
                                 <th class="p-1 text-center w-12" rowspan="2">Sidebar</th>
                             </tr>
                             <tr class="text-[10px] text-slate-500">
-                                <th class="p-1 bg-red-50">Gối T</th>
-                                <th class="p-1 bg-red-50">Giữa</th>
-                                <th class="p-1 bg-red-50">Gối P</th>
-                                <th class="p-1 bg-blue-50">Gối T</th>
-                                <th class="p-1 bg-blue-50">Giữa</th>
-                                <th class="p-1 bg-blue-50">Gối P</th>
-                                <th class="p-1">L1</th>
-                                <th class="p-1">Mid</th>
-                                <th class="p-1">L2</th>
+                                <th class="p-1 bg-red-50 w-12">Gối T</th>
+                                <th class="p-1 bg-red-50 w-12">Giữa</th>
+                                <th class="p-1 bg-red-50 w-12">Gối P</th>
+                                <th class="p-1 bg-blue-50 w-12">Gối T</th>
+                                <th class="p-1 bg-blue-50 w-12">Giữa</th>
+                                <th class="p-1 bg-blue-50 w-12">Gối P</th>
+                                <th class="p-1 w-12">L1</th>
+                                <th class="p-1 w-12">Mid</th>
+                                <th class="p-1 w-12">L2</th>
                             </tr>
                         </thead>
                         <tbody id="spanTableBody"></tbody>
@@ -423,22 +422,32 @@
             }
         }
 
-        // Resize canvas to fill container
+        // Resize canvas to fill container (proper pixel sizing, no CSS stretch)
         function resizeCanvas() {
             const container = document.getElementById('canvasContainer');
             const canvas = document.getElementById('beamCanvas');
             if (container && canvas) {
-                canvas.style.width = '100%';
-                canvas.style.height = '100%';
+                // Remove CSS sizing to prevent stretching
+                canvas.style.width = '';
+                canvas.style.height = '';
                 // Set actual canvas resolution based on container size
-                canvas.height = container.clientHeight || 300;
-                renderCanvas();
+                const w = container.clientWidth || 800;
+                const h = container.clientHeight || 300;
+                if (canvas.width !== w || canvas.height !== h) {
+                    canvas.width = w;
+                    canvas.height = h;
+                    renderCanvas();
+                }
             }
         }
 
         function init() {
-            // Resize canvas initially and on window resize
+            // Resize canvas with multiple fallbacks for reliable sizing
+            // Container may not have size immediately on WebView2 load
             resizeCanvas();
+            requestAnimationFrame(resizeCanvas);
+            setTimeout(resizeCanvas, 100);
+            setTimeout(resizeCanvas, 300);
             window.addEventListener('resize', resizeCanvas);
 
             // Sync material grades from DtsSettings to read-only display
@@ -467,8 +476,27 @@
                         const b = spanBounds[i];
                         if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
                             highlightSpan(i);
+
+                            // Expand table panel if collapsed
+                            const panel = document.getElementById('tablePanel');
+                            if (panel && panel.classList.contains('max-h-8')) {
+                                toggleTablePanel(); // Expand it
+                            }
+
+                            // Scroll to row within tablePanelContent
                             const row = document.querySelector(`[data-span-index="${i}"]`);
-                            if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            if (row) {
+                                const container = document.getElementById('tablePanelContent');
+                                if (container) {
+                                    // Calculate scroll position to center row
+                                    const rowTop = row.offsetTop;
+                                    const containerHeight = container.clientHeight;
+                                    container.scrollTo({
+                                        top: rowTop - containerHeight / 2 + row.offsetHeight / 2,
+                                        behavior: 'smooth'
+                                    });
+                                }
+                            }
                             break;
                         }
                     }
@@ -515,11 +543,12 @@
                     }
                 });
 
-                // Middle click or Alt+click to start pan, Ctrl+click to start box zoom
+                // Middle click or Alt+click to start pan, Ctrl+click or left-click-hold to start box zoom
+                let boxZoomTimer = null;
                 canvas.addEventListener('mousedown', (e) => {
                     const rect = canvas.getBoundingClientRect();
 
-                    // Ctrl+Left click = Box Zoom
+                    // Ctrl+Left click = Immediate Box Zoom
                     if (e.button === 0 && e.ctrlKey) {
                         boxZoomActive = true;
                         boxZoomStartX = e.clientX - rect.left;
@@ -531,8 +560,23 @@
                         return;
                     }
 
+                    // Left click = start timer for box zoom (hold 200ms to activate)
+                    if (e.button === 0 && !e.altKey) {
+                        const startX = e.clientX - rect.left;
+                        const startY = e.clientY - rect.top;
+                        boxZoomTimer = setTimeout(() => {
+                            boxZoomActive = true;
+                            boxZoomStartX = startX;
+                            boxZoomStartY = startY;
+                            boxZoomEndX = startX;
+                            boxZoomEndY = startY;
+                            canvas.style.cursor = 'crosshair';
+                        }, 200); // 200ms hold to start box zoom
+                    }
+
                     // Middle click or Alt+Left click = Pan
                     if (e.button === 1 || (e.button === 0 && e.altKey)) {
+                        if (boxZoomTimer) { clearTimeout(boxZoomTimer); boxZoomTimer = null; }
                         canvasDragging = true;
                         canvasLastX = e.clientX;
                         canvasLastY = e.clientY;
@@ -542,6 +586,12 @@
                 });
 
                 canvas.addEventListener('mouseup', (e) => {
+                    // Clear box zoom timer if quick click
+                    if (boxZoomTimer) {
+                        clearTimeout(boxZoomTimer);
+                        boxZoomTimer = null;
+                    }
+
                     // Finish box zoom
                     if (boxZoomActive) {
                         boxZoomActive = false;
@@ -590,6 +640,7 @@
                 });
 
                 canvas.addEventListener('mouseleave', () => {
+                    if (boxZoomTimer) { clearTimeout(boxZoomTimer); boxZoomTimer = null; }
                     canvasDragging = false;
                     boxZoomActive = false;
                     canvas.style.cursor = 'default';
@@ -612,15 +663,37 @@
                     renderCanvas();
                 }, { passive: false });
 
-                // Double click to reset view
+                // Double click to reset and center view
                 canvas.addEventListener('dblclick', () => {
                     canvasZoom = 1.0;
                     canvasPanX = 0;
                     canvasPanY = 0;
                     renderCanvas();
+                    centerCanvas(); // Center content instead of going to corner
                 });
 
                 console.log('Canvas interaction system initialized');
+            }
+
+            // Handle error mode (from C# when data too large or serialization failed)
+            if (data.mode === 'error') {
+                const canvas = document.getElementById('beamCanvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = 600;
+                ctx.fillStyle = '#fef2f2';
+                ctx.fillRect(0, 0, 600, 360);
+                ctx.fillStyle = '#dc2626';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('⚠️ Lỗi khởi tạo dữ liệu', 300, 140);
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = '#b91c1c';
+                ctx.fillText(data.error || 'Unknown error', 300, 170);
+                ctx.fillStyle = '#64748b';
+                ctx.fillText('Vui lòng chọn ít đối tượng hơn hoặc kiểm tra dữ liệu.', 300, 200);
+                document.getElementById('groupSelect').style.display = 'none';
+                console.error('Data error:', data.error);
+                return;
             }
 
             // Handle view mode: 'groups' vs 'single'
@@ -672,12 +745,58 @@
             selectedOptionKey = currentGroup?.SelectedDesign ? 'locked' : String(currentGroup?.SelectedBackboneIndex || 0);
 
             populateOptionSelect();
+
+            // Apply selected option to spans (populate table with rebar data)
+            const opt = getSelectedOption();
+            if (opt) applyOptionToSpans(opt);
+
+            // Reset zoom/pan and center view
+            canvasZoom = 1.0;
+            canvasPanX = 0;
+            canvasPanY = 0;
+
             renderCanvas();
+            centerCanvas(); // Center after first render
             renderTable();
             updateMetrics();
             updateGroupInfo();
             loadMaterialSelects();
             updateLockStatus();
+        }
+
+        // Center canvas viewport on content
+        function centerCanvas() {
+            const canvas = document.getElementById('beamCanvas');
+            if (!canvas || spanBounds.length === 0) return;
+
+            // Calculate content bounds
+            const minX = Math.min(...spanBounds.map(b => b.x));
+            const maxX = Math.max(...spanBounds.map(b => b.x + b.width));
+            const minY = Math.min(...spanBounds.map(b => b.y));
+            const maxY = Math.max(...spanBounds.map(b => b.y + b.height));
+
+            const contentW = maxX - minX;
+            const contentH = maxY - minY;
+            const contentCenterX = (minX + maxX) / 2;
+            const contentCenterY = (minY + maxY) / 2;
+
+            // Fit content in canvas with padding
+            const padX = 40, padY = 30;
+            const scaleX = (canvas.width - padX * 2) / contentW;
+            const scaleY = (canvas.height - padY * 2) / contentH;
+            canvasZoom = Math.min(scaleX, scaleY, 2.0); // Max 2x
+
+            // Center content
+            canvasPanX = canvas.width / 2 - contentCenterX * canvasZoom;
+            canvasPanY = canvas.height / 2 - contentCenterY * canvasZoom;
+
+            renderCanvas();
+            updateZoomIndicator();
+        }
+
+        function updateZoomIndicator() {
+            const el = document.getElementById('zoomIndicator');
+            if (el) el.textContent = Math.round(canvasZoom * 100) + '%';
         }
 
         function prevGroup() { if (currentGroupIndex > 0) loadGroup(currentGroupIndex - 1); }
@@ -687,6 +806,21 @@
             const sel = document.getElementById('optionSelect');
             sel.innerHTML = '';
 
+            const getOptionScore = (opt) => {
+                if (!opt) return Number.NEGATIVE_INFINITY;
+                const v = (opt.TotalScore ?? opt.ConstructabilityScore ?? opt.EfficiencyScore);
+                const n = Number(v);
+                return Number.isFinite(n) ? n : Number.NEGATIVE_INFINITY;
+            };
+
+            // DEBUG: Log SelectedDesign status
+            console.log('populateOptionSelect:', {
+                groupName: currentGroup?.GroupName,
+                hasSelectedDesign: !!currentGroup?.SelectedDesign,
+                selectedDesign: currentGroup?.SelectedDesign,
+                backboneOptionsCount: currentGroup?.BackboneOptions?.length || 0
+            });
+
             // Nếu có SelectedDesign (đã chốt), luôn hiển thị đầu tiên với ⭐
             if (currentGroup?.SelectedDesign) {
                 const lockedOpt = document.createElement('option');
@@ -695,6 +829,7 @@
                 const designName = currentGroup.SelectedDesign.OptionName || 'Phương án đã chốt';
                 lockedOpt.textContent = `⭐ ${designName} ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang dùng)'}`;
                 sel.appendChild(lockedOpt);
+                console.log('Added locked option:', designName);
             }
 
             // Kiểm tra BackboneOptions
@@ -708,11 +843,21 @@
                 noCalcOpt.disabled = true;
                 sel.appendChild(noCalcOpt);
             } else {
-                // Thêm các phương án máy đề xuất
-                options.forEach((opt, i) => {
+                // Thêm các phương án máy đề xuất (sort theo Score giảm dần)
+                const ranked = options
+                    .map((opt, originalIndex) => ({ opt, originalIndex, score: getOptionScore(opt) }))
+                    .sort((a, b) => (b.score - a.score) || (a.originalIndex - b.originalIndex));
+
+                const bestOriginalIndex = ranked.length > 0 ? ranked[0].originalIndex : 0;
+
+                ranked.forEach((r, rankIdx) => {
+                    const opt = r.opt;
                     const option = document.createElement('option');
-                    option.value = i;
-                    option.textContent = `${opt.OptionName || 'Option ' + (i + 1)} - D${opt.BackboneDiameter || '?'}${i === 0 ? ' ★Best' : ''}`;
+                    option.value = String(r.originalIndex);
+                    const score = getOptionScore(opt);
+                    const scoreText = Number.isFinite(score) ? ` | Score ${score.toFixed(0)}` : '';
+                    const bestTag = (r.originalIndex === bestOriginalIndex) ? ' ★Best' : '';
+                    option.textContent = `#${rankIdx + 1} ${opt.OptionName || ('Option ' + (r.originalIndex + 1))} - D${opt.BackboneDiameter || '?'}${scoreText}${bestTag}`;
                     sel.appendChild(option);
                 });
             }
@@ -721,7 +866,13 @@
             if (selectedOptionKey == null) {
                 selectedOptionKey = currentGroup?.SelectedDesign ? 'locked' : String(currentGroup?.SelectedBackboneIndex || 0);
             }
-            sel.value = selectedOptionKey;
+
+            // Nếu selectedOptionKey không tồn tại trong dropdown (vd: chưa tính), fallback về option đầu
+            const validValues = Array.from(sel.options).map(o => o.value);
+            if (selectedOptionKey != null && !validValues.includes(String(selectedOptionKey))) {
+                selectedOptionKey = sel.options.length > 0 ? sel.options[0].value : null;
+            }
+            sel.value = selectedOptionKey ?? '';
         }
 
         function selectOption(index) {
@@ -961,9 +1112,9 @@
             const maxLen = Math.max(...lengths);
             const minLen = Math.min(...lengths);
 
-            // Calculate base width for max-length span
-            const maxSpanWidth = Math.min(200, (MAX_CANVAS_WIDTH - CANVAS_PADDING * 2 - spans.length * 15) / Math.max(1, spans.length));
-            const minSpanWidth = Math.max(MIN_SPAN_WIDTH, maxSpanWidth / 5); // Min is 1/5 of max
+            // Calculate base width for max-length span (+30% increase)
+            const maxSpanWidth = Math.min(260, (MAX_CANVAS_WIDTH - CANVAS_PADDING * 2 - spans.length * 15) / Math.max(1, spans.length)) * 1.3;
+            const minSpanWidth = Math.max(MIN_SPAN_WIDTH * 1.3, maxSpanWidth / 5); // Min is 1/5 of max
 
             let totalWidth = CANVAS_PADDING * 2;
             const spanWidths = lengths.map(len => {
@@ -973,12 +1124,7 @@
                 return w;
             });
 
-            // Set canvas size accounting for zoom
-            const baseWidth = Math.min(totalWidth, MAX_CANVAS_WIDTH);
-            const height = 180;
-            canvas.width = baseWidth;
-            canvas.height = height;
-
+            // Use canvas size from resizeCanvas (don't override here)
             // Clear with light background (full canvas, before transform)
             ctx.fillStyle = '#f8fafc';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1310,12 +1456,12 @@
                 const asProv = span.AsProv?.[type]?.[posNames[idx]] || 0;
                 const isUnder = asProv > 0 && asProv < asReq;
 
-                html += `<td class="p-0.5 ${bgClass}">
+                html += `<td class="p-0.5 ${bgClass} w-12">
                     <input type="text" value="${val}" 
                         onchange="updateLayerRebar(${spanIndex}, '${type}', ${layer}, ${pos}, this.value)"
                         placeholder=""
                         title="As_req: ${asReq > 0 ? asReq.toFixed(1) : '-'} / As_prov: ${asProv > 0 ? asProv.toFixed(1) : '-'}"
-                        class="w-10 border ${isUnder ? 'border-red-400 bg-red-50' : 'border-slate-200'} rounded px-0.5 py-0.5 text-center text-[10px] bg-white">
+                        class="w-full min-w-0 border ${isUnder ? 'border-red-400 bg-red-50' : 'border-slate-200'} rounded px-0.5 py-0.5 text-center text-[10px] bg-white">
                 </td>`;
             });
             return html;
@@ -1329,11 +1475,11 @@
 
             positions.forEach((pos) => {
                 const val = span.Stirrup?.[pos] || '';
-                html += `<td class="p-0.5" rowspan="${maxLayers}">
+                html += `<td class="p-0.5 w-12" rowspan="${maxLayers}">
                     <input type="text" value="${val}" 
                         onchange="updateStirrup(${spanIndex}, ${pos}, this.value)"
                         placeholder="${placeholders[pos]}"
-                        class="w-12 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px]">
+                        class="w-full min-w-0 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px]">
                 </td>`;
             });
             return html;

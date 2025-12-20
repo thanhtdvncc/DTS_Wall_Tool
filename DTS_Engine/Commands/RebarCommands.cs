@@ -1511,22 +1511,29 @@ namespace DTS_Engine.Commands
                         }
                     });
 
-                    // Find handles that are already in groups
-                    var handlesInGroups = new HashSet<string>();
+                    // Find handles that are already in groups (UPPERCASE for case-insensitive comparison)
+                    var handlesInGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var g in allGroups)
                     {
                         foreach (var h in g.EntityHandles)
-                            handlesInGroups.Add(h);
+                            handlesInGroups.Add(h?.ToUpperInvariant() ?? h);
                     }
+
+                    // Normalize selected handles to uppercase
+                    var selectedHandlesNormalized = new HashSet<string>(
+                        selectedHandles.Select(h => h?.ToUpperInvariant() ?? h),
+                        StringComparer.OrdinalIgnoreCase);
 
                     // === 1. GET GROUPS that contain selected beams ===
                     var matchedGroups = allGroups
-                        .Where(g => g.EntityHandles.Any(h => selectedHandles.Contains(h)))
+                        .Where(g => g.EntityHandles.Any(h => selectedHandlesNormalized.Contains(h?.ToUpperInvariant() ?? h)))
                         .ToList();
                     resultGroups.AddRange(matchedGroups);
 
-                    // === 2. CREATE TEMP GROUPS for ungrouped beams ===
-                    var ungroupedHandles = selectedHandles.Where(h => !handlesInGroups.Contains(h)).ToList();
+                    // === 2. CREATE TEMP GROUPS for ungrouped beams (filter out already in groups) ===
+                    var ungroupedHandles = selectedHandles
+                        .Where(h => !handlesInGroups.Contains(h?.ToUpperInvariant() ?? h))
+                        .ToList();
 
                     if (ungroupedHandles.Count > 0)
                     {

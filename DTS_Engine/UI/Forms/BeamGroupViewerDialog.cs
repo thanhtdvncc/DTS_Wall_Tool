@@ -68,7 +68,7 @@ namespace DTS_Engine.UI.Forms
                 await _webView.EnsureCoreWebView2Async(env);
 
                 // === SECURITY SETTINGS - Prevent user inspection ===
-                _webView.CoreWebView2.Settings.AreDevToolsEnabled = false;           // Disable F12 DevTools
+                _webView.CoreWebView2.Settings.AreDevToolsEnabled = true;           // Enabled for debug
                 _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false; // Disable right-click menu
                 _webView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false; // Disable Ctrl+U, Ctrl+Shift+I, etc.
                 _webView.CoreWebView2.Settings.IsZoomControlEnabled = false;          // Disable Ctrl+scroll zoom
@@ -78,7 +78,19 @@ namespace DTS_Engine.UI.Forms
                 _webView.WebMessageReceived += WebView_WebMessageReceived;
 
                 string html = LoadHtmlFromResource();
-                _webView.NavigateToString(html);
+
+                // Safety check: WebView2 NavigateToString has content size limits
+                if (html.Length > 2_000_000) // 2MB limit for NavigateToString
+                {
+                    // Fallback to file-based approach
+                    string tempPath = Path.Combine(Path.GetTempPath(), "dts_beam_viewer.html");
+                    File.WriteAllText(tempPath, html, System.Text.Encoding.UTF8);
+                    _webView.CoreWebView2.Navigate("file:///" + tempPath.Replace("\\", "/"));
+                }
+                else
+                {
+                    _webView.NavigateToString(html);
+                }
             }
             catch (ObjectDisposedException) { }
             catch (Exception ex)
@@ -110,22 +122,49 @@ namespace DTS_Engine.UI.Forms
                     var settings = DtsSettings.Instance;
                     string viewMode = (_groups != null && _groups.Count > 0) ? "groups" : "single";
 
-                    var data = new
+                    try
                     {
-                        mode = viewMode,
-                        groups = _groups,
-                        settings = new
+                        var data = new
                         {
-                            ConcreteGradeName = settings.General?.ConcreteGradeName ?? "B25",
-                            SteelGradeName = settings.General?.SteelGradeName ?? "CB400-V",
-                            SteelGradeMain = settings.General?.SteelGradeMain ?? 400,
-                            MaxLayers = settings.Beam?.MaxLayers ?? 2,
-                            MainBarRange = settings.Beam?.MainBarRange ?? "16-25",
-                            StirrupBarRange = settings.Beam?.StirrupBarRange ?? "8-10"
+                            mode = viewMode,
+                            groups = _groups,
+                            settings = new
+                            {
+                                ConcreteGradeName = settings.General?.ConcreteGradeName ?? "B25",
+                                SteelGradeName = settings.General?.SteelGradeName ?? "CB400-V",
+                                SteelGradeMain = settings.General?.SteelGradeMain ?? 400,
+                                MaxLayers = settings.Beam?.MaxLayers ?? 2,
+                                MainBarRange = settings.Beam?.MainBarRange ?? "16-25",
+                                StirrupBarRange = settings.Beam?.StirrupBarRange ?? "8-10"
+                            }
+                        };
+
+                        // Safe JSON serialization with reference loop handling
+                        var jsonSettings = new JsonSerializerSettings
+                        {
+                            ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+                            MaxDepth = 32,
+                            NullValueHandling = NullValueHandling.Ignore
+                        };
+                        string json = JsonConvert.SerializeObject(data, jsonSettings);
+
+                        // Check JSON size - WebView2 NavigateToString has ~2MB limit
+                        if (json.Length > 1_500_000) // 1.5MB limit for safety
+                        {
+                            // Too large - send minimal data with error message
+                            var errorData = new { mode = "error", error = $"Data too large ({json.Length / 1024}KB). Chọn ít đối tượng hơn (tối đa ~50 groups)." };
+                            json = JsonConvert.SerializeObject(errorData);
                         }
-                    };
-                    string json = JsonConvert.SerializeObject(data);
-                    html = html.Replace("__DATA_JSON__", json);
+
+                        html = html.Replace("__DATA_JSON__", json);
+                    }
+                    catch (Exception ex)
+                    {
+                        // JSON serialization failed - send error message instead of crashing
+                        var errorData = new { mode = "error", error = $"Data error: {ex.Message}" };
+                        string errorJson = JsonConvert.SerializeObject(errorData);
+                        html = html.Replace("__DATA_JSON__", errorJson);
+                    }
 
                     return html;
                 }
