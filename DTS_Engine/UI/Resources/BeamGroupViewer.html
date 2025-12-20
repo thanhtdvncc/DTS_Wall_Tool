@@ -440,6 +440,8 @@
                 currentGroup.LockedAt = null;
                 Beam.History.isLocked = false;
                 lockedSnapshot = null;
+                // Notify C# to update _groups
+                window.chrome.webview?.postMessage('UNLOCK_DESIGN|' + currentGroupIndex);
             } else {
                 // Lock current design
                 const opt = getSelectedOption();
@@ -448,6 +450,8 @@
                 currentGroup.LockedAt = new Date().toISOString();
                 Beam.History.isLocked = true;
                 lockedSnapshot = Beam.History.snapshot();
+                // Notify C# to update _groups with SelectedDesign
+                window.chrome.webview?.postMessage('LOCK_DESIGN|' + currentGroupIndex + '|' + JSON.stringify(currentGroup.SelectedDesign));
             }
             updateLockStatus();
             populateOptionSelect();

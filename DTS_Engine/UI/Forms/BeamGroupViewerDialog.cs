@@ -294,26 +294,46 @@ namespace DTS_Engine.UI.Forms
                 return;
             }
 
-            // === LOCK_DESIGN: Just log, no SAP sync (separate command for that) ===
+            // === LOCK_DESIGN: Update _groups to keep SelectedDesign in sync ===
             if (message.StartsWith("LOCK_DESIGN|"))
             {
                 try
                 {
-                    string idxStr = message.Substring(12);
-                    if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
+                    // Format: LOCK_DESIGN|groupIndex|selectedDesignJson
+                    var parts = message.Substring(12).Split(new[] { '|' }, 2);
+                    if (parts.Length >= 1 && int.TryParse(parts[0], out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design locked for group {groupIndex}");
-                        // SAP sync removed - will have separate DTS_REBAR_SYNC_SAP command
+                        if (parts.Length >= 2 && !string.IsNullOrEmpty(parts[1]))
+                        {
+                            // Deserialize SelectedDesign from JS
+                            var design = JsonConvert.DeserializeObject<ContinuousBeamSolution>(parts[1]);
+                            _groups[groupIndex].SelectedDesign = design;
+                            _groups[groupIndex].LockedAt = DateTime.Now;
+                        }
+                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design locked for group {groupIndex}, SelectedDesign updated in _groups");
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] LOCK_DESIGN error: {ex.Message}");
+                }
                 return;
             }
 
             if (message.StartsWith("UNLOCK_DESIGN|"))
             {
-                // Optional: Could delete section or just log
-                System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design unlocked");
+                try
+                {
+                    string idxStr = message.Substring(14);
+                    if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
+                    {
+                        // Clear SelectedDesign
+                        _groups[groupIndex].SelectedDesign = null;
+                        _groups[groupIndex].LockedAt = null;
+                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design unlocked for group {groupIndex}");
+                    }
+                }
+                catch { }
                 return;
             }
 
