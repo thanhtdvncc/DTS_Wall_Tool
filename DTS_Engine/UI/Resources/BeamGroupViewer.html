@@ -1403,7 +1403,7 @@
                 lockedOpt.value = 'locked';
                 const isInvalid = currentGroup.SelectedDesign.IsValid === false;
                 const designName = currentGroup.SelectedDesign.OptionName || 'Phương án đã chốt';
-                lockedOpt.textContent = `⭐ ${designName} ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang dùng)'}`;
+                lockedOpt.textContent = `⭐ ${designName} ${isInvalid ? '⚠️ THIẾU THÉP' : '(Đang chốt)'}`;
                 sel.appendChild(lockedOpt);
                 console.log('Added locked option:', designName);
             }
