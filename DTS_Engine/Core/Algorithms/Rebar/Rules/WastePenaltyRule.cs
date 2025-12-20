@@ -28,7 +28,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Rules
                 return ValidationResult.Pass(RuleName);
 
             // Tính penalty và trừ vào ConstructabilityScore
-            double penalty = totalWaste * PENALTY_PER_WASTE_BAR;
+            double penaltyPerCount = context.Settings?.Rules?.WastePenaltyScore ?? 20.0;
+            double penalty = totalWaste * penaltyPerCount;
             context.CurrentSolution.ConstructabilityScore -= penalty;
 
             return new ValidationResult

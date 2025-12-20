@@ -40,7 +40,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Rules
             if (topEven != botEven)
             {
                 // Mismatch: Top chẵn/Bot lẻ hoặc ngược lại
-                context.CurrentSolution.ConstructabilityScore -= MISALIGNMENT_PENALTY;
+                double penaltyScore = context.Settings?.Rules?.AlignmentPenaltyScore ?? 25.0;
+                context.CurrentSolution.ConstructabilityScore -= penaltyScore;
 
                 return new ValidationResult
                 {

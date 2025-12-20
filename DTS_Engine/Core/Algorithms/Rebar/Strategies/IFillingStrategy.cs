@@ -90,18 +90,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Strategies
         // HELPER PROPERTIES (Backwards compatibility & convenience)
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>Số thanh lớp 1 (helper, equivalent to LayerCounts[0])</summary>
-        public int CountLayer1
-        {
-            get { return LayerCounts?.Count > 0 ? LayerCounts[0] : 0; }
-        }
-
-        /// <summary>Số thanh lớp 2 (helper, equivalent to LayerCounts[1])</summary>
-        public int CountLayer2
-        {
-            get { return LayerCounts?.Count > 1 ? LayerCounts[1] : 0; }
-        }
-
         /// <summary>Số lớp sử dụng</summary>
         public int LayerCount
         {

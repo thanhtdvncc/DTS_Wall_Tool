@@ -231,8 +231,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             // Rule 2: Heuristic thực tế - mỗi 180mm bề rộng dầm cần 1 thanh
             // VD: Dầm 400 -> 400/180 = 2.2 -> ceil = 3 thanh
             // VD: Dầm 300 -> 300/180 = 1.67 -> ceil = 2 thanh
-            const double HEURISTIC_DIVISOR = 180.0; // mm per bar
-            int minByHeuristic = (int)Math.Ceiling(width / HEURISTIC_DIVISOR);
+            // HEURISTIC: Estimate min/max bars to reduce search space
+            double densityDivisor = settings?.Beam?.DensityHeuristic ?? 180.0;
+            int minByHeuristic = (int)Math.Ceiling(width / densityDivisor);
 
             // Lấy giá trị lớn hơn để đảm bảo an toàn & thẩm mỹ
             return Math.Max(2, Math.Max(minByCode, minByHeuristic));

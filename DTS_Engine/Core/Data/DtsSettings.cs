@@ -43,6 +43,11 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public CurtailmentConfig Curtailment { get; set; } = new CurtailmentConfig();
 
+        /// <summary>
+        /// Cấu hình quy tắc và điểm phạt (Design Rules & Penalties)
+        /// </summary>
+        public RulesConfig Rules { get; set; } = new RulesConfig();
+
 
         // ===== MULTI-STORY NAMING SYSTEM =====
         /// <summary>
@@ -544,6 +549,12 @@ namespace DTS_Engine.Core.Data
         /// Hệ số nhân đường kính cho chiều dài nối chồng (40 = 40d)
         /// </summary>
         public double LapSpliceMultiplier { get; set; } = 40;
+
+        /// <summary>
+        /// Hệ số mật độ thép heuristic (dùng để sinh kịch bản)
+        /// Mặc định 180.0 (Width / 180 ~ số lượng thanh tối thiểu)
+        /// </summary>
+        public double DensityHeuristic { get; set; } = 180.0;
 
         // ===== BACKWARD COMPATIBILITY =====
         // Các property cũ để không break code cũ
@@ -1150,5 +1161,29 @@ namespace DTS_Engine.Core.Data
         /// Suffix (nếu cần). VD: "_L1" → B101_L1
         /// </summary>
         public string Suffix { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Cấu hình quy tắc và điểm phạt (Design Rules & Penalties)
+    /// </summary>
+    public class RulesConfig
+    {
+        /// <summary>
+        /// Điểm phạt khi lãng phí thép (Waste)
+        /// Mặc định: 20
+        /// </summary>
+        public double WastePenaltyScore { get; set; } = 20.0;
+
+        /// <summary>
+        /// Điểm phạt khi lệch pha Chẵn/Lẻ (Alignment)
+        /// Mặc định: 25
+        /// </summary>
+        public double AlignmentPenaltyScore { get; set; } = 25.0;
+
+        /// <summary>
+        /// Điểm phạt khi vi phạm Pyramid Rule (thường là Critical, nhưng nếu cần warning)
+        /// Mặc định: 100 (Critical)
+        /// </summary>
+        public double PyramidPenaltyScore { get; set; } = 100.0;
     }
 }
