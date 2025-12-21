@@ -236,10 +236,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     bool isSupportLeft = (zoneIdx == 0);
                     bool isSupportRight = (zoneIdx == zonesPerSpan - 1);
 
-                    // Lấy diện tích yêu cầu từ result
+                    // Lấy diện tích yêu cầu từ result (Smart Scanning với Zone Ratio)
+                    double reqTop = GetReqAreaSmartScan(result, true, zoneIdx, zonesPerSpan, torsionTop);
+                    double reqBot = GetReqAreaSmartScan(result, false, zoneIdx, zonesPerSpan, torsionBot);
                     int resultZoneIndex = MapZoneToResultIndex(zoneIdx, zonesPerSpan);
-                    double reqTop = GetReqArea(result, true, resultZoneIndex, torsionTop);
-                    double reqBot = GetReqArea(result, false, resultZoneIndex, torsionBot);
                     double reqStirrup = result?.ShearArea?.ElementAtOrDefault(resultZoneIndex) ?? 0;
 
                     string sectionId = $"{spanInfo.SpanId}_{GetZoneName(zoneIdx, zonesPerSpan)}";
@@ -425,7 +425,81 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         #region Helpers
 
         /// <summary>
-        /// Lấy diện tích yêu cầu (bao gồm torsion distribution).
+        /// Lấy diện tích thép yêu cầu lớn nhất trong vùng được cấu hình (Smart Scanning).
+        /// Sử dụng Settings.General.ZoneL1_Ratio và ZoneL2_Ratio.
+        /// </summary>
+        /// <param name="result">Kết quả SAP</param>
+        /// <param name="isTop">True = thép trên, False = thép dưới</param>
+        /// <param name="zoneIdx">Index của zone (0=Left, 1=Mid, 2=Right cho 3-zone)</param>
+        /// <param name="zonesPerSpan">Số zones per span (VD: 3)</param>
+        /// <param name="torsionFactor">Hệ số phân bổ xoắn (0.25 cho Top/Bot)</param>
+        private double GetReqAreaSmartScan(BeamResultData result, bool isTop, int zoneIdx, int zonesPerSpan, double torsionFactor)
+        {
+            if (result == null) return 0;
+
+            var areaList = isTop ? result.TopArea : result.BotArea;
+            var torsionList = result.TorsionArea;
+
+            if (areaList == null || areaList.Length == 0) return 0;
+
+            // 1. Lấy Safety Factor từ Settings
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+
+            // 2. Xác định phạm vi index cần quét dựa trên Settings
+            int count = areaList.Length;
+            int startIdx, endIdx;
+
+            if (count <= 3) // Nếu dữ liệu nội lực quá ít (chỉ có L/M/R), fallback về logic cũ
+            {
+                int mapIdx = MapZoneToResultIndex(zoneIdx, zonesPerSpan);
+                startIdx = endIdx = Math.Min(mapIdx, count - 1);
+            }
+            else
+            {
+                // Lấy tỷ lệ vùng từ General Config (VD: 0.25 = 1/4 nhịp)
+                double ratioL1 = _settings.General?.ZoneL1_Ratio ?? 0.25;
+                double ratioL2 = _settings.General?.ZoneL2_Ratio ?? 0.25;
+
+                // Tính index biên
+                int idxL1 = (int)(count * ratioL1);
+                int idxL2 = count - (int)(count * ratioL2);
+
+                // Map Zone Index sang phạm vi quét
+                if (zonesPerSpan == 3) // Cấu hình 3 Zone (Support-Mid-Support)
+                {
+                    if (zoneIdx == 0) { startIdx = 0; endIdx = idxL1; } // Left Support
+                    else if (zoneIdx == 2) { startIdx = idxL2; endIdx = count - 1; } // Right Support
+                    else { startIdx = idxL1; endIdx = idxL2; } // Mid Span
+                }
+                else // Fallback cho các trường hợp khác (5 zones, etc.)
+                {
+                    int centerIdx = (int)(count * (double)zoneIdx / (zonesPerSpan - 1));
+                    int scanRadius = Math.Max(1, count / 10); // Quét lân cận 10%
+                    startIdx = Math.Max(0, centerIdx - scanRadius);
+                    endIdx = Math.Min(count - 1, centerIdx + scanRadius);
+                }
+            }
+
+            // 3. Quét Max trong vùng
+            double maxArea = 0;
+            for (int i = startIdx; i <= endIdx; i++)
+            {
+                if (i >= areaList.Length) break;
+
+                double flex = areaList[i];
+                double tor = (torsionList != null && i < torsionList.Length) ? torsionList[i] : 0;
+
+                // Công thức: As_req = (As_flex + As_torsion * Factor) * SafetyFactor
+                double total = (flex + tor * torsionFactor) * safetyFactor;
+
+                if (total > maxArea) maxArea = total;
+            }
+
+            return maxArea;
+        }
+
+        /// <summary>
+        /// Lấy diện tích yêu cầu (bao gồm torsion distribution) - Legacy fallback.
         /// </summary>
         private double GetReqArea(BeamResultData result, bool isTop, int position, double torsionFactor)
         {
@@ -437,7 +511,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             double torsionArea = (result.TorsionArea?.ElementAtOrDefault(position) ?? 0) * torsionFactor;
 
-            return flexArea + torsionArea;
+            // Áp dụng SafetyFactor từ Settings
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+
+            return (flexArea + torsionArea) * safetyFactor;
         }
 
         /// <summary>

@@ -574,6 +574,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // Update section selections
             UpdateSectionSelections(candidate, sections);
 
+            // Áp dụng logic nối thép dựa trên Curtailment Settings
+            OptimizeAndCleanSolution(solution, group);
+
             // Tính metrics cuối cùng
             CalculateFinalMetrics(solution, group, sections);
 
@@ -863,6 +866,63 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 TotalScore = 0,
                 Reinforcements = new Dictionary<string, RebarSpec>()
             };
+        }
+
+        /// <summary>
+        /// Áp dụng Logic Nối thép dựa trên Curtailment Settings.
+        /// Merge thép gối trái và gối phải nếu khoảng hở < ngưỡng.
+        /// </summary>
+        private void OptimizeAndCleanSolution(ContinuousBeamSolution solution, BeamGroup group)
+        {
+            if (group?.Spans == null || group.Spans.Count == 0) return;
+
+            // 1. Xác định loại cấu kiện để lấy Curtailment Config phù hợp
+            bool isGirder = (group.GroupName ?? "").StartsWith("G") ||
+                            (group.GroupName ?? "").IndexOf("Girder", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            var curtailment = isGirder
+                ? (_settings.Beam?.GirderCurtailment ?? new CurtailmentConfig())
+                : (_settings.Beam?.BeamCurtailment ?? new CurtailmentConfig());
+
+            // 2. Logic Nối thông (Bridging) dựa trên TopSupportExtRatio
+            double extRatio = curtailment.TopSupportExtRatio; // VD: 0.25
+
+            foreach (var span in group.Spans)
+            {
+                string leftKey = $"{span.SpanId}_Top_Left";
+                string rightKey = $"{span.SpanId}_Top_Right";
+
+                if (solution.Reinforcements.TryGetValue(leftKey, out var sLeft) &&
+                    solution.Reinforcements.TryGetValue(rightKey, out var sRight))
+                {
+                    // Chỉ nối nếu cùng đường kính và số lượng
+                    if (sLeft.Diameter != sRight.Diameter || sLeft.Count != sRight.Count) continue;
+
+                    // Tính khoảng hở giữa 2 đoạn thép
+                    double spanLength = span.Length > 0 ? span.Length : 5000; // mm
+                    double gap = spanLength * (1.0 - 2 * extRatio);
+
+                    // Quy tắc heuristic: Nếu gap < 40d hoặc < 1000mm -> Nối
+                    double limit = Math.Max(1000, 40 * sLeft.Diameter);
+
+                    if (gap < limit)
+                    {
+                        Utils.RebarLogger.Log($"  Merging {leftKey} + {rightKey} (gap={gap:F0}mm < {limit:F0}mm)");
+
+                        // Merge thành Top_Full
+                        solution.Reinforcements.Remove(leftKey);
+                        solution.Reinforcements.Remove(rightKey);
+                        solution.Reinforcements[$"{span.SpanId}_Top_Full"] = new RebarSpec
+                        {
+                            Count = sLeft.Count,
+                            Diameter = sLeft.Diameter,
+                            Position = "Top",
+                            IsRunningThrough = true,
+                            LayerBreakdown = sLeft.LayerBreakdown
+                        };
+                    }
+                }
+            }
         }
 
         #endregion
