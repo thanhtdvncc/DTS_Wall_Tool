@@ -638,6 +638,20 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         };
                     }
                 }
+                else if (section.ReqTop > 0.01)
+                {
+                    // [FIX] Fallback: Tính addon trực tiếp khi không có arrangement tương thích
+                    double backboneArea = candidate.AreaTop;
+                    double missing = section.ReqTop - backboneArea;
+                    if (missing > 0.01)
+                    {
+                        var addonSpec = CalculateFallbackAddon(missing, section, candidate.Diameter);
+                        if (addonSpec != null)
+                        {
+                            result.TopAddons[positionName] = addonSpec;
+                        }
+                    }
+                }
 
                 // BOT addon
                 var botArr = GetBestArrangement(section.ValidArrangementsBot, candidate.CountBot, candidate.Diameter);
@@ -654,9 +668,72 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         };
                     }
                 }
+                else if (section.ReqBot > 0.01)
+                {
+                    // [FIX] Fallback: Tính addon trực tiếp khi không có arrangement tương thích
+                    double backboneArea = candidate.AreaBot;
+                    double missing = section.ReqBot - backboneArea;
+                    if (missing > 0.01)
+                    {
+                        var addonSpec = CalculateFallbackAddon(missing, section, candidate.Diameter);
+                        if (addonSpec != null)
+                        {
+                            result.BotAddons[positionName] = addonSpec;
+                        }
+                    }
+                }
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// [FIX] Tính addon fallback khi không tìm được arrangement tương thích với backbone.
+        /// Dùng đường kính ưu tiên hoặc đường kính phù hợp nhất từ kho thép.
+        /// </summary>
+        private RebarInfo CalculateFallbackAddon(double missingArea, DesignSection section, int backboneDiameter)
+        {
+            if (missingArea <= 0.01) return null;
+
+            // Lấy đường kính ưu tiên từ Settings
+            int preferredDia = _settings.Beam?.PreferredDiameter ?? 20;
+
+            // Thử với đường kính ưu tiên trước
+            int addonDia = preferredDia;
+
+            // Fallback: dùng đường kính backbone nếu cần
+            if (!_allowedDiameters.Contains(preferredDia))
+            {
+                addonDia = _allowedDiameters.Contains(backboneDiameter)
+                    ? backboneDiameter
+                    : _allowedDiameters.OrderBy(d => Math.Abs(d - preferredDia)).First();
+            }
+
+            // Tính số thanh cần
+            double oneBarArea = Math.PI * addonDia * addonDia / 400.0;
+            int addonCount = (int)Math.Ceiling(missingArea / oneBarArea);
+
+            // Validate: không quá max bars per layer
+            int maxBars = _maxBarsPerSide - 2; // Ít nhất 2 backbone đã có
+            if (addonCount > maxBars)
+            {
+                // Thử tăng đường kính
+                int maxDia = _allowedDiameters.Max();
+                oneBarArea = Math.PI * maxDia * maxDia / 400.0;
+                addonCount = (int)Math.Ceiling(missingArea / oneBarArea);
+                addonDia = maxDia;
+            }
+
+            if (addonCount <= 0) return null;
+
+            Utils.RebarLogger.Log($"    [Fallback Addon] Missing={missingArea:F2}cm², Using={addonCount}D{addonDia}");
+
+            return new RebarInfo
+            {
+                Count = addonCount,
+                Diameter = addonDia,
+                LayerCounts = new List<int> { addonCount }
+            };
         }
 
         /// <summary>

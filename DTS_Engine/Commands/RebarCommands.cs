@@ -576,14 +576,7 @@ namespace DTS_Engine.Commands
                             continue;
                         }
 
-                        var errorSol = proposals.FirstOrDefault(p => !p.IsValid);
-                        if (errorSol != null)
-                        {
-                            WriteMessage($"  ❌ {group.GroupName}: {errorSol.ValidationMessage}");
-                            continue;
-                        }
-
-                        // [FIX] Luôn cập nhật BackboneOptions với proposals mới
+                        // [FIX] Luôn cập nhật BackboneOptions với proposals mới (kể cả Invalid)
                         group.BackboneOptions = proposals;
                         group.SelectedBackboneIndex = 0;
 
@@ -598,9 +591,22 @@ namespace DTS_Engine.Commands
                         {
                             // Chưa chốt: Apply best solution
                             var bestSolution = proposals.FirstOrDefault(p => p.IsValid);
+
+                            // [FIX] Fallback: Nếu không có giải pháp hợp lệ, lấy giải pháp có điểm cao nhất
+                            if (bestSolution == null && proposals.Count > 0)
+                            {
+                                bestSolution = proposals.OrderByDescending(p => p.TotalScore).First();
+                                WriteMessage($"  ⚠️ {group.GroupName}: Không có phương án Valid, dùng fallback: {bestSolution.OptionName}");
+                            }
+
                             if (bestSolution != null)
                             {
+                                // 1. Cập nhật XData (Logic cũ)
                                 ApplyGroupSolutionToEntities(tr, group, objIds, spanResults, bestSolution, dtsSettings);
+
+                                // 2. [MỚI - QUAN TRỌNG] Cập nhật SpanData để Viewer hiển thị được
+                                UpdateGroupSpansFromSolution(group, bestSolution);
+
                                 groupCount++;
                                 WriteMessage($"  ✅ {group.GroupName}: {bestSolution.OptionName} ({bestSolution.TotalSteelWeight:F1}kg)");
                             }
@@ -3634,6 +3640,74 @@ namespace DTS_Engine.Commands
         public void DTS_DASHBOARD()
         {
             DTS_Engine.UI.Forms.DashboardPalette.ShowPalette();
+        }
+
+        /// <summary>
+        /// CẬP NHẬT QUAN TRỌNG: Map kết quả tính toán vào cấu trúc SpanData của BeamGroup.
+        /// Giúp Viewer hiển thị được ngay lập tức mà không cần tính lại.
+        /// </summary>
+        private void UpdateGroupSpansFromSolution(BeamGroup group, ContinuousBeamSolution sol)
+        {
+            if (group == null || sol == null || group.Spans == null) return;
+
+            // 1. Tạo thông tin Backbone chung
+            var bbTop = new RebarInfo
+            {
+                Count = sol.BackboneCount_Top,
+                Diameter = sol.BackboneDiameter_Top > 0 ? sol.BackboneDiameter_Top : sol.BackboneDiameter
+            };
+            var bbBot = new RebarInfo
+            {
+                Count = sol.BackboneCount_Bot,
+                Diameter = sol.BackboneDiameter_Bot > 0 ? sol.BackboneDiameter_Bot : sol.BackboneDiameter
+            };
+
+            // 2. Duyệt từng nhịp để gán thép gia cường (Addons)
+            foreach (var span in group.Spans)
+            {
+                string spanId = span.SpanId;
+
+                // Gán Backbone
+                span.TopBackbone = bbTop;
+                span.BotBackbone = bbBot;
+
+                // Helper để lấy RebarInfo từ Dictionary kết quả
+                RebarInfo GetSpec(string key)
+                {
+                    if (sol.Reinforcements != null && sol.Reinforcements.TryGetValue(key, out var spec))
+                    {
+                        return new RebarInfo
+                        {
+                            Count = spec.Count,
+                            Diameter = spec.Diameter,
+                            LayerCounts = spec.LayerBreakdown
+                        };
+                    }
+                    return null;
+                }
+
+                // Gán thép gia cường (Top)
+                span.TopAddLeft = GetSpec($"{spanId}_Top_Left");
+                span.TopAddMid = GetSpec($"{spanId}_Top_Mid"); // Thường null
+                span.TopAddRight = GetSpec($"{spanId}_Top_Right");
+
+                // Gán thép gia cường (Bot)
+                span.BotAddLeft = GetSpec($"{spanId}_Bot_Left");
+                span.BotAddMid = GetSpec($"{spanId}_Bot_Mid");
+                span.BotAddRight = GetSpec($"{spanId}_Bot_Right");
+
+                // Gán đai (Stirrup) - Lấy đại diện gối/nhịp
+                if (sol.StirrupDesigns != null)
+                {
+                    // Map string đai vào mảng Stirrup[] của SpanData
+                    // Index 0=Left, 1=Mid, 2=Right
+                    if (span.Stirrup == null || span.Stirrup.Length < 3) span.Stirrup = new string[3];
+
+                    if (sol.StirrupDesigns.TryGetValue($"{spanId}_Stirrup_Left", out var sL)) span.Stirrup[0] = sL;
+                    if (sol.StirrupDesigns.TryGetValue($"{spanId}_Stirrup_Mid", out var sM)) span.Stirrup[1] = sM;
+                    if (sol.StirrupDesigns.TryGetValue($"{spanId}_Stirrup_Right", out var sR)) span.Stirrup[2] = sR;
+                }
+            }
         }
     }
 }
