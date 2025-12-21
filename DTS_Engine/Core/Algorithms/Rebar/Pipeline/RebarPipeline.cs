@@ -101,24 +101,50 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                     if (sol == null) return false;
 
                     // ═══════════════════════════════════════════════════════════════
-                    // V3.4: PER-SECTION AREA CHECK (Local Check)
-                    // Kiểm tra từng section (Start/Mid/End) thay vì chỉ check Max
+                    // V3.4.1: PER-SECTION AREA CHECK with ADDON COVERAGE
+                    // Addon bars only cover specific sections:
+                    // - Top_Left / Bot_Left → covers Start section (index 0)
+                    // - Top_Mid / Bot_Mid → covers Mid section (index 1)
+                    // - Top_Right / Bot_Right → covers End section (index 2)
+                    // - Top_Full / Bot_Full → covers ALL sections (running through)
                     // ═══════════════════════════════════════════════════════════════
 
-                    // Tính tổng As_provided từ backbone + reinforcements
-                    double providedTop = sol.As_Backbone_Top;
-                    double providedBot = sol.As_Backbone_Bot;
+                    bool hasLocalDeficit = false;
+                    string deficitDetails = "";
+
+                    // Base backbone area (runs through all sections)
+                    double backboneTop = sol.As_Backbone_Top;
+                    double backboneBot = sol.As_Backbone_Bot;
+
+                    // Pre-calculate addon contributions per section
+                    // sections: 0=Start, 1=Mid, 2=End
+                    double[] addonTop = new double[3];
+                    double[] addonBot = new double[3];
+
                     foreach (var kv in sol.Reinforcements)
                     {
                         double barArea = System.Math.PI * kv.Value.Diameter * kv.Value.Diameter / 400.0;
                         double contrib = barArea * kv.Value.Count;
-                        if (kv.Key.Contains("Top")) providedTop += contrib;
-                        else if (kv.Key.Contains("Bot")) providedBot += contrib;
-                    }
+                        string key = kv.Key;
 
-                    // V3.4: Check ALL sections, not just max
-                    bool hasLocalDeficit = false;
-                    string deficitDetails = "";
+                        // Determine which sections this addon covers
+                        bool coversStart = key.Contains("_Left") || key.Contains("_Full");
+                        bool coversMid = key.Contains("_Mid") || key.Contains("_Full");
+                        bool coversEnd = key.Contains("_Right") || key.Contains("_Full");
+
+                        if (key.Contains("Top"))
+                        {
+                            if (coversStart) addonTop[0] += contrib;
+                            if (coversMid) addonTop[1] += contrib;
+                            if (coversEnd) addonTop[2] += contrib;
+                        }
+                        else if (key.Contains("Bot"))
+                        {
+                            if (coversStart) addonBot[0] += contrib;
+                            if (coversMid) addonBot[1] += contrib;
+                            if (coversEnd) addonBot[2] += contrib;
+                        }
+                    }
 
                     if (ctx.SpanResults != null)
                     {
@@ -130,13 +156,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                                 for (int i = 0; i < 3; i++)
                                 {
                                     double reqLocal = result.TopArea[i];
-                                    // Check: providedTop phải >= reqLocal tại MỌI section
-                                    // (Conservative: dùng provided tổng, vì backbone chạy suốt)
-                                    if (reqLocal > 0 && providedTop < reqLocal * TOLERANCE)
+                                    double providedAtSection = backboneTop + addonTop[i];
+
+                                    if (reqLocal > 0 && providedAtSection < reqLocal * TOLERANCE)
                                     {
                                         hasLocalDeficit = true;
                                         string pos = i == 0 ? "Start" : (i == 1 ? "Mid" : "End");
-                                        deficitDetails += $"Top_{pos}:{providedTop:F1}/{reqLocal:F1} ";
+                                        deficitDetails += $"Top_{pos}:{providedAtSection:F1}/{reqLocal:F1} ";
                                     }
                                 }
                             }
@@ -146,11 +172,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                                 for (int i = 0; i < 3; i++)
                                 {
                                     double reqLocal = result.BotArea[i];
-                                    if (reqLocal > 0 && providedBot < reqLocal * TOLERANCE)
+                                    double providedAtSection = backboneBot + addonBot[i];
+
+                                    if (reqLocal > 0 && providedAtSection < reqLocal * TOLERANCE)
                                     {
                                         hasLocalDeficit = true;
                                         string pos = i == 0 ? "Start" : (i == 1 ? "Mid" : "End");
-                                        deficitDetails += $"Bot_{pos}:{providedBot:F1}/{reqLocal:F1} ";
+                                        deficitDetails += $"Bot_{pos}:{providedAtSection:F1}/{reqLocal:F1} ";
                                     }
                                 }
                             }
@@ -159,12 +187,14 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                     else
                     {
                         // Fallback to global check if no per-section data
+                        double totalTop = backboneTop + addonTop[0] + addonTop[1] + addonTop[2];
+                        double totalBot = backboneBot + addonBot[0] + addonBot[1] + addonBot[2];
                         double reqTop = sol.As_Required_Top_Max;
                         double reqBot = sol.As_Required_Bot_Max;
-                        if (providedTop < reqTop * TOLERANCE || providedBot < reqBot * TOLERANCE)
+                        if (totalTop < reqTop * TOLERANCE || totalBot < reqBot * TOLERANCE)
                         {
                             hasLocalDeficit = true;
-                            deficitDetails = $"Global Top:{providedTop:F1}/{reqTop:F1} Bot:{providedBot:F1}/{reqBot:F1}";
+                            deficitDetails = $"Global Top:{totalTop:F1}/{reqTop:F1} Bot:{totalBot:F1}/{reqBot:F1}";
                         }
                     }
 

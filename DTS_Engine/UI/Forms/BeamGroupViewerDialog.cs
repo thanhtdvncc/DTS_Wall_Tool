@@ -507,10 +507,10 @@ namespace DTS_Engine.UI.Forms
                 if (span.IsManualModified) continue;
 
                 // Ensure arrays exist
-                if (span.TopRebar == null || span.TopRebar.GetLength(0) < 1 || span.TopRebar.GetLength(1) < 5)
-                    span.TopRebar = new string[3, 6];
-                if (span.BotRebar == null || span.BotRebar.GetLength(0) < 1 || span.BotRebar.GetLength(1) < 5)
-                    span.BotRebar = new string[3, 6];
+                if (span.TopRebarInternal == null || span.TopRebarInternal.GetLength(0) < 1 || span.TopRebarInternal.GetLength(1) < 5)
+                    span.TopRebarInternal = new string[3, 6];
+                if (span.BotRebarInternal == null || span.BotRebarInternal.GetLength(0) < 1 || span.BotRebarInternal.GetLength(1) < 5)
+                    span.BotRebarInternal = new string[3, 6];
 
                 string spanId = span.SpanId ?? "S?";
 
@@ -558,9 +558,9 @@ namespace DTS_Engine.UI.Forms
                 if (span.TopAddMid != null) topMid += $"+{span.TopAddMid.DisplayString}";
                 if (span.TopAddRight != null) topRight += $"+{span.TopAddRight.DisplayString}";
 
-                span.TopRebar[0, 0] = topLeft;
-                span.TopRebar[0, 2] = topMid;
-                span.TopRebar[0, 4] = topRight;
+                span.TopRebarInternal[0, 0] = topLeft;
+                span.TopRebarInternal[0, 2] = topMid;
+                span.TopRebarInternal[0, 4] = topRight;
 
                 string botLeft = backboneBotStr;
                 string botMid = backboneBotStr;
@@ -569,9 +569,9 @@ namespace DTS_Engine.UI.Forms
                 if (span.BotAddMid != null) botMid += $"+{span.BotAddMid.DisplayString}";
                 if (span.BotAddRight != null) botRight += $"+{span.BotAddRight.DisplayString}";
 
-                span.BotRebar[0, 0] = botLeft;
-                span.BotRebar[0, 2] = botMid;
-                span.BotRebar[0, 4] = botRight;
+                span.BotRebarInternal[0, 0] = botLeft;
+                span.BotRebarInternal[0, 2] = botMid;
+                span.BotRebarInternal[0, 4] = botRight;
             }
         }
 

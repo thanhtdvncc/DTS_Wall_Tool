@@ -23,8 +23,8 @@ namespace DTS_Engine.Core.Utils
 
             if (includeProvidedLayout)
             {
-                MapZonesToSpan6(span.TopRebar, 0, data.TopRebarString);
-                MapZonesToSpan6(span.BotRebar, 0, data.BotRebarString);
+                MapZonesToSpan6(span.TopRebarInternal, 0, data.TopRebarString);
+                MapZonesToSpan6(span.BotRebarInternal, 0, data.BotRebarString);
 
                 span.Stirrup[0] = SafeZone(data.StirrupString, 0);
                 span.Stirrup[1] = SafeZone(data.StirrupString, 1);
@@ -69,15 +69,15 @@ namespace DTS_Engine.Core.Utils
 
             var top = new string[3]
             {
-                BuildRebarStringFrom2D(span.TopRebar, 0),
-                BuildRebarStringFrom2D(span.TopRebar, 2),
-                BuildRebarStringFrom2D(span.TopRebar, 4)
+                BuildRebarStringFrom2D(span.TopRebarInternal, 0),
+                BuildRebarStringFrom2D(span.TopRebarInternal, 2),
+                BuildRebarStringFrom2D(span.TopRebarInternal, 4)
             };
             var bot = new string[3]
             {
-                BuildRebarStringFrom2D(span.BotRebar, 0),
-                BuildRebarStringFrom2D(span.BotRebar, 2),
-                BuildRebarStringFrom2D(span.BotRebar, 4)
+                BuildRebarStringFrom2D(span.BotRebarInternal, 0),
+                BuildRebarStringFrom2D(span.BotRebarInternal, 2),
+                BuildRebarStringFrom2D(span.BotRebarInternal, 4)
             };
 
             var stir = new string[3]
@@ -100,8 +100,8 @@ namespace DTS_Engine.Core.Utils
         {
             if (span.As_Top == null || span.As_Top.Length < 6) span.As_Top = new double[6];
             if (span.As_Bot == null || span.As_Bot.Length < 6) span.As_Bot = new double[6];
-            if (span.TopRebar == null || span.TopRebar.GetLength(0) < 3 || span.TopRebar.GetLength(1) < 6) span.TopRebar = new string[3, 6];
-            if (span.BotRebar == null || span.BotRebar.GetLength(0) < 3 || span.BotRebar.GetLength(1) < 6) span.BotRebar = new string[3, 6];
+            if (span.TopRebarInternal == null || span.TopRebarInternal.GetLength(0) < 3 || span.TopRebarInternal.GetLength(1) < 6) span.TopRebarInternal = new string[3, 6];
+            if (span.BotRebarInternal == null || span.BotRebarInternal.GetLength(0) < 3 || span.BotRebarInternal.GetLength(1) < 6) span.BotRebarInternal = new string[3, 6];
             if (span.Stirrup == null || span.Stirrup.Length < 3) span.Stirrup = new string[3];
             if (span.WebBar == null || span.WebBar.Length < 3) span.WebBar = new string[3];
             if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];

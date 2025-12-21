@@ -1458,6 +1458,11 @@
                 if (!isNaN(parsed)) currentGroup.SelectedBackboneIndex = parsed;
             }
 
+            // V3.4 FIX: Reset _userEdited so proposal can apply to all spans
+            if (currentGroup?.Spans) {
+                currentGroup.Spans.forEach(span => span._userEdited = false);
+            }
+
             const opt = getSelectedOption();
             applyOptionToSpans(opt);
 
@@ -1962,14 +1967,18 @@
                 const reqArr = (type === 'Top') ? span.As_Top : span.As_Bot;
                 const reqIdx = (pos === 0) ? 0 : (pos === 4 ? 4 : 2);
                 const asReq = Array.isArray(reqArr) ? (Number(reqArr[reqIdx]) || 0) : 0;
-                const isUnder = false;
+
+                // V3.4 FIX: Calculate isUnder based on parseRebarArea vs As_req with safety factor
+                const safetyFactor = data.settings?.General?.SteelTolerance || 0.98;
+                const asProv = parseRebarArea(val);
+                const isUnder = asReq > 0 && asProv < asReq * safetyFactor;
 
                 html += `<td class="p-0.5 ${bgClass} w-12">
                     <input type="text" value="${val}" 
                         onchange="updateLayerRebar(${spanIndex}, '${type}', ${layer}, ${pos}, this.value)"
                         placeholder=""
-                        title="As_req: ${asReq > 0 ? asReq.toFixed(1) : '-'}"
-                        class="w-full min-w-0 border ${isUnder ? 'border-red-400 bg-red-50' : 'border-slate-200'} rounded px-0.5 py-0.5 text-center text-[10px] bg-white">
+                        title="As_prov: ${asProv.toFixed(1)} / As_req: ${asReq > 0 ? asReq.toFixed(1) : '-'}"
+                        class="w-full min-w-0 border ${isUnder ? 'border-red-500 bg-red-100' : 'border-slate-200'} rounded px-0.5 py-0.5 text-center text-[10px] ${isUnder ? 'bg-red-100 text-red-700 font-bold' : 'bg-white'}">
                 </td>`;
             });
             return html;

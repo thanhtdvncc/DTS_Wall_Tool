@@ -175,8 +175,63 @@ namespace DTS_Engine.Core.Data
 
         // ===== KẾT QUẢ BỐ THÉP (3 lớp × 6 vị trí) =====
         // [layer, position] - layer: 0-2, position: 0-5
-        public string[,] TopRebar { get; set; } = new string[3, 6];
-        public string[,] BotRebar { get; set; } = new string[3, 6];
+        // Internal storage as 2D array (C# friendly)
+        [JsonIgnore]
+        public string[,] TopRebarInternal { get; set; } = new string[3, 6];
+        [JsonIgnore]
+        public string[,] BotRebarInternal { get; set; } = new string[3, 6];
+
+        // JSON-friendly jagged array for JavaScript consumption
+        // JS can access as TopRebar[layer][position]
+        public string[][] TopRebar
+        {
+            get
+            {
+                var result = new string[3][];
+                for (int i = 0; i < 3; i++)
+                {
+                    result[i] = new string[6];
+                    for (int j = 0; j < 6; j++)
+                        result[i][j] = TopRebarInternal[i, j];
+                }
+                return result;
+            }
+            set
+            {
+                if (value == null) return;
+                for (int i = 0; i < Math.Min(3, value.Length); i++)
+                {
+                    if (value[i] == null) continue;
+                    for (int j = 0; j < Math.Min(6, value[i].Length); j++)
+                        TopRebarInternal[i, j] = value[i][j];
+                }
+            }
+        }
+
+        public string[][] BotRebar
+        {
+            get
+            {
+                var result = new string[3][];
+                for (int i = 0; i < 3; i++)
+                {
+                    result[i] = new string[6];
+                    for (int j = 0; j < 6; j++)
+                        result[i][j] = BotRebarInternal[i, j];
+                }
+                return result;
+            }
+            set
+            {
+                if (value == null) return;
+                for (int i = 0; i < Math.Min(3, value.Length); i++)
+                {
+                    if (value[i] == null) continue;
+                    for (int j = 0; j < Math.Min(6, value[i].Length); j++)
+                        BotRebarInternal[i, j] = value[i][j];
+                }
+            }
+        }
 
         // ===== THÉP ĐAI & BỤNG =====
         // Index: 0=Đầu, 1=Giữa, 2=Cuối

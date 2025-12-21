@@ -1680,8 +1680,8 @@ namespace DTS_Engine.Commands
                                                 Width = width,
                                                 Height = height,
                                                 IsActive = true,
-                                                TopRebar = topRebar,
-                                                BotRebar = botRebar,
+                                                TopRebarInternal = topRebar,
+                                                BotRebarInternal = botRebar,
                                                 Stirrup = stirrup,
                                                 WebBar = webBar,
                                                 SideBar = rebarInfo?.SideBar,
@@ -2269,8 +2269,8 @@ namespace DTS_Engine.Commands
                             if (span?.Segments == null) continue;
 
                             // Get rebar strings from SpanData (3-zone: L, M, R -> indices 0, 2, 4)
-                            string[] topRebarZone = ExtractZoneStrings(span.TopRebar, 0);
-                            string[] botRebarZone = ExtractZoneStrings(span.BotRebar, 0);
+                            string[] topRebarZone = ExtractZoneStrings(span.TopRebarInternal, 0);
+                            string[] botRebarZone = ExtractZoneStrings(span.BotRebarInternal, 0);
                             string[] stirrupZone = span.Stirrup ?? new string[3];
                             string[] webBarZone = span.WebBar ?? new string[3];
 
@@ -2460,22 +2460,22 @@ namespace DTS_Engine.Commands
                         var data = i < groupRebarData.Count ? groupRebarData[i] : null;
 
                         // Apply UNIFIED backbone to all positions
-                        if (!hasUserData || span.TopRebar == null || string.IsNullOrEmpty(span.TopRebar[0, 0]))
+                        if (!hasUserData || span.TopRebarInternal == null || string.IsNullOrEmpty(span.TopRebarInternal[0, 0]))
                         {
                             // 6 positions: (0,1)=Start, (2,3)=Mid, (4,5)=End
-                            span.TopRebar[0, 0] = topBackbone;
-                            span.TopRebar[0, 1] = topBackbone;
-                            span.TopRebar[0, 2] = topBackbone;
-                            span.TopRebar[0, 3] = topBackbone;
-                            span.TopRebar[0, 4] = topBackbone;
-                            span.TopRebar[0, 5] = topBackbone;
+                            span.TopRebarInternal[0, 0] = topBackbone;
+                            span.TopRebarInternal[0, 1] = topBackbone;
+                            span.TopRebarInternal[0, 2] = topBackbone;
+                            span.TopRebarInternal[0, 3] = topBackbone;
+                            span.TopRebarInternal[0, 4] = topBackbone;
+                            span.TopRebarInternal[0, 5] = topBackbone;
 
-                            span.BotRebar[0, 0] = botBackbone;
-                            span.BotRebar[0, 1] = botBackbone;
-                            span.BotRebar[0, 2] = botBackbone;
-                            span.BotRebar[0, 3] = botBackbone;
-                            span.BotRebar[0, 4] = botBackbone;
-                            span.BotRebar[0, 5] = botBackbone;
+                            span.BotRebarInternal[0, 0] = botBackbone;
+                            span.BotRebarInternal[0, 1] = botBackbone;
+                            span.BotRebarInternal[0, 2] = botBackbone;
+                            span.BotRebarInternal[0, 3] = botBackbone;
+                            span.BotRebarInternal[0, 4] = botBackbone;
+                            span.BotRebarInternal[0, 5] = botBackbone;
                         }
 
                         // ALWAYS sync REQUIRED values from XData (independent of user/provided layouts)
