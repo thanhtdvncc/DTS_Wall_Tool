@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using DTS_Engine.Core.Algorithms.Rebar.Models;
+using DTS_Engine.Core.Algorithms.Rebar.Utils;
 using DTS_Engine.Core.Data;
 
 namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
@@ -53,14 +54,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline
                 // Execute pipeline for this beam
                 var proposals = _pipeline.Execute(group, spanResults, settings, globalConstraints, external);
 
-                // CRITICAL FIX: Only use VALID proposals, ordered by efficiency
-                var validProposals = proposals.Where(p => p.IsValid)
-                                              .OrderByDescending(p => p.EfficiencyScore)
-                                              .ToList();
+                // V3.5 UPGRADE: Use Strategy-based selection for diverse proposals
+                var selectedProposals = ProposalSelector.SelectDiverseSolutions(proposals, 5);
 
-                if (validProposals.Any())
+                if (selectedProposals.Any())
                 {
-                    var bestSolution = validProposals.First();
+                    // First proposal is the "best" according to multi-strategy ranking
+                    var bestSolution = selectedProposals.First();
+
+                    // Store all alternatives for UI display
+                    bestSolution.AlternativeSolutions = selectedProposals;
+
                     results[group.GroupName] = bestSolution;
 
                     // Update NeighborDesigns for next beams to reference

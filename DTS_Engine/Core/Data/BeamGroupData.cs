@@ -610,6 +610,19 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public double As_Required_Top_Max { get; set; }
         public double As_Required_Bot_Max { get; set; }
+
+        // ===== V3.5 STRATEGY SELECTION =====
+        /// <summary>
+        /// Label chiến lược (VD: "Tối ưu nhất", "Tiết kiệm nhất", "An toàn", "Dễ thi công", "Đồng bộ ĐK")
+        /// </summary>
+        public string StrategyLabel { get; set; }
+
+        /// <summary>
+        /// Danh sách các phương án thay thế (5 chiến lược khác nhau).
+        /// Dùng cho UI hiển thị danh sách lựa chọn.
+        /// </summary>
+        [Newtonsoft.Json.JsonIgnore]
+        public List<ContinuousBeamSolution> AlternativeSolutions { get; set; }
     }
 
     // ===== THÉP GIA CƯỜNG =====

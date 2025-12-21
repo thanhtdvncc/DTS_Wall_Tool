@@ -30,68 +30,71 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             var seed = inputs.FirstOrDefault();
             if (seed == null) yield break;
 
-            // ═══════════════════════════════════════════════════════════════
-            // STEP 1: DATA SANITIZATION
-            // ═══════════════════════════════════════════════════════════════
-
-            double beamWidth = seed.Group.Width;
-            double beamHeight = seed.Group.Height;
             var settings = seed.Settings;
             var external = seed.ExternalConstraints;
 
-            // Fallback from SAP results if group dimensions missing
-            if (beamWidth <= 0 || beamHeight <= 0)
+            // ═══════════════════════════════════════════════════════════════
+            // STEP 1: GLOBAL GEOMETRY ANALYSIS (V3.5 Engineer Thinking)
+            // Quét TOÀN BỘ các nhịp để tìm ràng buộc khắc nghiệt nhất:
+            // - MinWidth: Quyết định maxBars (nhịp hẹp nhất = sức chứa giới hạn)
+            // - MaxWidth: Quyết định minBars (nhịp rộng nhất = khoảng hở tối đa)
+            // ═══════════════════════════════════════════════════════════════
+
+            double minBeamWidth = double.MaxValue;
+            double maxBeamWidth = double.MinValue;
+            double beamHeight = seed.Group.Height;
+
+            // Scan all spans from SpanResults
+            var spansToCheck = seed.SpanResults?.Where(s => s != null).ToList() ?? new List<BeamResultData>();
+
+            if (spansToCheck.Any())
             {
-                var firstValidSpan = seed.SpanResults?.FirstOrDefault(s => s != null && s.Width > 0);
-                if (firstValidSpan != null)
+                foreach (var span in spansToCheck)
                 {
-                    // BeamResultData.Width and SectionHeight are in cm
-                    if (beamWidth <= 0) beamWidth = firstValidSpan.Width * 10; // cm -> mm
-                    if (beamHeight <= 0) beamHeight = firstValidSpan.SectionHeight * 10; // cm -> mm
+                    double w = NormalizeWidth(span.Width);
+                    if (w > 0)
+                    {
+                        if (w < minBeamWidth) minBeamWidth = w;
+                        if (w > maxBeamWidth) maxBeamWidth = w;
+                    }
+
+                    // Also check height if available
+                    if (beamHeight <= 0 && span.SectionHeight > 0)
+                    {
+                        beamHeight = NormalizeWidth(span.SectionHeight);
+                    }
                 }
             }
 
-            // ═══════════════════════════════════════════════════════════════
-            // CRITICAL FIX: UNIT NORMALIZATION
-            // BeamGroup.Width/Height SHOULD be in mm, but some sources may provide:
-            // - meters (0.4 for 400mm beam)
-            // - centimeters (40 for 400mm beam)
-            // We normalize to mm using heuristics:
-            // ═══════════════════════════════════════════════════════════════
-            if (beamWidth > 0 && beamWidth < 5)
+            // Fallback to Group dimensions if no valid spans
+            if (minBeamWidth == double.MaxValue || maxBeamWidth == double.MinValue)
             {
-                // Likely meters (e.g. 0.4m = 400mm)
-                beamWidth *= 1000;
+                double groupWidth = NormalizeWidth(seed.Group.Width);
+                if (groupWidth > 0)
+                {
+                    minBeamWidth = groupWidth;
+                    maxBeamWidth = groupWidth;
+                }
             }
-            else if (beamWidth >= 5 && beamWidth < 100)
-            {
-                // Likely centimeters (e.g. 40cm = 400mm)
-                beamWidth *= 10;
-            }
-            // else: already in mm (e.g. 400)
 
-            if (beamHeight > 0 && beamHeight < 5)
+            // Normalize height from Group if still missing
+            if (beamHeight <= 0)
             {
-                // Likely meters (e.g. 0.6m = 600mm)
-                beamHeight *= 1000;
+                beamHeight = NormalizeWidth(seed.Group.Height);
             }
-            else if (beamHeight >= 5 && beamHeight < 100)
-            {
-                // Likely centimeters (e.g. 60cm = 600mm)
-                beamHeight *= 10;
-            }
-            // else: already in mm (e.g. 600)
 
             // HARD FAIL: No valid dimensions
-            if (beamWidth <= 0 || beamHeight <= 0)
+            if (minBeamWidth == double.MaxValue || minBeamWidth <= 0 || beamHeight <= 0)
             {
-
                 var failContext = seed.Clone();
                 failContext.IsValid = false;
                 failContext.FailStage = StageName;
                 yield return failContext;
                 yield break;
             }
+
+            // Store for downstream use (use minWidth for safety in capacity calculations)
+            double beamWidth = minBeamWidth;
 
             // ═══════════════════════════════════════════════════════════════
             // STEP 2: PARSE ALLOWED DIAMETERS
@@ -134,10 +137,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
 
             foreach (int topDia in allowedDias)
             {
-                int topMinBars = CalculateMinBarsForSpacing(beamWidth, topDia, maxSpacing, settings);
-                int topMaxBars = GetMaxBarsPerLayer(beamWidth, topDia, settings);
+                // V3.5 CRITICAL FIX:
+                // - minBars: Use WIDEST span (maxBeamWidth) to prevent too-sparse layout
+                // - maxBars: Use NARROWEST span (minBeamWidth) to ensure bars fit
+                int topMinBars = CalculateMinBarsForSpacing(maxBeamWidth, topDia, maxSpacing, settings);
+                int topMaxBars = GetMaxBarsPerLayer(minBeamWidth, topDia, settings);
 
-                // Early exit: invalid diameter for this width
+                // Early exit: this diameter cannot work across variable widths
                 if (topMaxBars < topMinBars) continue;
 
                 // Apply external force for Top count
@@ -148,8 +154,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
 
                 foreach (int botDia in allowedDias)
                 {
-                    int botMinBars = CalculateMinBarsForSpacing(beamWidth, botDia, maxSpacing, settings);
-                    int botMaxBars = GetMaxBarsPerLayer(beamWidth, botDia, settings);
+                    // Same global constraint logic for Bot
+                    int botMinBars = CalculateMinBarsForSpacing(maxBeamWidth, botDia, maxSpacing, settings);
+                    int botMaxBars = GetMaxBarsPerLayer(minBeamWidth, botDia, settings);
 
                     // Early exit: invalid diameter for this width
                     if (botMaxBars < botMinBars) continue;
@@ -206,8 +213,20 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // HELPER METHODS (Migrated from RebarCalculator V2)
+        // HELPER METHODS
         // ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Normalize dimension value to mm.
+        /// Handles values in m, cm, or mm using heuristics.
+        /// </summary>
+        private static double NormalizeWidth(double val)
+        {
+            if (val <= 0) return 0;
+            if (val < 5) return val * 1000; // m -> mm (e.g. 0.4m = 400mm)
+            if (val < 100) return val * 10;  // cm -> mm (e.g. 40cm = 400mm)
+            return val; // Already mm
+        }
 
         /// <summary>
         /// Calculate minimum bars to prevent spacing > MaxSpacing (crack control).

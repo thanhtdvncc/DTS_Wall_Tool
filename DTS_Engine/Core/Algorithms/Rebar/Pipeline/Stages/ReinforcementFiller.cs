@@ -86,8 +86,41 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             // Will be refined after reinforcement design when bar count is known
             ctx.StirrupLegCount = GetStirrupLegCountByWidth(ctx.BeamWidth, settings);
 
-            int numSpans = Math.Min(group.Spans?.Count ?? 0, results?.Count ?? 0);
-            if (numSpans == 0) return ctx;
+            // ═══════════════════════════════════════════════════════════════
+            // V3.5: EXPLICIT SPAN VALIDATION (Fail-Fast for Missing Data)
+            // ═══════════════════════════════════════════════════════════════
+            int numSpansGeometry = group.Spans?.Count ?? 0;
+            int numSpansResults = results?.Count ?? 0;
+
+            if (numSpansGeometry == 0)
+            {
+                ctx.IsValid = false;
+                sol.IsValid = false;
+                sol.ValidationMessage = "FATAL: Không có dữ liệu hình học nhịp (Spans is empty)";
+                return ctx;
+            }
+
+            if (numSpansResults == 0)
+            {
+                ctx.IsValid = false;
+                sol.IsValid = false;
+                sol.ValidationMessage = "FATAL: Không có dữ liệu nội lực (SpanResults is empty)";
+                return ctx;
+            }
+
+            // Check for missing span data - each span must have corresponding result
+            for (int i = 0; i < Math.Min(numSpansGeometry, numSpansResults); i++)
+            {
+                if (results[i] == null)
+                {
+                    ctx.IsValid = false;
+                    sol.IsValid = false;
+                    sol.ValidationMessage = $"FATAL: Dữ liệu nội lực nhịp {i + 1} bị thiếu (null)";
+                    return ctx;
+                }
+            }
+
+            int numSpans = Math.Min(numSpansGeometry, numSpansResults);
 
             // ==================================================================================
             // PHASE 1: UNIFY SUPPORTS (Đồng bộ hóa Gối)
@@ -697,9 +730,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             double totalLengthMM = group.Spans?.Sum(s => s.Length) ?? 6000;
 
             // --- 1. BACKBONE WEIGHT ---
-            double wBackboneTop = Utils.WeightCalculator.CalculateBackboneWeight(
+            double wBackboneTop = Core.Utils.WeightCalculator.CalculateBackboneWeight(
                 sol.BackboneDiameter, totalLengthMM, sol.BackboneCount_Top, 1.02);
-            double wBackboneBot = Utils.WeightCalculator.CalculateBackboneWeight(
+            double wBackboneBot = Core.Utils.WeightCalculator.CalculateBackboneWeight(
                 sol.BackboneDiameter, totalLengthMM, sol.BackboneCount_Bot, 1.02);
             double wBackbone = wBackboneTop + wBackboneBot;
 
@@ -734,7 +767,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                 else
                     barLenMM = spanLenMM * midSpanRatio;
 
-                wReinf += Utils.WeightCalculator.CalculateWeight(spec.Diameter, barLenMM, spec.Count);
+                wReinf += Core.Utils.WeightCalculator.CalculateWeight(spec.Diameter, barLenMM, spec.Count);
             }
 
             // --- 3. TOTAL WEIGHT ---
