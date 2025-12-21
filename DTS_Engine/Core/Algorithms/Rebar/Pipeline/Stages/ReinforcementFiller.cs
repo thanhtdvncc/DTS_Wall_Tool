@@ -99,6 +99,32 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             int numSpansGeometry = group.Spans?.Count ?? 0;
             int numSpansResults = results?.Count ?? 0;
 
+            // V3.5.2: Log span counts for debugging
+            RebarLogger.Log($"SPAN DATA: Geometry={numSpansGeometry}, Results={numSpansResults}");
+            if (group.Spans != null)
+            {
+                for (int si = 0; si < group.Spans.Count; si++)
+                {
+                    var s = group.Spans[si];
+                    RebarLogger.Log($"  Span[{si}]: {s.SpanId} | W={s.Width:F0}mm | L={s.Length:F0}mm");
+                }
+            }
+            if (results != null)
+            {
+                for (int ri = 0; ri < results.Count; ri++)
+                {
+                    var r = results[ri];
+                    if (r != null)
+                    {
+                        RebarLogger.Log($"  Result[{ri}]: TopArea=[{string.Join(",", r.TopArea?.Select(x => $"{x:F2}") ?? new[] { "null" })}] | BotArea=[{string.Join(",", r.BotArea?.Select(x => $"{x:F2}") ?? new[] { "null" })}]");
+                    }
+                    else
+                    {
+                        RebarLogger.Log($"  Result[{ri}]: NULL");
+                    }
+                }
+            }
+
             if (numSpansGeometry == 0)
             {
                 ctx.IsValid = false;
