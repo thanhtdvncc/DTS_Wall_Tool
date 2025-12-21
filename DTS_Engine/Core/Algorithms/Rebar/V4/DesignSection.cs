@@ -5,31 +5,23 @@ using System.Linq;
 namespace DTS_Engine.Core.Algorithms.Rebar.V4
 {
     /// <summary>
-    /// Loại mặt cắt thiết kế theo Topology.
-    /// ISO 25010: Maintainability - Clear domain model separation.
-    /// </summary>
-    public enum SectionType
-    {
-        /// <summary>Type 0: Đầu mút tự do (cantilever end)</summary>
-        FreeEnd = 0,
-
-        /// <summary>Type 1: Giữa nhịp (mid-span, unconstrained)</summary>
-        MidSpan = 1,
-
-        /// <summary>Type 2: 1/4 nhịp (quarter span, for detailed analysis)</summary>
-        QuarterSpan = 2,
-
-        /// <summary>Type 3: Gối đỡ (support, constrained with adjacent)</summary>
-        Support = 3
-    }
-
-    /// <summary>
-    /// Vị trí thép (Top hoặc Bot) tại mặt cắt.
+    /// Vị trí cốt thép trong mặt cắt.
     /// </summary>
     public enum RebarPosition
     {
         Top = 0,
         Bot = 1
+    }
+
+    /// <summary>
+    /// Loại mặt cắt trong dầm.
+    /// </summary>
+    public enum SectionType
+    {
+        Support = 0,
+        MidSpan = 1,
+        FreeEnd = 2,
+        Quarter = 3  // Renamed from QuarterSpan for consistency
     }
 
     /// <summary>
@@ -66,9 +58,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             ZoneTypes = new List<SectionType>
             {
                 SectionType.Support,
-                SectionType.QuarterSpan,
+                SectionType.Quarter,  // Fixed: was QuarterSpan
                 SectionType.MidSpan,
-                SectionType.QuarterSpan,
+                SectionType.Quarter,  // Fixed: was QuarterSpan
                 SectionType.Support
             }
         };

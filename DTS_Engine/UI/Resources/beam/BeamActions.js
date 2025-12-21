@@ -1,6 +1,8 @@
-/**
+﻿/**
  * BeamActions.js - Beam User Actions
  * Handles dropdown, lock design, export, and messaging to C#.
+ * 
+ * CRITICAL FIX: toggleLock() now captures current span edits before locking.
  */
 (function (global) {
     'use strict';
@@ -46,8 +48,21 @@
                 });
             }
 
-            // Use DtsUI to populate
-            global.Dts?.UI?.populateDropdown(sel, options);
+            // Use DtsUI to populate or fallback
+            if (global.Dts?.UI?.populateDropdown) {
+                global.Dts.UI.populateDropdown(sel, options);
+            } else {
+                // Fallback: direct DOM manipulation
+                sel.innerHTML = '';
+                options.forEach(opt => {
+                    const optEl = document.createElement('option');
+                    optEl.value = opt.value;
+                    optEl.textContent = opt.text;
+                    if (opt.selected) optEl.selected = true;
+                    if (opt.disabled) optEl.disabled = true;
+                    sel.appendChild(optEl);
+                });
+            }
         },
 
         /**
@@ -62,7 +77,7 @@
         },
 
         /**
-         * Apply selected option to spans
+         * Apply selected option to spans (only if not user-edited)
          */
         applyOptionToSpans() {
             const beamState = global.Beam?.State;
@@ -71,15 +86,20 @@
 
             if (!group?.Spans?.length || !opt) return;
 
-            const backbone = `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`;
-            const botBackbone = `${opt.BackboneCount_Bot}D${opt.BackboneDiameter}`;
+            const backboneTop = `${opt.BackboneCount_Top || 2}D${opt.BackboneDiameter || opt.BackboneDiameter_Top || 20}`;
+            const backboneBot = `${opt.BackboneCount_Bot || 2}D${opt.BackboneDiameter || opt.BackboneDiameter_Bot || 20}`;
 
             group.Spans.forEach(span => {
-                if (!span._userEdited) {
+                // Only apply if span was NOT manually edited by user
+                if (!span._userEdited && !span.IsManualModified) {
                     if (!span.TopRebar) span.TopRebar = [[], [], []];
                     if (!span.BotRebar) span.BotRebar = [[], [], []];
-                    span.TopRebar[0][0] = backbone;
-                    span.BotRebar[0][0] = botBackbone;
+                    
+                    // Layer 0, Zone 0 = backbone
+                    span.TopRebar[0] = span.TopRebar[0] || [];
+                    span.BotRebar[0] = span.BotRebar[0] || [];
+                    span.TopRebar[0][0] = backboneTop;
+                    span.BotRebar[0][0] = backboneBot;
                 }
             });
         },
@@ -91,42 +111,150 @@
             const opt = global.Beam?.State?.getSelectedOption();
             if (!opt) return;
 
-            // Update metric elements
             const setEl = (id, val) => {
                 const el = document.getElementById(id);
                 if (el) el.textContent = val;
             };
 
-            setEl('metricBackbone', `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`);
+            const dia = opt.BackboneDiameter || opt.BackboneDiameter_Top || '?';
+            setEl('metricBackbone', `${opt.BackboneCount_Top || 2}D${dia} / ${opt.BackboneCount_Bot || 2}D${dia}`);
             setEl('metricWeight', opt.TotalSteelWeight ? `${opt.TotalSteelWeight.toFixed(1)} kg` : '-');
             setEl('metricScore', opt.TotalScore ? `${opt.TotalScore.toFixed(0)}/100` : '-');
+            setEl('metricWaste', opt.WastePercentage != null ? `${opt.WastePercentage.toFixed(1)}%` : '-');
         },
 
         /**
-         * Lock current design
+         * CRITICAL FIX: Lock current design WITH current span edits
+         * Captures full span data as part of SelectedDesign.
          */
         lockDesign() {
             const beamState = global.Beam?.State;
             const group = beamState?.currentGroup;
             if (!group) return;
 
-            const opt = beamState.getSelectedOption();
+            const opt = beamState?.getSelectedOption();
             if (!opt) {
-                global.Dts?.UI?.showToast('Chưa có phương án để chốt', 'warning');
+                this.showToast('Chưa có phương án để chốt', 'warning');
                 return;
             }
 
-            // Copy option to SelectedDesign
-            group.SelectedDesign = JSON.parse(JSON.stringify(opt));
+            // 1. Deep clone the selected option
+            const lockedDesign = JSON.parse(JSON.stringify(opt));
+            
+            // 2. CRITICAL: Capture current span edits into the locked design
+            lockedDesign._capturedSpans = [];
+            if (group.Spans) {
+                group.Spans.forEach((span, idx) => {
+                    lockedDesign._capturedSpans.push({
+                        SpanId: span.SpanId,
+                        SpanIndex: span.SpanIndex ?? idx,
+                        TopRebar: span.TopRebar ? JSON.parse(JSON.stringify(span.TopRebar)) : null,
+                        BotRebar: span.BotRebar ? JSON.parse(JSON.stringify(span.BotRebar)) : null,
+                        Stirrup: span.Stirrup ? [...span.Stirrup] : null,
+                        WebBar: span.WebBar ? [...span.WebBar] : null,
+                        SideBar: span.SideBar,
+                        TopBackbone: span.TopBackbone,
+                        BotBackbone: span.BotBackbone,
+                        TopAddLeft: span.TopAddLeft,
+                        TopAddMid: span.TopAddMid,
+                        TopAddRight: span.TopAddRight,
+                        BotAddLeft: span.BotAddLeft,
+                        BotAddMid: span.BotAddMid,
+                        BotAddRight: span.BotAddRight,
+                        _userEdited: span._userEdited || span.IsManualModified
+                    });
+                });
+            }
+
+            // 3. Apply locked design to group
+            group.SelectedDesign = lockedDesign;
             group.LockedAt = new Date().toISOString();
+            group.IsManuallyEdited = true;
             beamState.selectedOptionKey = 'locked';
+
+            // 4. Update UI
+            this.populateOptionDropdown();
+            this.updateLockStatus();
+            this.showToast('✓ Đã chốt phương án (bao gồm chỉnh sửa)', 'success');
+
+            // 5. Notify C# with groupIndex|lockedDesignJson format
+            // Format expected by C#: LOCK_DESIGN|groupIndex|lockedDesignJson
+            this.sendToHost('LOCK_DESIGN', 
+                `${beamState.currentGroupIndex}|${JSON.stringify(lockedDesign)}`);
+        },
+
+        /**
+         * Unlock current design
+         */
+        unlockDesign() {
+            const beamState = global.Beam?.State;
+            const group = beamState?.currentGroup;
+            if (!group) return;
+
+            group.SelectedDesign = null;
+            group.LockedAt = null;
+            beamState.selectedOptionKey = group.BackboneOptions?.length > 0 
+                ? String(group.SelectedBackboneIndex || 0) 
+                : null;
 
             this.populateOptionDropdown();
             this.updateLockStatus();
-            global.Dts?.UI?.showToast('✓ Đã chốt phương án', 'success');
+            this.showToast('Đã mở khóa phương án', 'info');
 
-            // Notify C# if available
-            this.sendToHost('LOCK', { groupIndex: beamState.currentGroupIndex });
+            this.sendToHost('UNLOCK_DESIGN', { groupIndex: beamState.currentGroupIndex });
+        },
+
+        /**
+         * Toggle lock status
+         */
+        toggleLock() {
+            const group = global.Beam?.State?.currentGroup;
+            if (group?.SelectedDesign) {
+                this.unlockDesign();
+            } else {
+                this.lockDesign();
+            }
+        },
+
+        /**
+         * Restore spans from locked design
+         */
+        restoreLockedDesign() {
+            const beamState = global.Beam?.State;
+            const group = beamState?.currentGroup;
+            if (!group?.SelectedDesign) return;
+
+            const captured = group.SelectedDesign._capturedSpans;
+            if (!captured || !Array.isArray(captured)) {
+                this.showToast('Không có dữ liệu span để restore', 'warning');
+                return;
+            }
+
+            // Restore span data from locked design
+            captured.forEach(cs => {
+                const span = group.Spans?.find(s => s.SpanId === cs.SpanId) 
+                          || group.Spans?.[cs.SpanIndex];
+                if (!span) return;
+
+                if (cs.TopRebar) span.TopRebar = JSON.parse(JSON.stringify(cs.TopRebar));
+                if (cs.BotRebar) span.BotRebar = JSON.parse(JSON.stringify(cs.BotRebar));
+                if (cs.Stirrup) span.Stirrup = [...cs.Stirrup];
+                if (cs.WebBar) span.WebBar = [...cs.WebBar];
+                span.SideBar = cs.SideBar;
+                span.TopBackbone = cs.TopBackbone;
+                span.BotBackbone = cs.BotBackbone;
+                span.TopAddLeft = cs.TopAddLeft;
+                span.TopAddMid = cs.TopAddMid;
+                span.TopAddRight = cs.TopAddRight;
+                span.BotAddLeft = cs.BotAddLeft;
+                span.BotAddMid = cs.BotAddMid;
+                span.BotAddRight = cs.BotAddRight;
+            });
+
+            // Refresh UI
+            global.Beam?.Renderer?.render();
+            global.Beam?.Table?.render();
+            this.showToast('✓ Đã restore dữ liệu từ phương án đã chốt', 'success');
         },
 
         /**
@@ -138,20 +266,33 @@
             const lockStatus = document.getElementById('lockStatus');
 
             if (group?.SelectedDesign) {
-                lockBtn?.classList.add('hidden');
+                if (lockBtn) {
+                    lockBtn.innerHTML = '<i class="fa-solid fa-lock-open"></i> Mở';
+                    lockBtn.className = 'px-2 py-1 bg-slate-600 hover:bg-slate-500 text-white rounded text-xs flex items-center gap-1';
+                }
                 lockStatus?.classList.remove('hidden');
             } else {
-                lockBtn?.classList.remove('hidden');
+                if (lockBtn) {
+                    lockBtn.innerHTML = '<i class="fa-solid fa-lock"></i> Chốt';
+                    lockBtn.className = 'px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs flex items-center gap-1';
+                }
                 lockStatus?.classList.add('hidden');
             }
         },
 
         /**
          * Send message to C# host (using postMessage pattern)
+         * Format: ACTION|data
          */
         sendToHost(action, data) {
             if (window.chrome?.webview?.postMessage) {
-                window.chrome.webview.postMessage(`${action}|${JSON.stringify(data)}`);
+                // For LOCK_DESIGN, data is already formatted as "index|json"
+                // For other actions, data is an object to be stringified
+                if (action === 'LOCK_DESIGN' && typeof data === 'string') {
+                    window.chrome.webview.postMessage(`${action}|${data}`);
+                } else {
+                    window.chrome.webview.postMessage(`${action}|${JSON.stringify(data)}`);
+                }
             }
         },
 
@@ -159,11 +300,32 @@
          * Save current data
          */
         save() {
+            const beamState = global.Beam?.State;
             const data = {
-                groups: global.Beam?.State?.groups || []
+                groups: beamState?.groups || []
             };
             this.sendToHost('SAVE', data);
-            global.Dts?.UI?.showToast('✓ Đã lưu', 'success');
+            this.showToast('✓ Đã lưu', 'success');
+        },
+
+        /**
+         * Show toast message (with fallback)
+         */
+        showToast(message, type = 'info') {
+            if (global.Dts?.UI?.showToast) {
+                global.Dts.UI.showToast(message, type);
+            } else {
+                // Fallback: create simple toast
+                const existing = document.querySelector('.toast');
+                if (existing) existing.remove();
+
+                const toast = document.createElement('div');
+                toast.className = 'toast fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded shadow-lg text-white text-sm z-50';
+                toast.style.background = type === 'success' ? '#22c55e' : type === 'warning' ? '#f59e0b' : '#3b82f6';
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }
         }
     };
 

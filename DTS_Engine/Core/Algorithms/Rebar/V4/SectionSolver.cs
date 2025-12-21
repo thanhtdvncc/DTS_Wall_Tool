@@ -7,26 +7,12 @@ using DTS_Engine.Core.Utils;
 namespace DTS_Engine.Core.Algorithms.Rebar.V4
 {
     /// <summary>
-    /// Bộ giải cục bộ cho một mặt cắt.
-    /// Sinh ra tất cả phương án bố trí thép hợp lệ tại mặt cắt đó.
-    /// Hỗ trợ N layers linh hoạt, không hardcode số lớp tối đa.
-    /// 
-    /// ISO 25010: Functional Correctness - Exhaustive enumeration with early pruning.
-    /// ISO 12207: Detailed Design - Single Responsibility Principle.
+    /// SectionSolver: Giải bài toán tìm phương án bố trí thép hợp lệ cho mỗi mặt cắt.
+    /// CRITICAL FIX: Sử dụng đầy đủ các settings từ DtsSettings.
     /// </summary>
     public class SectionSolver
     {
         #region Configuration
-
-        /// <summary>Số phương án tối đa giữ lại cho mỗi section</summary>
-        public int MaxArrangementsPerSection { get; set; } = 50;
-
-        /// <summary>Có thử mixed diameters không</summary>
-        public bool AllowMixedDiameters { get; set; } = true;
-
-        #endregion
-
-        #region Dependencies
 
         private readonly DtsSettings _settings;
         private readonly List<int> _allowedDiameters;
@@ -37,43 +23,44 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         private readonly int _aggregateSize;
         private readonly int _minBarsPerLayer;
 
+        public int MaxArrangementsPerSection { get; set; } = 20;
+        public bool AllowMixedDiameters { get; set; } = false;
+
         #endregion
 
         #region Constructor
 
-        /// <summary>
-        /// Tạo SectionSolver với settings.
-        /// </summary>
         public SectionSolver(DtsSettings settings)
         {
             _settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
-            // Parse allowed diameters from settings
-            var inventory = settings.General?.AvailableDiameters ?? new List<int> { 12, 14, 16, 18, 20, 22, 25, 28, 32 };
-            _allowedDiameters = DiameterParser.ParseRange(
-                settings.Beam?.MainBarRange ?? "16-25",
-                inventory);
+            // Load settings with fallbacks
+            var beamCfg = settings.Beam ?? new BeamConfig();
+            var generalCfg = settings.General ?? new GeneralConfig();
 
-            if (settings.Beam?.PreferEvenDiameter == true)
-            {
-                _allowedDiameters = DiameterParser.FilterEvenDiameters(_allowedDiameters);
-            }
-
+            // Parse allowed diameters from MainBarRange
+            var inventory = generalCfg.AvailableDiameters ?? new List<int> { 16, 18, 20, 22, 25 };
+            _allowedDiameters = DiameterParser.ParseRange(beamCfg.MainBarRange ?? "16-25", inventory);
+            
             if (_allowedDiameters.Count == 0)
             {
                 _allowedDiameters = inventory.Where(d => d >= 16 && d <= 25).ToList();
             }
 
-            // Get constraints from settings (no hardcoded values)
-            _maxLayers = settings.Beam?.MaxLayers ?? 3;
-            _minSpacing = settings.Beam?.MinClearSpacing ?? 25;
-            _maxSpacing = settings.Beam?.MaxClearSpacing ?? 300;
-            _minLayerSpacing = settings.Beam?.MinLayerSpacing ?? 25;
-            _aggregateSize = settings.Beam?.AggregateSize ?? 20;
-            _minBarsPerLayer = settings.Beam?.MinBarsPerLayer ?? 2;
+            // Apply PreferEvenDiameter filter
+            if (beamCfg.PreferEvenDiameter && _allowedDiameters.Any(d => d % 2 == 0))
+            {
+                _allowedDiameters = _allowedDiameters.Where(d => d % 2 == 0).ToList();
+            }
 
-            // Allow mixed diameters if not explicitly disabled
-            AllowMixedDiameters = !(settings.Beam?.PreferSingleDiameter ?? false);
+            _maxLayers = beamCfg.MaxLayers > 0 ? beamCfg.MaxLayers : 2;
+            _minSpacing = beamCfg.MinClearSpacing > 0 ? beamCfg.MinClearSpacing : 30;
+            _maxSpacing = beamCfg.MaxClearSpacing > 0 ? beamCfg.MaxClearSpacing : 200;
+            _minLayerSpacing = beamCfg.MinLayerSpacing > 0 ? beamCfg.MinLayerSpacing : 25;
+            _aggregateSize = beamCfg.AggregateSize > 0 ? beamCfg.AggregateSize : 20;
+            _minBarsPerLayer = beamCfg.MinBarsPerLayer > 0 ? beamCfg.MinBarsPerLayer : 2;
+            
+            AllowMixedDiameters = beamCfg.AllowDiameterMixing;
         }
 
         #endregion
@@ -81,62 +68,66 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         #region Public API
 
         /// <summary>
-        /// Sinh tất cả phương án bố trí hợp lệ cho mặt cắt.
+        /// Solve một section và một position (Top/Bot).
         /// </summary>
-        /// <param name="section">Mặt cắt cần giải</param>
-        /// <param name="position">Top hoặc Bot</param>
-        /// <returns>Danh sách phương án sắp theo Score giảm dần</returns>
         public List<SectionArrangement> Solve(DesignSection section, RebarPosition position)
         {
-            if (section == null)
-                return new List<SectionArrangement> { SectionArrangement.Empty };
-
             double reqArea = position == RebarPosition.Top ? section.ReqTop : section.ReqBot;
-            double usableWidth = section.UsableWidth;
-            double usableHeight = section.UsableHeight;
 
-            // Không yêu cầu thép
+            // No requirement = return empty arrangement
             if (reqArea <= 0.01)
             {
                 return new List<SectionArrangement> { SectionArrangement.Empty };
             }
 
+            double usableWidth = section.UsableWidth;
+            double usableHeight = section.UsableHeight;
+
+            if (usableWidth <= 0 || usableHeight <= 0)
+            {
+                Utils.RebarLogger.LogError($"Invalid dimensions for {section.SectionId}: W={usableWidth}, H={usableHeight}");
+                return new List<SectionArrangement>();
+            }
+
             var results = new List<SectionArrangement>();
 
-            // === PHASE 1: Single Diameter Solutions ===
-            results.AddRange(GenerateSingleDiameterArrangements(reqArea, usableWidth, usableHeight, section));
+            // Generate single-diameter arrangements
+            var singleDiaResults = GenerateSingleDiameterArrangements(reqArea, usableWidth, usableHeight, section);
+            results.AddRange(singleDiaResults);
 
-            // === PHASE 2: Mixed Diameter Solutions (nếu cho phép) ===
-            if (AllowMixedDiameters && (results.Count == 0 || results.All(r => r.Score < 60)))
+            // Generate mixed-diameter arrangements if allowed
+            if (AllowMixedDiameters && _allowedDiameters.Count >= 2)
             {
-                results.AddRange(GenerateMixedDiameterArrangements(reqArea, usableWidth, section));
+                var mixedResults = GenerateMixedDiameterArrangements(reqArea, usableWidth, section);
+                results.AddRange(mixedResults);
             }
 
-            // === PHASE 3: Scoring and Filtering ===
-            foreach (var arr in results)
-            {
-                arr.Score = CalculateScore(arr, reqArea, section);
-                arr.Efficiency = reqArea > 0 ? arr.TotalArea / reqArea : 0;
-            }
-
-            // Sort and limit
-            return results
-                .Where(r => r.TotalArea >= reqArea * 0.98) // 2% tolerance
-                .OrderByDescending(r => r.Score)
-                .ThenBy(r => r.LayerCount)
-                .ThenBy(r => r.TotalCount)
-                .DistinctBy(r => r.ToDisplayString()) // Remove duplicates
+            // Filter valid and score
+            var validResults = results
+                .Where(a => a.TotalArea >= reqArea * 0.98) // Allow 2% tolerance
+                .OrderByDescending(a => a.Score)
                 .Take(MaxArrangementsPerSection)
                 .ToList();
+
+            // Fallback if no valid results
+            if (validResults.Count == 0)
+            {
+                Utils.RebarLogger.Log($"No valid arrangements for {section.SectionId} ({position}), creating fallback");
+                var fallback = CreateFallbackArrangement(reqArea, usableWidth, section);
+                if (fallback != null)
+                {
+                    validResults.Add(fallback);
+                }
+            }
+
+            return validResults;
         }
 
         /// <summary>
-        /// Giải tất cả sections trong danh sách.
+        /// Solve tất cả sections.
         /// </summary>
         public void SolveAll(List<DesignSection> sections)
         {
-            if (sections == null) return;
-
             foreach (var section in sections)
             {
                 section.ValidArrangementsTop = Solve(section, RebarPosition.Top);
@@ -148,9 +139,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         #region Single Diameter Generation
 
-        /// <summary>
-        /// Sinh phương án với đường kính đơn (1 đến N layers).
-        /// </summary>
         private List<SectionArrangement> GenerateSingleDiameterArrangements(
             double reqArea,
             double usableWidth,
@@ -159,73 +147,65 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             var results = new List<SectionArrangement>();
 
-            foreach (int dia in _allowedDiameters.OrderByDescending(d => d))
+            // Sort diameters: prefer larger diameters first (fewer bars)
+            var sortedDiameters = _settings.Beam?.PreferFewerBars == true
+                ? _allowedDiameters.OrderByDescending(d => d).ToList()
+                : _allowedDiameters.OrderBy(d => d).ToList();
+
+            foreach (int dia in sortedDiameters)
             {
-                double barArea = Math.PI * dia * dia / 400.0; // cm²
+                double as1 = Math.PI * dia * dia / 400.0;
 
-                // Tính số thanh tối thiểu để đủ diện tích
-                int minBars = Math.Max(_minBarsPerLayer, (int)Math.Ceiling(reqArea / barArea));
+                // Calculate min bars needed
+                int minBars = (int)Math.Ceiling(reqArea / as1);
+                if (minBars < _minBarsPerLayer) minBars = _minBarsPerLayer;
 
-                // Tính số thanh tối đa mỗi lớp
-                int maxBarsLayer1 = CalculateMaxBarsPerLayer(usableWidth, dia);
-                if (maxBarsLayer1 < _minBarsPerLayer) continue;
-
-                // Tính số lớp tối đa có thể (dựa trên chiều cao)
-                int maxPossibleLayers = CalculateMaxLayers(usableHeight, dia);
-                int effectiveMaxLayers = Math.Min(_maxLayers, maxPossibleLayers);
-
-                // Tính tổng số thanh tối đa có thể bố trí
-                int maxTotalBars = maxBarsLayer1 * effectiveMaxLayers;
-
-                // Thử từ minBars đến maxTotalBars
-                for (int totalBars = minBars; totalBars <= maxTotalBars; totalBars++)
+                // Apply symmetric preference
+                if (_settings.Beam?.PreferSymmetric == true && minBars % 2 != 0)
                 {
-                    double providedArea = totalBars * barArea;
-                    if (providedArea < reqArea * 0.98) continue;
-
-                    // Thử các cách phân lớp khác nhau
-                    var layerConfigs = GenerateLayerConfigurations(totalBars, maxBarsLayer1, effectiveMaxLayers);
-
-                    foreach (var config in layerConfigs)
-                    {
-                        // Verify spacing cho layer 1
-                        if (!CheckSpacing(usableWidth, config[0], dia)) continue;
-
-                        var arrangement = CreateArrangement(config, dia, usableWidth, reqArea);
-                        if (arrangement != null && !results.Any(r => r.Equals(arrangement)))
-                        {
-                            results.Add(arrangement);
-                        }
-                    }
-
-                    // Giới hạn để tránh quá tải
-                    if (results.Count >= MaxArrangementsPerSection * 2) break;
+                    minBars++;
                 }
 
-                if (results.Count >= MaxArrangementsPerSection * 2) break;
+                // Calculate max bars per layer
+                int maxPerLayer = CalculateMaxBarsPerLayer(usableWidth, dia);
+                int maxLayersForHeight = CalculateMaxLayers(usableHeight, dia);
+                int actualMaxLayers = Math.Min(_maxLayers, maxLayersForHeight);
+
+                // Generate arrangements for this diameter
+                int maxTotalBars = maxPerLayer * actualMaxLayers;
+                
+                for (int totalBars = minBars; totalBars <= Math.Min(maxTotalBars, minBars + 6); totalBars++)
+                {
+                    // Generate layer configurations
+                    var configs = GenerateLayerConfigurations(totalBars, maxPerLayer, actualMaxLayers);
+
+                    foreach (var config in configs)
+                    {
+                        // Validate all layers fit
+                        bool allFit = config.All(n => CheckSpacing(usableWidth, n, dia));
+                        if (!allFit) continue;
+
+                        var arr = CreateArrangement(config, dia, usableWidth, reqArea);
+                        if (arr != null)  // Fixed: was missing opening parenthesis
+                        {
+                            arr.Score = CalculateScore(arr, reqArea, section);
+                            results.Add(arr);
+                        }
+                    }
+                }
+
+                // Limit per diameter to avoid explosion
+                if (results.Count > 50) break;
             }
 
             return results;
         }
 
-        /// <summary>
-        /// Sinh tất cả cách phân lớp hợp lệ cho N layers.
-        /// </summary>
         private List<List<int>> GenerateLayerConfigurations(int totalBars, int maxPerLayer, int maxLayers)
         {
-            var configs = new List<List<int>>();
-
-            // Simple case: fit in 1 layer
-            if (totalBars <= maxPerLayer)
-            {
-                configs.Add(new List<int> { totalBars });
-                return configs;
-            }
-
-            // Generate multi-layer configurations
-            GenerateLayerConfigsRecursive(totalBars, maxPerLayer, maxLayers, new List<int>(), configs);
-
-            return configs;
+            var results = new List<List<int>>();
+            GenerateLayerConfigsRecursive(totalBars, maxPerLayer, maxLayers, new List<int>(), results);
+            return results;
         }
 
         private void GenerateLayerConfigsRecursive(
@@ -235,48 +215,30 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             List<int> current,
             List<List<int>> results)
         {
-            // Đã dùng hết số lớp cho phép
-            if (current.Count >= maxLayers)
+            if (remaining == 0)
             {
-                if (remaining == 0)
+                if (current.Count > 0)
                 {
                     results.Add(new List<int>(current));
                 }
                 return;
             }
 
-            // Còn 0 thanh
-            if (remaining == 0)
-            {
-                results.Add(new List<int>(current));
-                return;
-            }
+            if (current.Count >= maxLayers) return;
+            if (results.Count > 100) return; // Limit combinations
 
-            // Thử các số lượng cho layer hiện tại
-            int minThisLayer = Math.Max(_minBarsPerLayer, remaining - maxPerLayer * (maxLayers - current.Count - 1));
-            int maxThisLayer = Math.Min(remaining, maxPerLayer);
+            // First layer (or subsequent): try different bar counts
+            int minInLayer = current.Count == 0 ? _minBarsPerLayer : 2;
+            int maxInLayer = Math.Min(remaining, maxPerLayer);
 
-            // Ưu tiên layer 1 đầy trước
-            if (current.Count == 0)
+            for (int n = maxInLayer; n >= minInLayer; n--)
             {
-                minThisLayer = Math.Max(minThisLayer, maxPerLayer - 2);
-            }
-
-            for (int n = maxThisLayer; n >= minThisLayer; n--)
-            {
-                // Đảm bảo không để layer sau có ít hơn minBars (trừ layer cuối)
-                int remainingAfter = remaining - n;
-                if (remainingAfter > 0 && remainingAfter < _minBarsPerLayer && current.Count < maxLayers - 1)
-                {
-                    continue;
-                }
+                // Prefer pyramidal: each subsequent layer should have <= bars of previous
+                if (current.Count > 0 && n > current.Last()) continue;
 
                 current.Add(n);
-                GenerateLayerConfigsRecursive(remainingAfter, maxPerLayer, maxLayers, current, results);
+                GenerateLayerConfigsRecursive(remaining - n, maxPerLayer, maxLayers, current, results);
                 current.RemoveAt(current.Count - 1);
-
-                // Giới hạn số configurations
-                if (results.Count >= 10) return;
             }
         }
 
@@ -284,213 +246,265 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         #region Mixed Diameter Generation
 
-        /// <summary>
-        /// Sinh phương án với mixed diameters (2 đường kính khác nhau).
-        /// </summary>
         private List<SectionArrangement> GenerateMixedDiameterArrangements(
             double reqArea,
             double usableWidth,
             DesignSection section)
         {
             var results = new List<SectionArrangement>();
+            
+            if (_allowedDiameters.Count < 2) return results;
 
-            // Lấy 2-3 đường kính lớn nhất
-            var topDiameters = _allowedDiameters
-                .OrderByDescending(d => d)
-                .Take(3)
-                .ToList();
+            var sorted = _allowedDiameters.OrderByDescending(d => d).ToList();
 
-            foreach (int dia1 in topDiameters)
+            // Try combinations of 2 adjacent diameters
+            for (int i = 0; i < sorted.Count - 1 && i < 2; i++)
             {
-                foreach (int dia2 in topDiameters.Where(d => d < dia1))
+                int d1 = sorted[i];     // Larger
+                int d2 = sorted[i + 1]; // Smaller
+
+                double as1 = Math.PI * d1 * d1 / 400.0;
+                double as2 = Math.PI * d2 * d2 / 400.0;
+
+                // Try different combinations
+                for (int n1 = 2; n1 <= 6; n1++)
                 {
-                    double area1 = Math.PI * dia1 * dia1 / 400.0;
-                    double area2 = Math.PI * dia2 * dia2 / 400.0;
-
-                    // Thử các tổ hợp
-                    for (int n1 = _minBarsPerLayer; n1 <= 6; n1++)
+                    double remainingArea = reqArea - n1 * as1;
+                    if (remainingArea <= 0)
                     {
-                        double remaining = reqArea - n1 * area1;
-                        if (remaining <= 0) continue;
-
-                        int n2 = (int)Math.Ceiling(remaining / area2);
-                        n2 = Math.Max(1, n2);
-
-                        int total = n1 + n2;
-
-                        // Kiểm tra fit trong 1 layer
-                        if (!CanFitMixedBars(usableWidth, n1, dia1, n2, dia2)) continue;
-
-                        var diameters = Enumerable.Repeat(dia1, n1)
-                            .Concat(Enumerable.Repeat(dia2, n2))
-                            .ToList();
-
-                        var arrangement = new SectionArrangement
-                        {
-                            TotalCount = total,
-                            TotalArea = n1 * area1 + n2 * area2,
-                            PrimaryDiameter = dia1,
-                            BarDiameters = diameters,
-                            LayerCount = 1,
-                            BarsPerLayer = new List<int> { total },
-                            ClearSpacing = CalculateMixedSpacing(usableWidth, diameters),
-                            IsSymmetric = true,
-                            FitsStirrupLayout = true,
-                            Score = 60 // Base score for mixed
-                        };
-
-                        if (!results.Any(r => r.Equals(arrangement)))
-                        {
-                            results.Add(arrangement);
-                        }
+                        // n1 of d1 alone is enough
+                        break;
                     }
+
+                    int n2 = (int)Math.Ceiling(remainingArea / as2);
+                    if (n2 < 2) n2 = 2;
+
+                    // Check if mixed combination fits
+                    if (!CanFitMixedBars(usableWidth, n1, d1, n2, d2)) continue;
+
+                    double totalArea = n1 * as1 + n2 * as2;
+                    if (totalArea < reqArea * 0.98) continue;
+
+                    var barDiameters = Enumerable.Repeat(d1, n1).Concat(Enumerable.Repeat(d2, n2)).ToList();
+
+                    var arr = new SectionArrangement
+                    {
+                        TotalCount = n1 + n2,
+                        TotalArea = totalArea,
+                        LayerCount = 1,
+                        BarsPerLayer = new List<int> { n1 + n2 },
+                        DiametersPerLayer = new List<int> { d1 }, // Primary = larger
+                        PrimaryDiameter = d1,
+                        BarDiameters = barDiameters,
+                        ClearSpacing = CalculateMixedSpacing(usableWidth, barDiameters),
+                        Efficiency = totalArea / reqArea
+                    };
+
+                    arr.Score = CalculateScore(arr, reqArea, section) - 5; // Slight penalty for mixed
+                    results.Add(arr);
                 }
             }
 
-            return results.Take(10).ToList();
+            return results;
         }
 
         #endregion
 
-        #region Helper Methods
+        #region Spacing Calculations
 
-        /// <summary>
-        /// Tính số thanh tối đa mỗi lớp dựa trên bề rộng.
-        /// </summary>
         private int CalculateMaxBarsPerLayer(double usableWidth, int diameter)
         {
             double minClear = GetMinClearSpacing(diameter);
-            if (usableWidth < diameter) return 0;
+            double available = usableWidth;
 
-            // n*d + (n-1)*minClear <= usableWidth
-            // n <= (usableWidth + minClear) / (d + minClear)
-            double nMax = (usableWidth + minClear) / (diameter + minClear);
-            return Math.Max(0, (int)Math.Floor(nMax));
+            // n bars: n * diameter + (n-1) * clearSpacing <= available
+            // n * (diameter + clearSpacing) - clearSpacing <= available
+            // n <= (available + clearSpacing) / (diameter + clearSpacing)
+
+            double n = (available + minClear) / (diameter + minClear);
+            int maxBars = (int)Math.Floor(n);
+
+            return Math.Max(_minBarsPerLayer, Math.Min(maxBars, 10));
         }
 
-        /// <summary>
-        /// Tính số lớp tối đa dựa trên chiều cao.
-        /// </summary>
         private int CalculateMaxLayers(double usableHeight, int diameter)
         {
-            if (usableHeight <= 0) return 1;
-
-            // Mỗi lớp cần: diameter + minLayerSpacing
+            // Each layer needs: diameter + layer spacing
             double perLayer = diameter + _minLayerSpacing;
-            int maxLayers = (int)Math.Floor(usableHeight / perLayer);
-
-            return Math.Max(1, Math.Min(maxLayers, 5)); // Cap at 5 layers
+            int maxLayers = (int)Math.Floor((usableHeight + _minLayerSpacing) / perLayer);
+            return Math.Max(1, Math.Min(maxLayers, _maxLayers));
         }
 
-        /// <summary>
-        /// Lấy khoảng hở tối thiểu (theo tiêu chuẩn).
-        /// </summary>
         private double GetMinClearSpacing(int diameter)
         {
-            // Min of: bar diameter, minSpacing, 1.33*aggregate
-            return Math.Max(diameter, Math.Max(_minSpacing, 1.33 * _aggregateSize));
+            // Clear spacing = max(d, aggregateSize * 1.33, minSpacing)
+            double byDiameter = diameter;
+            double byAggregate = _aggregateSize * 1.33;
+            double byConfig = _minSpacing;
+
+            // Apply UseBarDiameterForSpacing if enabled
+            if (_settings.Beam?.UseBarDiameterForSpacing == true)
+            {
+                double mult = _settings.Beam.BarDiameterSpacingMultiplier > 0 
+                    ? _settings.Beam.BarDiameterSpacingMultiplier 
+                    : 1.0;
+                byDiameter = diameter * mult;
+            }
+
+            return Math.Max(Math.Max(byDiameter, byAggregate), byConfig);
         }
 
-        /// <summary>
-        /// Tính khoảng hở thực tế giữa các thanh.
-        /// </summary>
         private double CalculateClearSpacing(double usableWidth, int barsInLayer, int diameter)
         {
-            if (barsInLayer <= 1) return usableWidth;
-            return (usableWidth - barsInLayer * diameter) / (barsInLayer - 1);
+            if (barsInLayer <= 1) return usableWidth - diameter;
+            
+            double totalBarWidth = barsInLayer * diameter;
+            double availableForGaps = usableWidth - totalBarWidth;
+            return availableForGaps / (barsInLayer - 1);
         }
 
-        /// <summary>
-        /// Kiểm tra khoảng hở hợp lệ.
-        /// </summary>
         private bool CheckSpacing(double usableWidth, int barsInLayer, int diameter)
         {
-            double spacing = CalculateClearSpacing(usableWidth, barsInLayer, diameter);
-            double minClear = GetMinClearSpacing(diameter);
+            if (barsInLayer <= 0) return true;
+            if (barsInLayer == 1) return usableWidth >= diameter;
 
-            return spacing >= minClear && spacing <= _maxSpacing;
+            double clearSpacing = CalculateClearSpacing(usableWidth, barsInLayer, diameter);
+            double minRequired = GetMinClearSpacing(diameter);
+
+            return clearSpacing >= minRequired;
         }
 
-        /// <summary>
-        /// Kiểm tra mixed bars có fit không.
-        /// </summary>
         private bool CanFitMixedBars(double usableWidth, int n1, int dia1, int n2, int dia2)
         {
             double totalBarWidth = n1 * dia1 + n2 * dia2;
             int totalBars = n1 + n2;
+            double avgDia = totalBarWidth / totalBars;
+            double minClear = GetMinClearSpacing((int)avgDia);
 
-            double minClear = Math.Max(GetMinClearSpacing(dia1), GetMinClearSpacing(dia2));
-            double totalClearNeeded = (totalBars - 1) * minClear;
-
-            return totalBarWidth + totalClearNeeded <= usableWidth;
+            double requiredWidth = totalBarWidth + (totalBars - 1) * minClear;
+            return requiredWidth <= usableWidth;
         }
 
-        /// <summary>
-        /// Tính khoảng hở cho mixed bars.
-        /// </summary>
         private double CalculateMixedSpacing(double usableWidth, List<int> diameters)
         {
-            if (diameters.Count <= 1) return usableWidth;
+            if (diameters.Count <= 1) return 0;
+            
             double totalBarWidth = diameters.Sum();
-            return (usableWidth - totalBarWidth) / (diameters.Count - 1);
+            double availableForGaps = usableWidth - totalBarWidth;
+            return availableForGaps / (diameters.Count - 1);
         }
 
-        /// <summary>
-        /// Tạo SectionArrangement từ layer configuration.
-        /// </summary>
+        #endregion
+
+        #region Arrangement Creation & Scoring
+
         private SectionArrangement CreateArrangement(List<int> layers, int diameter, double usableWidth, double reqArea)
         {
             int totalBars = layers.Sum();
-            double barArea = Math.PI * diameter * diameter / 400.0;
+            double as1 = Math.PI * diameter * diameter / 400.0;
+            double totalArea = totalBars * as1;
 
-            return new SectionArrangement
+            var arr = new SectionArrangement
             {
                 TotalCount = totalBars,
-                TotalArea = totalBars * barArea,
-                PrimaryDiameter = diameter,
+                TotalArea = totalArea,
                 LayerCount = layers.Count,
                 BarsPerLayer = new List<int>(layers),
-                DiametersPerLayer = Enumerable.Repeat(diameter, layers.Count).ToList(),
-                ClearSpacing = CalculateClearSpacing(usableWidth, layers[0], diameter),
+                DiametersPerLayer = layers.Select(_ => diameter).ToList(),
+                PrimaryDiameter = diameter,
+                BarDiameters = new List<int>(),
+                ClearSpacing = layers.Count > 0 ? CalculateClearSpacing(usableWidth, layers[0], diameter) : 0,
                 VerticalSpacing = _minLayerSpacing,
-                IsSymmetric = layers.All(x => x % 2 == 0 || x == 1),
+                Efficiency = reqArea > 0.01 ? totalArea / reqArea : 1.0,
+                IsSymmetric = totalBars % 2 == 0,
                 FitsStirrupLayout = true
             };
+
+            // Calculate waste count (bars beyond requirement)
+            int minBars = (int)Math.Ceiling(reqArea / as1);
+            arr.WasteCount = Math.Max(0, totalBars - minBars);
+
+            return arr;
         }
 
-        /// <summary>
-        /// Tính điểm cho phương án.
-        /// </summary>
+        private SectionArrangement CreateFallbackArrangement(double reqArea, double usableWidth, DesignSection section)
+        {
+            // Use largest diameter and calculate minimum bars
+            int maxDia = _allowedDiameters.Max();
+            double as1 = Math.PI * maxDia * maxDia / 400.0;
+            int nBars = (int)Math.Ceiling(reqArea / as1);
+            if (nBars < _minBarsPerLayer) nBars = _minBarsPerLayer;
+
+            // Check if fits in one layer
+            int maxPerLayer = CalculateMaxBarsPerLayer(usableWidth, maxDia);
+            
+            var layers = new List<int>();
+            int remaining = nBars;
+            
+            while (remaining > 0 && layers.Count < _maxLayers)
+            {
+                int inThisLayer = Math.Min(remaining, maxPerLayer);
+                layers.Add(inThisLayer);
+                remaining -= inThisLayer;
+            }
+
+            if (remaining > 0)
+            {
+                // Can't fit all bars
+                Utils.RebarLogger.LogError($"Fallback failed for {section.SectionId}: need {nBars} D{maxDia}, only fit {layers.Sum()}");
+                return null;
+            }
+
+            var arr = CreateArrangement(layers, maxDia, usableWidth, reqArea);
+            arr.Score = 50; // Low score for fallback
+            return arr;
+        }
+
         private double CalculateScore(SectionArrangement arr, double reqArea, DesignSection section)
         {
-            if (arr.TotalArea < reqArea * 0.98) return 0;
-
             double score = 100.0;
 
-            // 1. Efficiency (max -30): Ít thừa thì tốt
-            double wasteRatio = (arr.TotalArea - reqArea) / Math.Max(reqArea, 0.01);
-            score -= Math.Min(30, wasteRatio * 50);
+            // 1. Efficiency penalty (waste)
+            double wasteRatio = arr.Efficiency > 1 ? (arr.Efficiency - 1.0) : 0;
+            score -= wasteRatio * 30; // Up to 30 points for 100% waste
 
-            // 2. Layer Penalty (max -20): Ít lớp thì tốt
-            score -= (arr.LayerCount - 1) * 8;
+            // 2. Layer penalty
+            score -= (arr.LayerCount - 1) * 5; // -5 per extra layer
 
-            // 3. Bar Count Penalty (max -15): Ít thanh thì tốt
-            score -= Math.Min(15, (arr.TotalCount - _minBarsPerLayer) * 2);
+            // 3. Bar count penalty
+            if (arr.TotalCount > 6) score -= (arr.TotalCount - 6) * 2;
 
-            // 4. Spacing Quality (+5): Khoảng hở optimal (100-150mm)
-            double optimalSpacing = (_minSpacing + _maxSpacing) / 3; // ~100-120mm typically
-            double spacingDiff = Math.Abs(arr.ClearSpacing - optimalSpacing);
-            if (spacingDiff < 30) score += 5;
+            // 4. Spacing bonus (more spacing = better)
+            if (arr.ClearSpacing > _maxSpacing * 0.8)
+            {
+                score += 5;
+            }
 
-            // 5. Symmetry Bonus (+3): Số thanh chẵn
-            if (arr.IsEvenCount) score += 3;
+            // 5. Preference bonuses from settings
+            if (_settings.Beam?.PreferSingleDiameter == true && arr.IsSingleDiameter)
+            {
+                score += 3;
+            }
 
-            // 6. Preferred Diameter Bonus (+5)
-            int preferredDia = _settings.Beam?.PreferredDiameter ?? 20;
-            if (arr.PrimaryDiameter == preferredDia) score += 5;
+            if (_settings.Beam?.PreferSymmetric == true && arr.IsSymmetric)
+            {
+                score += 3;
+            }
 
-            // 7. Single Diameter Bonus (+3)
-            if (arr.IsSingleDiameter) score += 3;
+            if (_settings.Beam?.PreferFewerBars == true)
+            {
+                score += Math.Max(0, 6 - arr.TotalCount);
+            }
+
+            // 6. Preferred diameter bonus
+            if (_settings.Beam?.PreferredDiameter > 0 && arr.PrimaryDiameter == _settings.Beam.PreferredDiameter)
+            {
+                score += 5;
+            }
+
+            // 7. Waste count penalty from Rules
+            double wastePenalty = _settings.Rules?.WastePenaltyScore ?? 2.0;
+            score -= arr.WasteCount * wastePenalty;
 
             return Math.Max(0, Math.Min(100, score));
         }
@@ -499,10 +513,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
     }
 
     /// <summary>
-    /// Extension method for DistinctBy (không có sẵn trong .NET Framework 4.8)
+    /// Extension methods for LINQ compatibility.
     /// </summary>
-    internal static class EnumerableExtensions
+    public static class EnumerableExtensions
     {
+        /// <summary>
+        /// Distinct by key selector.
+        /// </summary>
         public static IEnumerable<T> DistinctBy<T, TKey>(this IEnumerable<T> source, Func<T, TKey> keySelector)
         {
             var seen = new HashSet<TKey>();

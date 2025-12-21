@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -300,18 +300,73 @@ namespace DTS_Engine.UI.Forms
             {
                 try
                 {
-                    // Format: LOCK_DESIGN|groupIndex|selectedDesignJson
+                    // Format: LOCK_DESIGN|groupIndex|lockedDesignJson
                     var parts = message.Substring(12).Split(new[] { '|' }, 2);
-                    if (parts.Length >= 1 && int.TryParse(parts[0], out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
+                    if (parts.Length >= 2 && int.TryParse(parts[0], out int groupIndex) && 
+                        groupIndex >= 0 && groupIndex < _groups.Count)
                     {
-                        if (parts.Length >= 2 && !string.IsNullOrEmpty(parts[1]))
+                        var group = _groups[groupIndex];
+                        
+                        // Parse the locked design JSON
+                        var jsonSettings = new JsonSerializerSettings
                         {
-                            // Deserialize SelectedDesign from JS
-                            var design = JsonConvert.DeserializeObject<ContinuousBeamSolution>(parts[1]);
-                            _groups[groupIndex].SelectedDesign = design;
-                            _groups[groupIndex].LockedAt = DateTime.Now;
+                            NullValueHandling = NullValueHandling.Ignore,
+                            MissingMemberHandling = MissingMemberHandling.Ignore
+                        };
+                        
+                        // Parse as JObject first to extract _capturedSpans
+                        var jObj = Newtonsoft.Json.Linq.JObject.Parse(parts[1]);
+                        
+                        // Deserialize the main design
+                        var design = jObj.ToObject<ContinuousBeamSolution>(JsonSerializer.Create(jsonSettings));
+                        group.SelectedDesign = design;
+                        group.LockedAt = DateTime.Now;
+                        group.IsManuallyEdited = true;
+                        
+                        // CRITICAL: Apply captured spans back to group.Spans
+                        var capturedSpans = jObj["_capturedSpans"] as Newtonsoft.Json.Linq.JArray;
+                        if (capturedSpans != null && group.Spans != null)
+                        {
+                            foreach (var cs in capturedSpans)
+                            {
+                                string spanId = cs["SpanId"]?.ToString();
+                                int spanIndex = cs["SpanIndex"]?.ToObject<int>() ?? -1;
+                                
+                                var span = group.Spans.FirstOrDefault(s => s.SpanId == spanId);
+                                if (span == null && spanIndex >= 0 && spanIndex < group.Spans.Count)
+                                {
+                                    span = group.Spans[spanIndex];
+                                }
+                                
+                                if (span != null)
+                                {
+                                    // Apply captured data back to span
+                                    var topBackbone = cs["TopBackbone"]?.ToObject<RebarInfo>();
+                                    var botBackbone = cs["BotBackbone"]?.ToObject<RebarInfo>();
+                                    
+                                    if (topBackbone != null) span.TopBackbone = topBackbone;
+                                    if (botBackbone != null) span.BotBackbone = botBackbone;
+                                    
+                                    span.TopAddLeft = cs["TopAddLeft"]?.ToObject<RebarInfo>();
+                                    span.TopAddMid = cs["TopAddMid"]?.ToObject<RebarInfo>();
+                                    span.TopAddRight = cs["TopAddRight"]?.ToObject<RebarInfo>();
+                                    span.BotAddLeft = cs["BotAddLeft"]?.ToObject<RebarInfo>();
+                                    span.BotAddMid = cs["BotAddMid"]?.ToObject<RebarInfo>();
+                                    span.BotAddRight = cs["BotAddRight"]?.ToObject<RebarInfo>();
+                                    
+                                    span.SideBar = cs["SideBar"]?.ToString();
+                                    
+                                    // Mark as manually modified
+                                    bool userEdited = cs["_userEdited"]?.ToObject<bool>() ?? false;
+                                    span.IsManualModified = userEdited;
+                                    span.LastManualEdit = DateTime.Now;
+                                }
+                            }
                         }
-                        System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design locked for group {groupIndex}, SelectedDesign updated in _groups");
+                        
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[BeamGroupViewer] Design locked for group {groupIndex}, " +
+                            $"SelectedDesign and Spans updated");
                     }
                 }
                 catch (Exception ex)

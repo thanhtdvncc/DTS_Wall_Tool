@@ -179,6 +179,187 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return calculator.Calculate(group, spanResults, externalConstraints);
         }
 
+        /// <summary>
+        /// CRITICAL: Apply solution kết quả về SpanData của BeamGroup.
+        /// Đây là single source of truth để sync giữa calculator -> viewer -> XData.
+        /// </summary>
+        public static void ApplySolutionToGroup(BeamGroup group, ContinuousBeamSolution solution)
+        {
+            if (group == null || solution == null) return;
+            if (group.Spans == null || group.Spans.Count == 0) return;
+
+            // 1. Apply backbone info
+            int backboneDiaTop = solution.BackboneDiameter_Top > 0 ? solution.BackboneDiameter_Top : solution.BackboneDiameter;
+            int backboneDiaBot = solution.BackboneDiameter_Bot > 0 ? solution.BackboneDiameter_Bot : solution.BackboneDiameter;
+
+            // 2. Iterate through SpanResults if available
+            if (solution.SpanResults != null && solution.SpanResults.Count > 0)
+            {
+                foreach (var spanResult in solution.SpanResults)
+                {
+                    var span = group.Spans.FirstOrDefault(s => s.SpanId == spanResult.SpanId);
+                    if (span == null && spanResult.SpanIndex >= 0 && spanResult.SpanIndex < group.Spans.Count)
+                    {
+                        span = group.Spans[spanResult.SpanIndex];
+                    }
+                    if (span == null) continue;
+
+                    // Apply backbone
+                    span.TopBackbone = spanResult.TopBackbone ?? new RebarInfo
+                    {
+                        Count = solution.BackboneCount_Top,
+                        Diameter = backboneDiaTop
+                    };
+                    span.BotBackbone = spanResult.BotBackbone ?? new RebarInfo
+                    {
+                        Count = solution.BackboneCount_Bot,
+                        Diameter = backboneDiaBot
+                    };
+
+                    // Apply addons from SpanResult
+                    if (spanResult.TopAddons != null)
+                    {
+                        span.TopAddLeft = spanResult.TopAddons.TryGetValue("Left", out var tl) ? tl : null;
+                        span.TopAddMid = spanResult.TopAddons.TryGetValue("Mid", out var tm) ? tm : null;
+                        span.TopAddRight = spanResult.TopAddons.TryGetValue("Right", out var tr) ? tr : null;
+                    }
+
+                    if (spanResult.BotAddons != null)
+                    {
+                        span.BotAddLeft = spanResult.BotAddons.TryGetValue("Left", out var bl) ? bl : null;
+                        span.BotAddMid = spanResult.BotAddons.TryGetValue("Mid", out var bm) ? bm : null;
+                        span.BotAddRight = spanResult.BotAddons.TryGetValue("Right", out var br) ? br : null;
+                    }
+
+                    // Build legacy TopRebar/BotRebar arrays for viewer compatibility
+                    BuildLegacyRebarArrays(span, solution);
+
+                    // Apply stirrups if available
+                    if (spanResult.Stirrups != null && spanResult.Stirrups.Count > 0)
+                    {
+                        if (span.Stirrup == null) span.Stirrup = new string[3];
+                        if (spanResult.Stirrups.TryGetValue("Left", out var sl)) span.Stirrup[0] = sl;
+                        if (spanResult.Stirrups.TryGetValue("Mid", out var sm)) span.Stirrup[1] = sm;
+                        if (spanResult.Stirrups.TryGetValue("Right", out var sr)) span.Stirrup[2] = sr;
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: Apply backbone uniformly if no SpanResults
+                foreach (var span in group.Spans)
+                {
+                    span.TopBackbone = new RebarInfo
+                    {
+                        Count = solution.BackboneCount_Top,
+                        Diameter = backboneDiaTop
+                    };
+                    span.BotBackbone = new RebarInfo
+                    {
+                        Count = solution.BackboneCount_Bot,
+                        Diameter = backboneDiaBot
+                    };
+
+                    // Apply reinforcements from dictionary
+                    ApplyReinforcementsToSpan(span, solution);
+                    BuildLegacyRebarArrays(span, solution);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Apply Reinforcements dictionary to a specific span.
+        /// </summary>
+        private static void ApplyReinforcementsToSpan(SpanData span, ContinuousBeamSolution solution)
+        {
+            if (solution.Reinforcements == null) return;
+
+            // Parse reinforcements for this span
+            foreach (var kvp in solution.Reinforcements)
+            {
+                if (!kvp.Key.StartsWith(span.SpanId + "_")) continue;
+
+                var parts = kvp.Key.Split('_');
+                if (parts.Length < 3) continue;
+
+                string position = parts[1]; // "Top" or "Bot"
+                string zone = parts[2];     // "Left", "Mid", "Right" or index
+
+                var spec = kvp.Value;
+                var info = new RebarInfo
+                {
+                    Count = spec.Count,
+                    Diameter = spec.Diameter,
+                    LayerCounts = spec.LayerBreakdown
+                };
+
+                if (position == "Top")
+                {
+                    if (zone == "Left" || zone == "0") span.TopAddLeft = info;
+                    else if (zone == "Mid" || zone == "1" || zone == "2") span.TopAddMid = info;
+                    else if (zone == "Right" || zone == "4") span.TopAddRight = info;
+                }
+                else if (position == "Bot")
+                {
+                    if (zone == "Left" || zone == "0") span.BotAddLeft = info;
+                    else if (zone == "Mid" || zone == "1" || zone == "2") span.BotAddMid = info;
+                    else if (zone == "Right" || zone == "4") span.BotAddRight = info;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Build legacy TopRebar/BotRebar string arrays for viewer compatibility.
+        /// Format: TopRebar[layer][zone] where zone: 0=Left, 1=Mid, 2=Right
+        /// </summary>
+        private static void BuildLegacyRebarArrays(SpanData span, ContinuousBeamSolution solution)
+        {
+            // Initialize arrays if null
+            if (span.TopRebarInternal == null) span.TopRebarInternal = new string[3, 6];
+            if (span.BotRebarInternal == null) span.BotRebarInternal = new string[3, 6];
+
+            // Layer 0: Backbone + Addon (combined)
+            string topBackboneStr = span.TopBackbone?.DisplayString ?? $"{solution.BackboneCount_Top}D{solution.BackboneDiameter}";
+            string botBackboneStr = span.BotBackbone?.DisplayString ?? $"{solution.BackboneCount_Bot}D{solution.BackboneDiameter}";
+
+            // Zone 0 (Left Support)
+            string topL0 = CombineRebarStrings(topBackboneStr, span.TopAddLeft?.DisplayString);
+            string botL0 = CombineRebarStrings(botBackboneStr, span.BotAddLeft?.DisplayString);
+
+            // Zone 2 (Mid)
+            string topL2 = CombineRebarStrings(topBackboneStr, span.TopAddMid?.DisplayString);
+            string botL2 = CombineRebarStrings(botBackboneStr, span.BotAddMid?.DisplayString);
+
+            // Zone 4 (Right Support)
+            string topL4 = CombineRebarStrings(topBackboneStr, span.TopAddRight?.DisplayString);
+            string botL4 = CombineRebarStrings(botBackboneStr, span.BotAddRight?.DisplayString);
+
+            // Apply to internal arrays (6 zones, but typically only 0, 2, 4 are used)
+            for (int layer = 0; layer < 3; layer++)
+            {
+                if (layer == 0)
+                {
+                    span.TopRebarInternal[layer, 0] = topL0;
+                    span.TopRebarInternal[layer, 2] = topL2;
+                    span.TopRebarInternal[layer, 4] = topL4;
+
+                    span.BotRebarInternal[layer, 0] = botL0;
+                    span.BotRebarInternal[layer, 2] = botL2;
+                    span.BotRebarInternal[layer, 4] = botL4;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Combine backbone + addon strings (e.g., "2D20" + "2D18" => "2D20+2D18")
+        /// </summary>
+        private static string CombineRebarStrings(string backbone, string addon)
+        {
+            if (string.IsNullOrEmpty(addon) || addon == "-") return backbone;
+            if (string.IsNullOrEmpty(backbone) || backbone == "-") return addon;
+            return $"{backbone}+{addon}";
+        }
+
         #endregion
 
         #region Discretization
