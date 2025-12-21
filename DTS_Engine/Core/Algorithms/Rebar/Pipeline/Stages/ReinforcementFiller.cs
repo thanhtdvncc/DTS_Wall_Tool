@@ -67,7 +67,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             var sol = new ContinuousBeamSolution
             {
                 OptionName = ctx.ScenarioId,
-                BackboneDiameter = ctx.TopBackboneDiameter,
+                BackboneDiameter_Top = ctx.TopBackboneDiameter,
+                BackboneDiameter_Bot = ctx.BotBackboneDiameter,
                 BackboneCount_Top = ctx.TopBackboneCount,
                 BackboneCount_Bot = ctx.BotBackboneCount,
                 IsValid = true,

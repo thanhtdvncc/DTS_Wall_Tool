@@ -1228,7 +1228,7 @@
             rebarLabelBounds.push({ x, y, width: w, height: h, ...meta });
         }
 
-        function drawInfoLabel(ctx, text, centerX, centerY, color) {
+        function drawInfoLabel(ctx, text, centerX, centerY, color, isDeficit = false) {
             const raw = (text === undefined || text === null) ? '' : String(text);
             const t = raw.trim();
             if (t.length === 0) return;
@@ -1244,9 +1244,10 @@
             const x = centerX - w / 2;
             const y = centerY - h / 2;
 
-            ctx.fillStyle = 'rgba(255,255,255,0.9)';
-            ctx.strokeStyle = 'rgba(148,163,184,0.9)';
-            ctx.lineWidth = 1;
+            // V3.4.1: Red background for deficit labels
+            ctx.fillStyle = isDeficit ? 'rgba(254,202,202,0.95)' : 'rgba(255,255,255,0.9)';
+            ctx.strokeStyle = isDeficit ? 'rgba(220,38,38,0.9)' : 'rgba(148,163,184,0.9)';
+            ctx.lineWidth = isDeficit ? 2 : 1;
             ctx.beginPath();
             const r = 6;
             ctx.moveTo(x + r, y);
@@ -1262,7 +1263,7 @@
             ctx.fill();
             ctx.stroke();
 
-            ctx.fillStyle = color;
+            ctx.fillStyle = isDeficit ? '#991b1b' : color;
             ctx.fillText(t, centerX, centerY);
             ctx.restore();
         }
@@ -1293,24 +1294,43 @@
 
         // Get As_prov/As_req text for display (replaces getAsReqText)
         function getAsRatioText(span, type, posName) {
+            const result = getAsRatioResult(span, type, posName);
+            return result.text;
+        }
+
+        // V3.4.2: Returns {text, isDeficit, asProv} for deficit highlighting
+        // FIXED: Sum ALL layers, not just layer 0
+        function getAsRatioResult(span, type, posName) {
             // As_req from XData
             const reqArr = (type === 'Top') ? span?.As_Top : span?.As_Bot;
             const idx = (posName === 'L') ? 0 : (posName === 'R' ? 4 : 2);
             const asReq = Number(reqArr?.[idx]) || 0;
 
-            // As_prov from rebar strings
+            // V3.4.2 FIX: Sum As_prov from ALL layers (not just layer 0)
             const rebarArr = (type === 'Top') ? span?.TopRebar : span?.BotRebar;
-            const rebarStr = rebarArr?.[0]?.[idx] || ''; // Layer 0, position idx
-            const asProv = parseRebarArea(rebarStr);
+            let asProv = 0;
+            if (rebarArr && Array.isArray(rebarArr)) {
+                for (let layer = 0; layer < rebarArr.length; layer++) {
+                    const str = rebarArr[layer]?.[idx] || '';
+                    asProv += parseRebarArea(str);
+                }
+            }
+
+            // Check deficit with safety factor
+            const safetyFactor = data.settings?.General?.SteelTolerance || 0.98;
+            const isDeficit = asReq > 0 && asProv < asReq * safetyFactor;
 
             // Format display
             const reqText = formatRebarValue(asReq);
             const provText = formatRebarValue(asProv);
 
-            if (asReq <= 0 && asProv <= 0) return '';
-            if (asProv > 0 && asReq > 0) return `${provText}/${reqText}`;
-            if (asReq > 0) return reqText;
-            return provText;
+            let text = '';
+            if (asReq <= 0 && asProv <= 0) text = '';
+            else if (asProv > 0 && asReq > 0) text = `${provText}/${reqText}`;
+            else if (asReq > 0) text = reqText;
+            else text = provText;
+
+            return { text, isDeficit, asProv };
         }
 
         // Get Stirrup/WebBar requirement text with As_prov/As_req format
@@ -1482,38 +1502,90 @@
         function applyOptionToSpans(opt) {
             if (!currentGroup?.Spans?.length || !opt) return;
 
-            const backbone = `${opt.BackboneCount_Top}D${opt.BackboneDiameter}`;
-            const botBackbone = `${opt.BackboneCount_Bot}D${opt.BackboneDiameter}`;
+            // V3.4.2: Dynamic MaxLayers from settings
+            const maxLayers = data.settings?.Beam?.MaxLayers || 3;
 
-            // Helper to get reinforcement suffix from solution
-            const getReinf = (spanId, pos) => {
+            // V3.4.1: Use separate Top/Bot backbone diameters
+            const topDia = opt.BackboneDiameter_Top || opt.BackboneDiameter;
+            const botDia = opt.BackboneDiameter_Bot || opt.BackboneDiameter;
+            const backboneTop = `${opt.BackboneCount_Top}D${topDia}`;
+            const backboneBot = `${opt.BackboneCount_Bot}D${botDia}`;
+
+            // V3.4.2: Helper to get addon RebarSpec from solution
+            const getAddonSpec = (spanId, pos) => {
                 const reinf = opt.Reinforcements;
-                if (!reinf) return '';
+                if (!reinf) return null;
                 const key = `${spanId}_${pos}`;
                 const spec = reinf[key];
                 if (spec && spec.Count > 0) {
-                    return `+${spec.Count}D${spec.Diameter}`;
+                    return spec;
                 }
-                return '';
+                return null;
+            };
+
+            // Helper to format addon string
+            const formatAddon = (spec) => {
+                if (!spec || spec.Count <= 0) return '';
+                return `${spec.Count}D${spec.Diameter}`;
             };
 
             currentGroup.Spans.forEach(span => {
                 // Only update if not manually edited
                 if (!span._userEdited) {
-                    if (!span.TopRebar) span.TopRebar = [[], [], []];
-                    if (!span.BotRebar) span.BotRebar = [[], [], []];
-
                     const sid = span.SpanId;
 
-                    // TOP: backbone + reinforcement at each position
-                    span.TopRebar[0][0] = backbone + getReinf(sid, 'Top_Left');
-                    span.TopRebar[0][2] = backbone + getReinf(sid, 'Top_Mid');
-                    span.TopRebar[0][4] = backbone + getReinf(sid, 'Top_Right');
+                    // V3.4.2: Initialize jagged arrays with correct MaxLayers
+                    span.TopRebar = [];
+                    span.BotRebar = [];
+                    for (let i = 0; i < maxLayers; i++) {
+                        span.TopRebar.push([]);
+                        span.BotRebar.push([]);
+                    }
 
-                    // BOT: backbone + reinforcement at each position
-                    span.BotRebar[0][0] = botBackbone + getReinf(sid, 'Bot_Left');
-                    span.BotRebar[0][2] = botBackbone + getReinf(sid, 'Bot_Mid');
-                    span.BotRebar[0][4] = botBackbone + getReinf(sid, 'Bot_Right');
+                    // Layer 0: BACKBONE ONLY (continuous across all positions)
+                    span.TopRebar[0][0] = backboneTop;
+                    span.TopRebar[0][2] = backboneTop;
+                    span.TopRebar[0][4] = backboneTop;
+                    span.BotRebar[0][0] = backboneBot;
+                    span.BotRebar[0][2] = backboneBot;
+                    span.BotRebar[0][4] = backboneBot;
+
+                    // Layer 1+: ADDON bars (position-specific)
+                    // Top addons
+                    const topLeftSpec = getAddonSpec(sid, 'Top_Left');
+                    const topMidSpec = getAddonSpec(sid, 'Top_Mid');
+                    const topRightSpec = getAddonSpec(sid, 'Top_Right');
+
+                    if (topLeftSpec) {
+                        const layer = Math.min(topLeftSpec.Layer || 1, maxLayers - 1);
+                        span.TopRebar[layer][0] = formatAddon(topLeftSpec);
+                    }
+                    if (topMidSpec) {
+                        const layer = Math.min(topMidSpec.Layer || 1, maxLayers - 1);
+                        span.TopRebar[layer][2] = formatAddon(topMidSpec);
+                    }
+                    if (topRightSpec) {
+                        const layer = Math.min(topRightSpec.Layer || 1, maxLayers - 1);
+                        span.TopRebar[layer][4] = formatAddon(topRightSpec);
+                    }
+
+                    // Bot addons
+                    const botLeftSpec = getAddonSpec(sid, 'Bot_Left');
+                    const botMidSpec = getAddonSpec(sid, 'Bot_Mid');
+                    const botRightSpec = getAddonSpec(sid, 'Bot_Right');
+
+                    if (botLeftSpec) {
+                        const layer = Math.min(botLeftSpec.Layer || 1, maxLayers - 1);
+                        span.BotRebar[layer][0] = formatAddon(botLeftSpec);
+                    }
+                    if (botMidSpec) {
+                        const layer = Math.min(botMidSpec.Layer || 1, maxLayers - 1);
+                        span.BotRebar[layer][2] = formatAddon(botMidSpec);
+                    }
+                    if (botRightSpec) {
+                        const layer = Math.min(botRightSpec.Layer || 1, maxLayers - 1);
+                        span.BotRebar[layer][4] = formatAddon(botRightSpec);
+                    }
                 }
             });
         }
@@ -1705,8 +1777,10 @@
                     for (let li = 0; li < labelXs.length; li++) {
                         const cx = labelXs[li];
                         const pn = posNames[li];
-                        drawInfoLabel(ctx, getAsRatioText(span, 'Top', pn), cx, reqTopY, '#b91c1c');
-                        drawInfoLabel(ctx, getAsRatioText(span, 'Bot', pn), cx, reqBotY, '#1d4ed8');
+                        const topRatio = getAsRatioResult(span, 'Top', pn);
+                        const botRatio = getAsRatioResult(span, 'Bot', pn);
+                        drawInfoLabel(ctx, topRatio.text, cx, reqTopY, '#b91c1c', topRatio.isDeficit);
+                        drawInfoLabel(ctx, botRatio.text, cx, reqBotY, '#1d4ed8', botRatio.isDeficit);
                     }
                 } else if (canvasMode === 'shear') {
                     // Shear-web mode: editable stirrup labels (provided) outside beam
@@ -1904,8 +1978,8 @@
 
             if (!currentGroup?.Spans) return;
 
-            // Get MaxLayers from settings (default 2)
-            const maxLayers = data.settings?.MaxLayers || 2;
+            // V3.4.2: Get MaxLayers from settings.Beam.MaxLayers (dynamic)
+            const maxLayers = data.settings?.Beam?.MaxLayers || 3;
 
             currentGroup.Spans.forEach((span, spanIdx) => {
                 // Create n rows for each span (n = maxLayers)
@@ -1968,10 +2042,11 @@
                 const reqIdx = (pos === 0) ? 0 : (pos === 4 ? 4 : 2);
                 const asReq = Array.isArray(reqArr) ? (Number(reqArr[reqIdx]) || 0) : 0;
 
-                // V3.4 FIX: Calculate isUnder based on parseRebarArea vs As_req with safety factor
+                // V3.4.1 FIX: Only highlight if cell has value AND is deficit
                 const safetyFactor = data.settings?.General?.SteelTolerance || 0.98;
                 const asProv = parseRebarArea(val);
-                const isUnder = asReq > 0 && asProv < asReq * safetyFactor;
+                const hasValue = val.trim() !== '';
+                const isUnder = hasValue && asReq > 0 && asProv < asReq * safetyFactor;
 
                 html += `<td class="p-0.5 ${bgClass} w-12">
                     <input type="text" value="${val}" 

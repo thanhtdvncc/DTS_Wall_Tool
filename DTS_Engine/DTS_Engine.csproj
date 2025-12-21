@@ -161,7 +161,6 @@
     <Compile Include="Core\Algorithms\ProjectionAlgorithms.cs" />
     <Compile Include="Core\Algorithms\RebarCalculator.cs" />
     <Compile Include="Core\Algorithms\RebarCuttingAlgorithm.cs" />
-    <Compile Include="Core\Algorithms\Rebar\RebarCalculatorV3.cs" />
     <Compile Include="Core\Algorithms\Rebar\Models\ExternalConstraints.cs" />
     <Compile Include="Core\Algorithms\Rebar\Models\ProjectConstraints.cs" />
     <Compile Include="Core\Algorithms\Rebar\Models\RebarProfile.cs" />

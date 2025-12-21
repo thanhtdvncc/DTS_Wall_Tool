@@ -394,7 +394,7 @@ namespace DTS_Engine.UI.Forms
                     return;
                 }
 
-                var proposals = RebarCalculatorV3.CalculateProposalsForGroup(group, spanResults, settings);
+                var proposals = RebarCalculator.CalculateProposalsForGroup(group, spanResults, settings);
                 if (proposals == null || proposals.Count == 0)
                 {
                     await SendToastSimpleAsync("❌ Không thể tạo phương án.");

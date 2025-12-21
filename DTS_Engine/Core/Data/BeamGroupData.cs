@@ -551,11 +551,18 @@ namespace DTS_Engine.Core.Data
         public string OptionName { get; set; }
 
         // ===== BACKBONE (Layer 1 chạy suốt) =====
-        public int BackboneDiameter { get; set; }
+        // V3.4.1: Separate diameters for Top/Bot (allows 4D20 Top + 3D18 Bot)
+        public int BackboneDiameter_Top { get; set; }
+        public int BackboneDiameter_Bot { get; set; }
+
+        /// <summary>Legacy property for backward compatibility - returns Top diameter</summary>
+        public int BackboneDiameter => BackboneDiameter_Top;
+
         public int BackboneCount_Top { get; set; }
         public int BackboneCount_Bot { get; set; }
         public double As_Backbone_Top { get; set; }
         public double As_Backbone_Bot { get; set; }
+
 
         // ===== REINFORCEMENTS =====
         /// <summary>

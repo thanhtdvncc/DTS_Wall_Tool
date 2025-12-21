@@ -561,7 +561,7 @@ namespace DTS_Engine.Commands
                         var spanResults = beamList.Select(b => b.Data).ToList();
                         var objIds = beamList.Select(b => b.Id).ToList();
 
-                        var proposals = RebarCalculatorV3.CalculateProposalsForGroup(group, spanResults, dtsSettings);
+                        var proposals = RebarCalculator.CalculateProposalsForGroup(group, spanResults, dtsSettings);
 
                         if (proposals == null || proposals.Count == 0)
                         {
@@ -2601,7 +2601,8 @@ namespace DTS_Engine.Commands
                 var solution = new ContinuousBeamSolution
                 {
                     OptionName = $"{nTop}D{dia} / {nBot}D{dia}",
-                    BackboneDiameter = dia,
+                    BackboneDiameter_Top = dia,
+                    BackboneDiameter_Bot = dia,
                     BackboneCount_Top = nTop,
                     BackboneCount_Bot = nBot,
                     As_Backbone_Top = nTop * asPerBar / 100.0, // cm²

@@ -179,7 +179,8 @@ namespace DTS_Engine.Core.Algorithms
             var solution = new ContinuousBeamSolution
             {
                 OptionName = $"{backbone.CountTop}D{backbone.Diameter}",
-                BackboneDiameter = backbone.Diameter,
+                BackboneDiameter_Top = backbone.Diameter,
+                BackboneDiameter_Bot = backbone.Diameter, // Same diameter for both in this calculator
                 BackboneCount_Top = backbone.CountTop,
                 BackboneCount_Bot = backbone.CountBot,
                 As_Backbone_Top = backbone.As_Top,
