@@ -184,6 +184,7 @@
     <Compile Include="Core\Algorithms\Rebar\Strategies\GreedyFillingStrategy.cs" />
     <Compile Include="Core\Algorithms\Rebar\Strategies\IFillingStrategy.cs" />
     <Compile Include="Core\Algorithms\Rebar\Utils\ProposalSelector.cs" />
+    <Compile Include="Core\Algorithms\Rebar\Utils\RebarLogger.cs" />
     <Compile Include="Core\Algorithms\NamingEngine.cs" />
     <Compile Include="Core\Utils\WeightCalculator.cs" />
     <Compile Include="Core\Data\AuditData.cs" />

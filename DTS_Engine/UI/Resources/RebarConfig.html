@@ -357,6 +357,19 @@
                 </div>
             </div>
 
+            <div class="section" style="background:#fff3e0;border:1px solid #ff9800;">
+                <div class="section-header" style="background:#ff9800;color:white;">🔍 Debug & Diagnostics</div>
+                <div class="section-body">
+                    <div class="check-row">
+                        <input type="checkbox" id="EnablePipelineLogging">
+                        <label for="EnablePipelineLogging"><strong>Enable Pipeline Logging</strong> - Ghi log chi tiết
+                            quá trình tính toán</label>
+                    </div>
+                    <div class="hint">Khi bật, hệ thống sẽ ghi log vào file tại %LocalAppData%\DTS_Engine\Logs. Dùng để
+                        debug khi kết quả không như mong đợi.</div>
+                </div>
+            </div>
+
             <div class="section">
                 <div class="section-header">Mác vật liệu (Material Grades)
                     <span style="font-size:10px;color:#666;margin-left:8px;">(Tự động từ tab Neo & Nối)</span>
@@ -1961,6 +1974,8 @@
                 setId('SteelGradeStirrup', data.General?.SteelGradeStirrup ?? 300);
                 setId('ConcreteGradeName', data.General?.ConcreteGradeName ?? 'B25');
                 setId('ConcreteGrade', data.General?.ConcreteGrade ?? 25);
+                // Debug & Diagnostics
+                setChk('EnablePipelineLogging', data.EnablePipelineLogging ?? false);
 
                 // Tab 1: Beam
                 setId('MainBarRange', data.Beam?.MainBarRange);
@@ -2435,7 +2450,8 @@
                         Separator: getVal('ExportSeparator') || '_',
                         MaxSectionNameLength: parseInt(getVal('ExportMaxSectionNameLength')) || 49
                     },
-                    Stirrup: collectStirrupData()
+                    Stirrup: collectStirrupData(),
+                    EnablePipelineLogging: getChk('EnablePipelineLogging')
                 };
 
 

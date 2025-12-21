@@ -24,6 +24,12 @@ namespace DTS_Engine.Core.Data
         public NamingConfig Naming { get; set; } = new NamingConfig();
 
         /// <summary>
+        /// V3.5.2: Enable detailed pipeline logging for debugging.
+        /// Logs to %LocalAppData%\DTS_Engine\Logs
+        /// </summary>
+        public bool EnablePipelineLogging { get; set; } = false;
+
+        /// <summary>
         /// Cấu hình Neo & Nối thép (Anchorage & Splicing)
         /// </summary>
         public AnchorageConfig Anchorage { get; set; } = new AnchorageConfig();

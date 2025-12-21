@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using DTS_Engine.Core.Algorithms.Rebar.Models;
 using DTS_Engine.Core.Algorithms.Rebar.Strategies;
+using DTS_Engine.Core.Algorithms.Rebar.Utils;
 using DTS_Engine.Core.Data;
 
 namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
@@ -85,6 +86,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             // V3.5.2: StirrupLegCount is now calculated per-location in DesignLocation
             // using StirrupConfig.GetLegCount(barCount, hasAddon) - No global init needed
 
+            // V3.5.2: DIAGNOSTIC LOGGING (controlled by DtsSettings.EnablePipelineLogging)
+            RebarLogger.IsEnabled = settings?.EnablePipelineLogging ?? false;
+            if (RebarLogger.IsEnabled) RebarLogger.Initialize();
+            RebarLogger.LogPhase("SCENARIO START: " + ctx.ScenarioId);
+            RebarLogger.LogScenario(ctx);
+            RebarLogger.Log($"BackboneArea: Top={backboneAreaTop:F2}, Bot={backboneAreaBot:F2} cm²");
+
             // ═══════════════════════════════════════════════════════════════
             // V3.5: EXPLICIT SPAN VALIDATION (Fail-Fast for Missing Data)
             // ═══════════════════════════════════════════════════════════════
@@ -131,6 +139,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             var supportDesignsTop = new Dictionary<int, RebarSpec>();
             var supportDesignsBot = new Dictionary<int, RebarSpec>();
 
+            RebarLogger.LogPhase("PHASE 1: SUPPORT DESIGN");
             for (int i = 0; i <= numSpans; i++)
             {
                 // === TOP REINFORCEMENT AT SUPPORT ===
@@ -152,6 +161,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                 if (i < numSpans && group.Spans[i] != null) supportWidth = Math.Max(supportWidth, NormalizeSpanWidth(group.Spans[i].Width));
                 if (supportWidth <= 0) supportWidth = ctx.BeamWidth; // Fallback
 
+                // V3.5.2: Log support requirements
+                RebarLogger.LogSupportDesign(i, true, reqTopLeft, reqTopRight, maxReqTop, backboneAreaTop);
+
                 // Design the TOP reinforcement for this specific support
                 var topSpec = DesignLocation(
                     ctx, maxReqTop, ctx.TopBackboneDiameter, ctx.TopBackboneCount,
@@ -169,6 +181,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                     return ctx;
                 }
                 supportDesignsTop[i] = topSpec;
+                RebarLogger.LogDesignResult($"Support{i}_Top", topSpec.Diameter, topSpec.Count, topSpec.Layer);
 
                 // === BOTTOM REINFORCEMENT AT SUPPORT (if needed) ===
                 double reqBotLeft = 0;
@@ -208,6 +221,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             // Đảm bảo 100% đồng bộ: cả 2 nhịp liền kề dùng chung 1 RebarSpec tại gối
             // ==================================================================================
 
+            RebarLogger.LogPhase("PHASE 2: SPAN DESIGN");
             for (int i = 0; i < numSpans; i++)
             {
                 var span = group.Spans[i];
@@ -251,6 +265,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                     return ctx;
                 }
                 AssignSpecToSolution(sol, midBotSpec, string.Format("{0}_Bot_Mid", span.SpanId));
+                RebarLogger.LogMidSpanDesign(span.SpanId, false, reqBotMid, backboneAreaBot, midBotSpec.Count, midBotSpec.Diameter);
 
                 // D. DESIGN MID-SPAN (TOP - if needed for compression/hanging)
                 double reqTopMid = GetReqArea(res, true, 1, settings) * safetyFactor;
@@ -276,6 +291,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
             // PHASE 3: METRICS CALCULATION
             // ==================================================================================
             CalculateSolutionMetrics(sol, group, settings);
+
+            // V3.5.2: Log solution summary
+            RebarLogger.LogSolutionSummary(sol);
 
             return ctx;
         }
