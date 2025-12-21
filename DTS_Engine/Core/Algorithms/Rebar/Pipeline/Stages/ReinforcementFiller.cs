@@ -464,6 +464,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Pipeline.Stages
                 // Only merge if specs are similar
                 if (!specLeft.IsSimilar(specRight)) continue;
 
+                // V3.4: Layer-aware bridging - prevent merging bars from different layers
+                if (specLeft.Layer != specRight.Layer) continue;
+
                 // Calculate gap using curtailment ratios from settings
                 double cutLenLeft = span.Length * extRatio;
                 double cutLenRight = span.Length * extRatio;
