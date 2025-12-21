@@ -132,12 +132,15 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             foreach (var support in supports)
             {
                 // Tìm key đã có (trong tolerance)
-                double? existingKey = groupedByPosition.Keys
-                    .FirstOrDefault(k => Math.Abs(k - support.Position) <= PositionTolerance);
+                // NOTE: FirstOrDefault on double returns 0.0, not null - use Any() check instead
+                var matchingKey = groupedByPosition.Keys
+                    .Where(k => Math.Abs(k - support.Position) <= PositionTolerance)
+                    .Cast<double?>()
+                    .FirstOrDefault();
 
-                if (existingKey.HasValue)
+                if (matchingKey.HasValue)
                 {
-                    groupedByPosition[existingKey.Value].Add(support);
+                    groupedByPosition[matchingKey.Value].Add(support);
                 }
                 else
                 {
