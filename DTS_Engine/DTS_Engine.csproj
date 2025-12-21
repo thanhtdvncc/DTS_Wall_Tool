@@ -140,6 +140,7 @@
     <Compile Include="Core\Algorithms\Rebar\V4\Constraints\ConstraintEngine.cs" />
     <Compile Include="Core\Algorithms\Rebar\V4\Constraints\IConstraint.cs" />
     <Compile Include="Core\Algorithms\Rebar\V4\DesignSection.cs" />
+    <Compile Include="Core\Algorithms\Rebar\V4\FailFastValidator.cs" />
     <Compile Include="Core\Algorithms\Rebar\V4\GlobalOptimizer.cs" />
     <Compile Include="Core\Algorithms\Rebar\V4\SectionSolver.cs" />
     <Compile Include="Core\Algorithms\Rebar\V4\TopologyMerger.cs" />
@@ -173,14 +174,8 @@
     <Compile Include="Core\Algorithms\Rebar\Models\RebarProfile.cs" />
     <Compile Include="Core\Algorithms\Rebar\Models\SolutionContext.cs" />
     <Compile Include="Core\Algorithms\Rebar\Models\StirrupProfile.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\IRebarPipelineStage.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\MultiBeamOrchestrator.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\RebarPipeline.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\Stages\ReinforcementFiller.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\Stages\ScenarioGenerator.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\Stages\StirrupCalculator.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\Stages\ConflictResolver.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Pipeline\Stages\BeamAwareOptimizer.cs" />
+    <!-- V3 Pipeline: REMOVED - Dead code, not used by V4 -->
+    <!-- V3 Rules: Kept as reference - Logic integrated into V4 via Settings -->
     <Compile Include="Core\Algorithms\Rebar\Rules\IDesignRule.cs" />
     <Compile Include="Core\Algorithms\Rebar\Rules\PreferredDiameterRule.cs" />
     <Compile Include="Core\Algorithms\Rebar\Rules\PyramidRule.cs" />
@@ -188,9 +183,7 @@
     <Compile Include="Core\Algorithms\Rebar\Rules\SymmetryRule.cs" />
     <Compile Include="Core\Algorithms\Rebar\Rules\VerticalAlignmentRule.cs" />
     <Compile Include="Core\Algorithms\Rebar\Rules\WastePenaltyRule.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Strategies\BalancedFillingStrategy.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Strategies\GreedyFillingStrategy.cs" />
-    <Compile Include="Core\Algorithms\Rebar\Strategies\IFillingStrategy.cs" />
+    <!-- V3 Strategies: REMOVED - Dead code, not used by V4 -->
     <Compile Include="Core\Algorithms\Rebar\Utils\ProposalSelector.cs" />
     <Compile Include="Core\Algorithms\Rebar\Utils\RebarLogger.cs" />
     <Compile Include="Core\Algorithms\NamingEngine.cs" />

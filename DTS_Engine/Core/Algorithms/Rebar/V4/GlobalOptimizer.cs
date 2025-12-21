@@ -10,6 +10,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
     /// <summary>
     /// GlobalOptimizer: Tìm Backbone tối ưu và xây dựng Solution hoàn chỉnh.
     /// CRITICAL FIX: Đảm bảo Addon được tính cho mọi mặt cắt thiếu thép.
+    /// Sử dụng SafetyFactor và WastePenaltyScore từ Settings.
     /// </summary>
     public class GlobalOptimizer
     {
@@ -22,7 +23,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         public int MaxBackboneCandidates { get; set; } = 20;
         public int MaxSolutions { get; set; } = 5;
-        public double AreaTolerance { get; set; } = 0.02; // 2%
 
         #endregion
 
@@ -44,7 +44,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             }
 
             _minBarsPerSide = beamCfg.MinBarsPerLayer > 0 ? beamCfg.MinBarsPerLayer : 2;
-            _maxBarsPerSide = 8;
+            _maxBarsPerSide = beamCfg.MaxBarsPerLayer > 0 ? beamCfg.MaxBarsPerLayer : 8;
         }
 
         #endregion
@@ -85,6 +85,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     .Take(MaxBackboneCandidates)
                     .ToList();
 
+                // Log all candidates
+                Utils.RebarLogger.LogBackboneCandidates(candidates, 10);
+
                 if (validCandidates.Count == 0)
                 {
                     // Try relaxed approach
@@ -116,7 +119,11 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     ValidateSolution(sol, sections, null);
                 }
 
-                return solutions.OrderByDescending(s => s.TotalScore).ToList();
+                // Log final solution comparison
+                var finalSolutions = solutions.OrderByDescending(s => s.TotalScore).ToList();
+                Utils.RebarLogger.LogSolutionComparison(finalSolutions);
+
+                return finalSolutions;
             }
             catch (Exception ex)
             {
@@ -179,6 +186,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         private int CalculateMaxBarsForWidth(double usableWidth, int diameter)
         {
+            // CRITICAL: Dùng MinClearSpacing từ settings
             double minClear = Math.Max(diameter, _settings.Beam?.MinClearSpacing ?? 30);
             double n = (usableWidth + minClear) / (diameter + minClear);
             return Math.Max(_minBarsPerSide, Math.Min((int)Math.Floor(n), _maxBarsPerSide));
@@ -223,6 +231,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return candidates;
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Đánh giá candidate với SafetyFactor từ Settings.
+        /// </summary>
         private (bool isValid, int fitCount, List<string> failedSections) EvaluateSingleCandidate(
             BackboneCandidate candidate,
             List<DesignSection> sections)
@@ -231,19 +242,25 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             var failedSections = new List<string>();
             bool allValid = true;
 
+            // CRITICAL: Lấy SafetyFactor từ Settings thay vì hardcode tolerance
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+
             foreach (var section in sections)
             {
-                // Check TOP
+                // Check TOP với SafetyFactor
                 if (section.ReqTop > 0.01)
                 {
+                    // Yêu cầu thực tế = ReqTop * SafetyFactor
+                    double requiredWithSafety = section.ReqTop * safetyFactor;
+
                     bool topFits = CanFitBackbone(
                         section.ValidArrangementsTop,
                         candidate.CountTop,
                         candidate.Diameter,
-                        section.ReqTop);
+                        requiredWithSafety);
 
-                    // Also allow if backbone provides enough area
-                    if (!topFits && candidate.AreaTop >= section.ReqTop * (1 - AreaTolerance))
+                    // CRITICAL FIX: Kiểm tra backbone area với SafetyFactor
+                    if (!topFits && candidate.AreaTop >= requiredWithSafety)
                     {
                         topFits = true;
                     }
@@ -252,7 +269,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     else
                     {
                         failedSections.Add($"{section.SectionId}_Top");
-                        // Only fail if backbone is significantly inadequate
+                        // Only fail if backbone is significantly inadequate (< 50%)
                         if (candidate.AreaTop < section.ReqTop * 0.5)
                         {
                             allValid = false;
@@ -260,16 +277,18 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     }
                 }
 
-                // Check BOT
+                // Check BOT với SafetyFactor
                 if (section.ReqBot > 0.01)
                 {
+                    double requiredWithSafety = section.ReqBot * safetyFactor;
+
                     bool botFits = CanFitBackbone(
                         section.ValidArrangementsBot,
                         candidate.CountBot,
                         candidate.Diameter,
-                        section.ReqBot);
+                        requiredWithSafety);
 
-                    if (!botFits && candidate.AreaBot >= section.ReqBot * (1 - AreaTolerance))
+                    if (!botFits && candidate.AreaBot >= requiredWithSafety)
                     {
                         botFits = true;
                     }
@@ -297,11 +316,16 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             if (arrangements == null || arrangements.Count == 0) return false;
 
+            // CRITICAL: Lấy SafetyFactor từ Settings
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            double tolerance = 1.0 - safetyFactor;
+            if (tolerance < 0) tolerance = 0;
+
             // Check if any arrangement can accommodate this backbone
             return arrangements.Any(arr =>
                 arr.PrimaryDiameter == backboneDiameter &&
                 arr.TotalCount >= backboneCount &&
-                arr.TotalArea >= reqArea * (1 - AreaTolerance));
+                arr.TotalArea >= reqArea * (1 - tolerance));
         }
 
         private BackboneCandidate FindRelaxedBackbone(
@@ -323,6 +347,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return best;
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Tính metrics với penalty từ Settings.
+        /// </summary>
         private void CalculateCandidateMetrics(
             BackboneCandidate candidate,
             List<DesignSection> sections,
@@ -391,6 +418,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return totalAddonWeight;
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Tính điểm với penalty từ Settings.
+        /// </summary>
         private double CalculateCandidateScore(
             BackboneCandidate candidate,
             List<DesignSection> sections,
@@ -398,8 +428,12 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             double score = 100.0;
 
-            // Penalty for failed sections
-            score -= candidate.FailedSections.Count * 5;
+            // CRITICAL: Lấy penalty scores từ Settings
+            double wastePenalty = _settings.Rules?.WastePenaltyScore ?? 20.0;
+            double alignmentPenalty = _settings.Rules?.AlignmentPenaltyScore ?? 25.0;
+
+            // Penalty for failed sections - sử dụng wastePenalty/4 cho mỗi section fail
+            score -= candidate.FailedSections.Count * (wastePenalty / 4.0);
 
             // Preference for fewer bars (larger diameter)
             if (_settings.Beam?.PreferFewerBars == true)
@@ -407,10 +441,30 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 score += Math.Max(0, 8 - candidate.CountTop - candidate.CountBot);
             }
 
-            // Preference for symmetric
-            if (_settings.Beam?.PreferSymmetric == true && candidate.CountTop == candidate.CountBot)
+            // Preference for symmetric (Top = Bot) - áp dụng penalty nếu không symmetric
+            if (_settings.Beam?.PreferSymmetric == true)
             {
-                score += 5;
+                if (candidate.CountTop == candidate.CountBot)
+                {
+                    score += 5;
+                }
+                else
+                {
+                    // Penalty scaled by difference
+                    int diff = Math.Abs(candidate.CountTop - candidate.CountBot);
+                    score -= diff * (alignmentPenalty / 10.0);
+                }
+            }
+
+            // Vertical alignment penalty (chẵn/lẻ mismatch)
+            if (_settings.Beam?.PreferVerticalAlignment == true)
+            {
+                bool topEven = candidate.CountTop % 2 == 0;
+                bool botEven = candidate.CountBot % 2 == 0;
+                if (topEven != botEven)
+                {
+                    score -= alignmentPenalty / 5.0; // Scaled penalty
+                }
             }
 
             // Weight efficiency
@@ -512,13 +566,18 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 WebBars = new Dictionary<string, string>()
             };
 
+            // CRITICAL: Lấy SafetyFactor từ Settings
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            double tolerance = 1.0 - safetyFactor;
+            if (tolerance < 0) tolerance = 0;
+
             // CRITICAL: Calculate addons for each zone
             foreach (var section in spanSections)
             {
                 string zoneName = GetPositionName(section);
 
-                // TOP Addon
-                if (section.ReqTop > candidate.AreaTop * (1 - AreaTolerance))
+                // TOP Addon - áp dụng tolerance từ SafetyFactor
+                if (section.ReqTop > candidate.AreaTop * (1 - tolerance))
                 {
                     double missingArea = section.ReqTop - candidate.AreaTop;
                     if (missingArea > 0.01)
@@ -529,7 +588,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 }
 
                 // BOT Addon
-                if (section.ReqBot > candidate.AreaBot * (1 - AreaTolerance))
+                if (section.ReqBot > candidate.AreaBot * (1 - tolerance))
                 {
                     double missingArea = section.ReqBot - candidate.AreaBot;
                     if (missingArea > 0.01)
@@ -560,7 +619,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             // Use same or smaller diameter for addon
             int addonDia = backboneDiameter;
-            
+
             // If mixing is not allowed, use backbone diameter
             if (_settings.Beam?.AllowDiameterMixing != true)
             {
@@ -662,18 +721,19 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             // Waste calculation
             double totalRequired = sections.Sum(s => s.ReqTop + s.ReqBot);
-            double totalProvided = solution.As_Backbone_Top * sections.Count 
+            double totalProvided = solution.As_Backbone_Top * sections.Count
                                  + solution.As_Backbone_Bot * sections.Count
                                  + solution.Reinforcements.Values.Sum(r => r.Count * Math.PI * r.Diameter * r.Diameter / 400.0);
 
-            solution.WastePercentage = totalRequired > 0 
-                ? Math.Max(0, (totalProvided - totalRequired) / totalRequired * 100) 
+            solution.WastePercentage = totalRequired > 0
+                ? Math.Max(0, (totalProvided - totalRequired) / totalRequired * 100)
                 : 0;
 
-            // Efficiency & Total Score
+            // Efficiency & Total Score - DÙNG SETTING
+            double effWeight = _settings.Beam?.EfficiencyScoreWeight ?? 0.6;
             solution.EfficiencyScore = Math.Max(0, 100 - solution.WastePercentage);
             solution.ConstructabilityScore = ConstructabilityScoring.CalculateScore(solution, group, _settings);
-            solution.TotalScore = 0.5 * solution.EfficiencyScore + 0.5 * solution.ConstructabilityScore;
+            solution.TotalScore = effWeight * solution.EfficiencyScore + (1 - effWeight) * solution.ConstructabilityScore;
 
             // Max required areas
             solution.As_Required_Top_Max = sections.Max(s => s.ReqTop);
@@ -689,23 +749,34 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                    (addonCount > 0 ? $" + {addonCount} addons" : "");
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Validation với SafetyFactor từ Settings.
+        /// </summary>
         private void ValidateSolution(ContinuousBeamSolution solution, List<DesignSection> sections, BackboneCandidate candidate)
         {
             var problems = new List<string>();
+
+            // CRITICAL: Lấy SafetyFactor từ Settings
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
 
             foreach (var section in sections)
             {
                 double providedTop = CalculateProvidedArea(solution, section, candidate, true);
                 double providedBot = CalculateProvidedArea(solution, section, candidate, false);
 
-                if (section.ReqTop > 0.01 && providedTop < section.ReqTop * 0.98)
+                // Yêu cầu thực tế với SafetyFactor
+                double requiredTop = section.ReqTop * safetyFactor;
+                double requiredBot = section.ReqBot * safetyFactor;
+
+                // Tolerance 2% cho sai số làm tròn
+                if (section.ReqTop > 0.01 && providedTop < requiredTop * 0.98)
                 {
-                    problems.Add($"{section.SectionId} Top: need {section.ReqTop:F2}, have {providedTop:F2}");
+                    problems.Add($"{section.SectionId} Top: need {requiredTop:F2}, have {providedTop:F2}");
                 }
 
-                if (section.ReqBot > 0.01 && providedBot < section.ReqBot * 0.98)
+                if (section.ReqBot > 0.01 && providedBot < requiredBot * 0.98)
                 {
-                    problems.Add($"{section.SectionId} Bot: need {section.ReqBot:F2}, have {providedBot:F2}");
+                    problems.Add($"{section.SectionId} Bot: need {requiredBot:F2}, have {providedBot:F2}");
                 }
             }
 

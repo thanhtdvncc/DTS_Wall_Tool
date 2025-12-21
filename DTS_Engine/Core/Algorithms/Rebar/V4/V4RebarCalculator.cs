@@ -77,7 +77,26 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             try
             {
-                // Validate input
+                // === STEP 0: FAIL-FAST VALIDATION ===
+                Utils.RebarLogger.LogPhase("STEP 0: VALIDATION");
+                var validationResult = FailFastValidator.ValidateCalculatorInput(group, spanResults, _settings);
+                
+                if (!validationResult.IsValid)
+                {
+                    Utils.RebarLogger.LogError($"Validation failed: {validationResult.Message}");
+                    return CreateSingleErrorSolution(validationResult.Message);
+                }
+                
+                // Log warnings if any
+                if (validationResult.Warnings.Count > 0)
+                {
+                    foreach (var warning in validationResult.Warnings)
+                    {
+                        Utils.RebarLogger.Log($"  WARNING: {warning}");
+                    }
+                }
+
+                // Legacy quick check (kept for backward compatibility)
                 if (spanResults == null || spanResults.Count == 0)
                 {
                     Utils.RebarLogger.LogError("No span results provided");

@@ -41,7 +41,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // Parse allowed diameters from MainBarRange
             var inventory = generalCfg.AvailableDiameters ?? new List<int> { 16, 18, 20, 22, 25 };
             _allowedDiameters = DiameterParser.ParseRange(beamCfg.MainBarRange ?? "16-25", inventory);
-            
+
             if (_allowedDiameters.Count == 0)
             {
                 _allowedDiameters = inventory.Where(d => d >= 16 && d <= 25).ToList();
@@ -59,7 +59,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             _minLayerSpacing = beamCfg.MinLayerSpacing > 0 ? beamCfg.MinLayerSpacing : 25;
             _aggregateSize = beamCfg.AggregateSize > 0 ? beamCfg.AggregateSize : 20;
             _minBarsPerLayer = beamCfg.MinBarsPerLayer > 0 ? beamCfg.MinBarsPerLayer : 2;
-            
+
             AllowMixedDiameters = beamCfg.AllowDiameterMixing;
         }
 
@@ -102,9 +102,15 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 results.AddRange(mixedResults);
             }
 
+            // CRITICAL: Lấy SafetyFactor từ Settings thay vì hardcode tolerance
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            double tolerance = 1.0 - safetyFactor;
+            if (tolerance < 0) tolerance = 0;
+            if (tolerance > 0.05) tolerance = 0.05; // Cap at 5%
+
             // Filter valid and score
             var validResults = results
-                .Where(a => a.TotalArea >= reqArea * 0.98) // Allow 2% tolerance
+                .Where(a => a.TotalArea >= reqArea * (1 - tolerance))
                 .OrderByDescending(a => a.Score)
                 .Take(MaxArrangementsPerSection)
                 .ToList();
@@ -128,10 +134,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         /// </summary>
         public void SolveAll(List<DesignSection> sections)
         {
+            Utils.RebarLogger.LogPhase("STEP 2: SECTION SOLVER");
+            Utils.RebarLogger.Log($"Solving {sections.Count} sections");
+
             foreach (var section in sections)
             {
                 section.ValidArrangementsTop = Solve(section, RebarPosition.Top);
                 section.ValidArrangementsBot = Solve(section, RebarPosition.Bot);
+
+                // Log arrangements for this section
+                Utils.RebarLogger.LogArrangements(section.SectionId, section.ValidArrangementsTop, "TOP");
+                Utils.RebarLogger.LogArrangements(section.SectionId, section.ValidArrangementsBot, "BOT");
             }
         }
 
@@ -147,10 +160,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             var results = new List<SectionArrangement>();
 
-            // Sort diameters: prefer larger diameters first (fewer bars)
-            var sortedDiameters = _settings.Beam?.PreferFewerBars == true
-                ? _allowedDiameters.OrderByDescending(d => d).ToList()
-                : _allowedDiameters.OrderBy(d => d).ToList();
+            // CRITICAL FIX: Luôn sắp xếp từ lớn đến nhỏ (OrderByDescending) để nhất quán
+            // Prefer larger diameters first (fewer bars) nếu PreferFewerBars = true
+            var sortedDiameters = _allowedDiameters.OrderByDescending(d => d).ToList();
 
             foreach (int dia in sortedDiameters)
             {
@@ -171,10 +183,14 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 int maxLayersForHeight = CalculateMaxLayers(usableHeight, dia);
                 int actualMaxLayers = Math.Min(_maxLayers, maxLayersForHeight);
 
-                // Generate arrangements for this diameter
-                int maxTotalBars = maxPerLayer * actualMaxLayers;
-                
-                for (int totalBars = minBars; totalBars <= Math.Min(maxTotalBars, minBars + 6); totalBars++)
+                // CRITICAL FIX: Mở rộng phạm vi tìm kiếm dựa trên MaxBarsPerLayer từ settings
+                int configMaxBarsPerLayer = _settings.Beam?.MaxBarsPerLayer ?? 8;
+                int maxTotalBars = Math.Min(maxPerLayer * actualMaxLayers, configMaxBarsPerLayer * actualMaxLayers);
+
+                // Mở rộng phạm vi tìm kiếm thêm 4 thanh (thay vì 6)
+                int searchMax = Math.Min(maxTotalBars, minBars + 4);
+
+                for (int totalBars = minBars; totalBars <= searchMax; totalBars++)
                 {
                     // Generate layer configurations
                     var configs = GenerateLayerConfigurations(totalBars, maxPerLayer, actualMaxLayers);
@@ -186,7 +202,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         if (!allFit) continue;
 
                         var arr = CreateArrangement(config, dia, usableWidth, reqArea);
-                        if (arr != null)  // Fixed: was missing opening parenthesis
+                        if (arr != null)
                         {
                             arr.Score = CalculateScore(arr, reqArea, section);
                             results.Add(arr);
@@ -252,7 +268,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             DesignSection section)
         {
             var results = new List<SectionArrangement>();
-            
+
             if (_allowedDiameters.Count < 2) return results;
 
             var sorted = _allowedDiameters.OrderByDescending(d => d).ToList();
@@ -283,7 +299,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     if (!CanFitMixedBars(usableWidth, n1, d1, n2, d2)) continue;
 
                     double totalArea = n1 * as1 + n2 * as2;
-                    if (totalArea < reqArea * 0.98) continue;
+
+                    // CRITICAL: Lấy SafetyFactor từ Settings
+                    double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+                    if (totalArea < reqArea * (1.0 - (1.0 - safetyFactor))) continue;
 
                     var barDiameters = Enumerable.Repeat(d1, n1).Concat(Enumerable.Repeat(d2, n2)).ToList();
 
@@ -324,7 +343,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             double n = (available + minClear) / (diameter + minClear);
             int maxBars = (int)Math.Floor(n);
 
-            return Math.Max(_minBarsPerLayer, Math.Min(maxBars, 10));
+            // CRITICAL: Giới hạn bởi MaxBarsPerLayer từ settings
+            int configMax = _settings.Beam?.MaxBarsPerLayer ?? 8;
+            return Math.Max(_minBarsPerLayer, Math.Min(maxBars, configMax));
         }
 
         private int CalculateMaxLayers(double usableHeight, int diameter)
@@ -345,8 +366,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // Apply UseBarDiameterForSpacing if enabled
             if (_settings.Beam?.UseBarDiameterForSpacing == true)
             {
-                double mult = _settings.Beam.BarDiameterSpacingMultiplier > 0 
-                    ? _settings.Beam.BarDiameterSpacingMultiplier 
+                double mult = _settings.Beam.BarDiameterSpacingMultiplier > 0
+                    ? _settings.Beam.BarDiameterSpacingMultiplier
                     : 1.0;
                 byDiameter = diameter * mult;
             }
@@ -357,7 +378,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         private double CalculateClearSpacing(double usableWidth, int barsInLayer, int diameter)
         {
             if (barsInLayer <= 1) return usableWidth - diameter;
-            
+
             double totalBarWidth = barsInLayer * diameter;
             double availableForGaps = usableWidth - totalBarWidth;
             return availableForGaps / (barsInLayer - 1);
@@ -374,21 +395,30 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return clearSpacing >= minRequired;
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Kiểm tra mixed bars với max diameter (không phải avg) và aggregate constraint.
+        /// </summary>
         private bool CanFitMixedBars(double usableWidth, int n1, int dia1, int n2, int dia2)
         {
             double totalBarWidth = n1 * dia1 + n2 * dia2;
             int totalBars = n1 + n2;
-            double avgDia = totalBarWidth / totalBars;
-            double minClear = GetMinClearSpacing((int)avgDia);
 
-            double requiredWidth = totalBarWidth + (totalBars - 1) * minClear;
+            // CRITICAL FIX: Dùng MAX diameter thay vì average
+            int maxDia = Math.Max(dia1, dia2);
+            double minClear = Math.Max(maxDia, _settings.Beam?.MinClearSpacing ?? 30);
+
+            // CRITICAL FIX: Áp dụng aggregate constraint từ settings
+            double aggregateClear = (_settings.Beam?.AggregateSize ?? 20) * 1.33;
+            double requiredClear = Math.Max(minClear, aggregateClear);
+
+            double requiredWidth = totalBarWidth + (totalBars - 1) * requiredClear;
             return requiredWidth <= usableWidth;
         }
 
         private double CalculateMixedSpacing(double usableWidth, List<int> diameters)
         {
             if (diameters.Count <= 1) return 0;
-            
+
             double totalBarWidth = diameters.Sum();
             double availableForGaps = usableWidth - totalBarWidth;
             return availableForGaps / (diameters.Count - 1);
@@ -437,10 +467,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             // Check if fits in one layer
             int maxPerLayer = CalculateMaxBarsPerLayer(usableWidth, maxDia);
-            
+
             var layers = new List<int>();
             int remaining = nBars;
-            
+
             while (remaining > 0 && layers.Count < _maxLayers)
             {
                 int inThisLayer = Math.Min(remaining, maxPerLayer);
@@ -460,27 +490,52 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return arr;
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Tính điểm sử dụng Settings thay vì hardcode.
+        /// </summary>
         private double CalculateScore(SectionArrangement arr, double reqArea, DesignSection section)
         {
             double score = 100.0;
 
-            // 1. Efficiency penalty (waste)
+            // CRITICAL: Lấy WastePenaltyScore từ Settings (default 20)
+            double wastePenalty = _settings.Rules?.WastePenaltyScore ?? 20.0;
+
+            // 1. Efficiency penalty (waste) - DÙNG SETTING
             double wasteRatio = arr.Efficiency > 1 ? (arr.Efficiency - 1.0) : 0;
-            score -= wasteRatio * 30; // Up to 30 points for 100% waste
+            score -= wasteRatio * wastePenalty;
 
-            // 2. Layer penalty
-            score -= (arr.LayerCount - 1) * 5; // -5 per extra layer
+            // 2. Layer penalty - 10 điểm mỗi lớp thêm
+            score -= (arr.LayerCount - 1) * 10;
 
-            // 3. Bar count penalty
-            if (arr.TotalCount > 6) score -= (arr.TotalCount - 6) * 2;
-
-            // 4. Spacing bonus (more spacing = better)
-            if (arr.ClearSpacing > _maxSpacing * 0.8)
+            // 3. Bar count penalty - nếu quá nhiều thanh
+            int configMaxBars = _settings.Beam?.MaxBarsPerLayer ?? 8;
+            if (arr.TotalCount > configMaxBars)
             {
-                score += 5;
+                score -= (arr.TotalCount - configMaxBars) * 3;
             }
 
-            // 5. Preference bonuses from settings
+            // 4. CRITICAL FIX: Optimal spacing check - DÙNG SETTING
+            double optMin = _settings.Beam?.MinClearSpacing ?? 30;
+            double optMax = _settings.Beam?.MaxClearSpacing ?? 200;
+            double midOptimal = (optMin + optMax) / 2; // ~115mm với defaults
+
+            if (arr.ClearSpacing >= optMin && arr.ClearSpacing <= optMax)
+            {
+                // Spacing trong dải cho phép
+                if (arr.ClearSpacing <= midOptimal)
+                {
+                    // Prefer denser layouts (gần midOptimal)
+                    double densityBonus = 10 * (1 - (arr.ClearSpacing - optMin) / (midOptimal - optMin));
+                    score += Math.Max(0, densityBonus);
+                }
+            }
+            else if (arr.ClearSpacing > optMax)
+            {
+                // Penalty cho spacing quá rộng (risk of cracking)
+                score -= 15;
+            }
+
+            // 5. Preference bonuses từ settings - DÙNG SETTING
             if (_settings.Beam?.PreferSingleDiameter == true && arr.IsSingleDiameter)
             {
                 score += 3;
@@ -493,18 +548,18 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             if (_settings.Beam?.PreferFewerBars == true)
             {
+                // Bonus cho ít thanh hơn (max 6 điểm)
                 score += Math.Max(0, 6 - arr.TotalCount);
             }
 
-            // 6. Preferred diameter bonus
+            // 6. Preferred diameter bonus - DÙNG SETTING
             if (_settings.Beam?.PreferredDiameter > 0 && arr.PrimaryDiameter == _settings.Beam.PreferredDiameter)
             {
                 score += 5;
             }
 
-            // 7. Waste count penalty from Rules
-            double wastePenalty = _settings.Rules?.WastePenaltyScore ?? 2.0;
-            score -= arr.WasteCount * wastePenalty;
+            // 7. Waste count penalty - DÙNG SETTING
+            score -= arr.WasteCount * (wastePenalty / 10.0); // Scale down for count vs ratio
 
             return Math.Max(0, Math.Min(100, score));
         }

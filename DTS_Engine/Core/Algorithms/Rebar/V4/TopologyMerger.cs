@@ -239,7 +239,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         /// <summary>
         /// Merge hai danh sách arrangements theo GOVERNING principle.
-        /// Kết quả: Các phương án có diện tích >= governingReq, ưu tiên cùng parameters.
+        /// CRITICAL FIX: OrderByDescending để chọn MAX area (governing), không phải MIN.
+        /// Kết quả: Các phương án có diện tích >= governingReq, ưu tiên lớn nhất.
         /// </summary>
         private List<SectionArrangement> MergeGoverningArrangements(
             List<SectionArrangement> list1,
@@ -253,15 +254,22 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 return result;
             }
 
+            // CRITICAL: Lấy SafetyFactor từ Settings thay vì hardcode
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            double tolerance = 1.0 - safetyFactor; // VD: SafetyFactor=1.0 → tolerance=0, SafetyFactor=0.98 → tolerance=0.02
+            if (tolerance < 0) tolerance = 0;
+            if (tolerance > 0.05) tolerance = 0.05; // Cap at 5%
+
             // Combine and filter by governing requirement
             var allArrangements = new List<SectionArrangement>();
             if (list1 != null) allArrangements.AddRange(list1);
             if (list2 != null) allArrangements.AddRange(list2);
 
-            // Filter: Chỉ giữ những arrangement đủ cho governing requirement
+            // CRITICAL FIX: Filter: Chỉ giữ những arrangement đủ cho governing requirement
+            // Áp dụng tolerance từ SafetyFactor
             var validArrangements = allArrangements
-                .Where(a => a.TotalArea >= governingReq * 0.98) // Allow 2% tolerance
-                .OrderBy(a => a.TotalArea) // Prefer smallest that meets requirement
+                .Where(a => a.TotalArea >= governingReq * (1 - tolerance))
+                .OrderByDescending(a => a.TotalArea) // FIX: OrderByDescending (MAX - governing)
                 .ThenByDescending(a => a.Score)
                 .ToList();
 
@@ -269,7 +277,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             var groups = validArrangements
                 .GroupBy(a => new { a.PrimaryDiameter, a.TotalCount })
                 .OrderByDescending(g => g.Count()) // Prefer solutions present in both lists
-                .ThenBy(g => g.Key.TotalCount) // Then prefer fewer bars
+                .ThenByDescending(g => g.First().TotalArea) // FIX: Prefer larger area (governing)
                 .ThenByDescending(g => g.Key.PrimaryDiameter); // Then prefer larger diameter
 
             foreach (var group in groups)
@@ -358,6 +366,11 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             if (_settings.Beam?.PreferVerticalAlignment != true) return;
 
+            // CRITICAL: Lấy penalty từ Settings thay vì hardcode
+            double alignmentPenalty = _settings.Rules?.AlignmentPenaltyScore ?? 25.0;
+            // Scale penalty to 0-10 range for arrangement scoring (arrangements use 0-100 scale)
+            double scaledPenalty = alignmentPenalty / 5.0; // 25 → 5 points
+
             foreach (var section in sections)
             {
                 var alignedPairs = new List<(SectionArrangement top, SectionArrangement bot)>();
@@ -382,7 +395,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     {
                         if (!alignedTops.Any(v => v.Equals(arr)))
                         {
-                            arr.Score = Math.Max(0, arr.Score - 5);
+                            arr.Score = Math.Max(0, arr.Score - scaledPenalty);
                         }
                     }
 
@@ -390,7 +403,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     {
                         if (!alignedBots.Any(v => v.Equals(arr)))
                         {
-                            arr.Score = Math.Max(0, arr.Score - 5);
+                            arr.Score = Math.Max(0, arr.Score - scaledPenalty);
                         }
                     }
                 }

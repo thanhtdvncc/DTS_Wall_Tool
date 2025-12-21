@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using DTS_Engine.Core.Algorithms.Rebar.Models;
+using DTS_Engine.Core.Algorithms.Rebar.V4;
 using DTS_Engine.Core.Data;
 
 namespace DTS_Engine.Core.Algorithms.Rebar.Utils
@@ -13,6 +14,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
     /// V3.5.2: Diagnostic logging utility for debugging rebar pipeline.
     /// Logs to both file and accumulates in-memory for display.
     /// Enable via DtsSettings.EnablePipelineLogging = true
+    /// 
+    /// CRITICAL: Controlled by DtsSettings.EnablePipelineLogging - không tự động enable.
     /// </summary>
     public static class RebarLogger
     {
@@ -22,7 +25,32 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
 
         public static bool IsEnabled { get; set; } = false;
 
+        /// <summary>
+        /// Initialize logger with DtsSettings (preferred method).
+        /// Automatically sets IsEnabled from settings.
+        /// </summary>
+        public static void Initialize(DtsSettings settings)
+        {
+            IsEnabled = settings?.EnablePipelineLogging ?? false;
+            if (IsEnabled)
+            {
+                InitializeInternal(null);
+                Log($"SESSION START: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                Log($"Settings: SafetyFactor={settings?.Rules?.SafetyFactor ?? 1.0:F2}, " +
+                    $"WastePenalty={settings?.Rules?.WastePenaltyScore ?? 20}, " +
+                    $"AlignmentPenalty={settings?.Rules?.AlignmentPenaltyScore ?? 25}");
+            }
+        }
+
+        /// <summary>
+        /// Initialize logger with custom path.
+        /// </summary>
         public static void Initialize(string basePath = null)
+        {
+            InitializeInternal(basePath);
+        }
+
+        private static void InitializeInternal(string basePath)
         {
             _sessionLog.Clear();
             _logPath = basePath ?? Path.Combine(
@@ -118,6 +146,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
             Log($"  Valid: {sol.IsValid}");
             Log($"  TotalWeight: {sol.TotalSteelWeight:F1} kg");
             Log($"  EfficiencyScore: {sol.EfficiencyScore:F2}");
+            Log($"  ConstructabilityScore: {sol.ConstructabilityScore:F2}");
+            Log($"  TotalScore: {sol.TotalScore:F2}");
+            Log($"  WastePercentage: {sol.WastePercentage:F1}%");
             Log($"  Reinforcements ({sol.Reinforcements?.Count ?? 0}):");
 
             if (sol.Reinforcements != null)
@@ -130,10 +161,61 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
             }
         }
 
+        /// <summary>
+        /// Log validation result from FailFastValidator.
+        /// </summary>
+        public static void LogValidation(bool isValid, string message, List<string> warnings)
+        {
+            if (!IsEnabled) return;
+
+            if (isValid)
+            {
+                Log("VALIDATION: PASSED");
+                if (warnings != null && warnings.Count > 0)
+                {
+                    Log($"  Warnings ({warnings.Count}):");
+                    foreach (var w in warnings)
+                    {
+                        Log($"    ⚠ {w}");
+                    }
+                }
+            }
+            else
+            {
+                Log($"VALIDATION: FAILED - {message}");
+            }
+        }
+
+        /// <summary>
+        /// Log settings being used for calculation.
+        /// </summary>
+        public static void LogSettings(DtsSettings settings)
+        {
+            if (!IsEnabled || settings == null) return;
+
+            Log("SETTINGS:");
+            Log($"  Rules.SafetyFactor: {settings.Rules?.SafetyFactor ?? 1.0:F2}");
+            Log($"  Rules.WastePenaltyScore: {settings.Rules?.WastePenaltyScore ?? 20}");
+            Log($"  Rules.AlignmentPenaltyScore: {settings.Rules?.AlignmentPenaltyScore ?? 25}");
+            Log($"  Beam.MinClearSpacing: {settings.Beam?.MinClearSpacing ?? 30}mm");
+            Log($"  Beam.MaxClearSpacing: {settings.Beam?.MaxClearSpacing ?? 200}mm");
+            Log($"  Beam.MaxLayers: {settings.Beam?.MaxLayers ?? 2}");
+            Log($"  Beam.MaxBarsPerLayer: {settings.Beam?.MaxBarsPerLayer ?? 8}");
+            Log($"  Beam.PreferSymmetric: {settings.Beam?.PreferSymmetric ?? true}");
+            Log($"  Beam.PreferFewerBars: {settings.Beam?.PreferFewerBars ?? true}");
+            Log($"  Beam.PreferredDiameter: {settings.Beam?.PreferredDiameter ?? 20}mm");
+        }
+
         public static void LogError(string message)
         {
             if (!IsEnabled) return;
             Log($"*** ERROR: {message} ***");
+        }
+
+        public static void LogWarning(string message)
+        {
+            if (!IsEnabled) return;
+            Log($"⚠ WARNING: {message}");
         }
 
         public static string GetSessionLog()
@@ -168,6 +250,126 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
         public static void Clear()
         {
             _sessionLog.Clear();
+        }
+
+        /// <summary>
+        /// Log danh sách arrangements từ một section.
+        /// </summary>
+        public static void LogArrangements(string sectionId, List<SectionArrangement> arrangements, string side)
+        {
+            if (!IsEnabled || arrangements == null) return;
+
+            Log($"");
+            Log($"SECTION: {sectionId} - {side}");
+            Log($"  Total arrangements: {arrangements.Count}");
+
+            if (arrangements.Count == 0)
+            {
+                Log($"  ⚠ NO ARRANGEMENTS FOUND");
+                return;
+            }
+
+            // Group by diameter
+            var groups = arrangements.GroupBy(a => a.PrimaryDiameter).OrderByDescending(g => g.Key);
+
+            foreach (var group in groups)
+            {
+                Log($"  Diameter {group.Key}mm ({group.Count()} arrangements):");
+
+                var sorted = group.OrderByDescending(a => a.Score).Take(5);
+                foreach (var arr in sorted)
+                {
+                    string config = arr.IsSingleDiameter
+                        ? $"{arr.TotalCount}D{arr.PrimaryDiameter}"
+                        : string.Join("+", arr.BarsPerLayer.Select((count, i) => $"{count}D{(i < arr.DiametersPerLayer.Count ? arr.DiametersPerLayer[i] : arr.PrimaryDiameter)}"));
+
+                    Log($"    {arr.TotalCount}bars ({arr.LayerCount}L) | " +
+                        $"Area={arr.TotalArea:F2}cm² | " +
+                        $"Score={arr.Score:F1} | " +
+                        $"Eff={arr.Efficiency:F2} | " +
+                        $"Spacing={arr.ClearSpacing:F0}mm | " +
+                        $"Config: {config}");
+                }
+
+                if (group.Count() > 5)
+                {
+                    Log($"    ... and {group.Count() - 5} more");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Log backbone candidates.
+        /// </summary>
+        public static void LogBackboneCandidates(List<BackboneCandidate> candidates, int showTop = 10)
+        {
+            if (!IsEnabled || candidates == null) return;
+
+            Log($"");
+            Log($"BACKBONE CANDIDATES: {candidates.Count} total");
+
+            var valid = candidates.Where(c => c.IsGloballyValid).ToList();
+            var invalid = candidates.Where(c => !c.IsGloballyValid).ToList();
+
+            Log($"  Valid: {valid.Count} | Invalid: {invalid.Count}");
+
+            if (valid.Count > 0)
+            {
+                Log($"  TOP {Math.Min(showTop, valid.Count)} VALID CANDIDATES:");
+                var top = valid.OrderByDescending(c => c.TotalScore).Take(showTop);
+
+                int rank = 1;
+                foreach (var c in top)
+                {
+                    int totalSections = c.FitCount + c.FailedSections.Count;
+                    Log($"    #{rank}: D{c.Diameter} | T:{c.CountTop} B:{c.CountBot} | " +
+                        $"Score={c.TotalScore:F1} | " +
+                        $"Weight={c.EstimatedWeight:F1}kg | " +
+                        $"Fit={c.FitCount}/{totalSections} | " +
+                        $"AreaT={c.AreaTop:F2} AreaB={c.AreaBot:F2}");
+                    rank++;
+                }
+            }
+
+            if (invalid.Count > 0 && invalid.Count <= 5)
+            {
+                Log($"  INVALID CANDIDATES:");
+                foreach (var c in invalid)
+                {
+                    Log($"    D{c.Diameter} T:{c.CountTop} B:{c.CountBot} | " +
+                        $"Failed: {string.Join(", ", c.FailedSections)}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Log solution comparison.
+        /// </summary>
+        public static void LogSolutionComparison(List<ContinuousBeamSolution> solutions)
+        {
+            if (!IsEnabled || solutions == null || solutions.Count == 0) return;
+
+            Log($"");
+            Log($"SOLUTION COMPARISON: {solutions.Count} solutions");
+            Log($"");
+            Log($"  Rank | Valid | Backbone          | Weight  | Eff% | Const | Total | Waste% | Description");
+            Log($"  -----|-------|-------------------|---------|------|-------|-------|--------|-------------");
+
+            int rank = 1;
+            foreach (var sol in solutions.OrderByDescending(s => s.TotalScore))
+            {
+                string valid = sol.IsValid ? "✓" : "✗";
+                string backbone = $"T:{sol.BackboneCount_Top}D{sol.BackboneDiameter_Top} B:{sol.BackboneCount_Bot}D{sol.BackboneDiameter_Bot}";
+
+                Log($"  {rank,4} | {valid,5} | {backbone,-17} | {sol.TotalSteelWeight,7:F1} | {sol.EfficiencyScore,4:F0} | {sol.ConstructabilityScore,5:F0} | {sol.TotalScore,5:F0} | {sol.WastePercentage,6:F1} | {sol.Description}");
+
+                if (!sol.IsValid && !string.IsNullOrEmpty(sol.ValidationMessage))
+                {
+                    Log($"       └─ ⚠ {sol.ValidationMessage}");
+                }
+
+                rank++;
+            }
         }
     }
 }

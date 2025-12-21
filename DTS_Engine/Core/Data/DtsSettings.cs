@@ -24,14 +24,6 @@ namespace DTS_Engine.Core.Data
         public NamingConfig Naming { get; set; } = new NamingConfig();
 
         /// <summary>
-        /// V4.0: Use V4 Bottom-Up Rebar Calculator as primary.
-        /// When true (default), uses V4RebarCalculator with O(N×M) complexity.
-        /// When false, uses V3 Pipeline as primary.
-        /// Fallback chain: V4 → BeamAwareOptimizer → V3 Pipeline.
-        /// </summary>
-        public bool UseV4Calculator { get; set; } = true;
-
-        /// <summary>
         /// V3.5.2: Enable detailed pipeline logging for debugging.
         /// Logs to %LocalAppData%\DTS_Engine\Logs
         /// </summary>
@@ -369,12 +361,7 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public string ConcreteGradeName { get; set; } = "B25";
 
-        /// <summary>
-        /// Enable V3 Pipeline-based Rebar Calculator.
-        /// When true (default), uses RebarCalculatorV3 with Pipeline/Strategy/Rules pattern.
-        /// When false, uses legacy RebarCalculator V2 with 4-loop monolithic algorithm.
-        /// </summary>
-        public bool UseV3Pipeline { get; set; } = true;
+        // REMOVED: UseV3Pipeline - V3 Pipeline is dead code, V4 is sole engine
     }
 
     /// <summary>

@@ -82,12 +82,12 @@ namespace DTS_Engine.Core.Algorithms
             DtsSettings settings,
             ExternalConstraints externalConstraints)
         {
-            // Initialize logging based on settings
-            Rebar.Utils.RebarLogger.IsEnabled = settings?.EnablePipelineLogging ?? false;
+            // Initialize logging based on settings - DÙNG SETTING
+            Rebar.Utils.RebarLogger.Initialize(settings);
             if (Rebar.Utils.RebarLogger.IsEnabled)
             {
-                Rebar.Utils.RebarLogger.Initialize();
                 Rebar.Utils.RebarLogger.LogPhase($"CALCULATE GROUP: {group?.GroupName ?? "?"}");
+                Rebar.Utils.RebarLogger.LogSettings(settings);
             }
 
             try
@@ -106,6 +106,13 @@ namespace DTS_Engine.Core.Algorithms
                     // Log results
                     int validCount = results.Count(r => r.IsValid);
                     Rebar.Utils.RebarLogger.LogPhase($"V4 COMPLETE: {results.Count} solutions ({validCount} valid)");
+
+                    // Log best solution summary
+                    var best = results.FirstOrDefault(r => r.IsValid) ?? results.FirstOrDefault();
+                    if (best != null)
+                    {
+                        Rebar.Utils.RebarLogger.LogSolutionSummary(best);
+                    }
 
                     Rebar.Utils.RebarLogger.OpenLogFile();
                     return results;
