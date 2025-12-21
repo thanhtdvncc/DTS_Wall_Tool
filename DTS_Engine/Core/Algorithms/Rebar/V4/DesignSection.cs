@@ -171,7 +171,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         #region Computed Properties
 
-        /// <summary>Bề rộng khả dụng để bố trí thép (mm)</summary>
+        /// <summary>Bề rộng khả dụng thực tế bên trong đai (mm)</summary>
         public double UsableWidth => Width - 2 * CoverSide - 2 * StirrupDiameter;
 
         /// <summary>Chiều cao khả dụng (mm)</summary>

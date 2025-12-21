@@ -280,16 +280,14 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
                 var sorted = group.OrderByDescending(a => a.Score);
                 foreach (var arr in sorted)
                 {
-                    string config = arr.IsSingleDiameter
-                        ? $"{arr.TotalCount}D{arr.PrimaryDiameter}"
-                        : string.Join("+", arr.BarsPerLayer.Select((count, i) => $"{count}D{(i < arr.DiametersPerLayer.Count ? arr.DiametersPerLayer[i] : arr.PrimaryDiameter)}"));
+                    string config = arr.ToDisplayString();
 
-                    Log($"    {arr.TotalCount}bars ({arr.LayerCount}L) | " +
-                        $"Area={arr.TotalArea:F2}cm² | " +
-                        $"Score={arr.Score:F1} | " +
-                        $"Eff={arr.Efficiency:F2} | " +
-                        $"Spacing={arr.ClearSpacing:F0}mm | " +
-                        $"Config: {config}");
+                    Log($"    {config,-15} | " +
+                        $"Area={arr.TotalArea,6:F2}cm² | " +
+                        $"Score={arr.Score,5:F1} | " +
+                        $"Eff={arr.Efficiency,5:F2} | " +
+                        $"Spacing={arr.ClearSpacing,3:F0}mm | " +
+                        $"Layers={arr.LayerCount}");
                 }
             }
         }

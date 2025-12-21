@@ -43,6 +43,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 _allowedDiameters = inventory.Where(d => d >= 16 && d <= 25).ToList();
             }
 
+            // CRITICAL FIX: Lọc đường kính chẵn nếu cấu hình yêu cầu
+            if (beamCfg.PreferEvenDiameter && _allowedDiameters.Any(d => d % 2 == 0))
+            {
+                // Giữ lại D25 vì là đường kính thép chủ phổ biến
+                _allowedDiameters = _allowedDiameters.Where(d => d % 2 == 0 || d == 25).ToList();
+            }
+
             _minBarsPerSide = beamCfg.MinBarsPerLayer > 0 ? beamCfg.MinBarsPerLayer : 2;
             _maxBarsPerSide = beamCfg.MaxBarsPerLayer > 0 ? beamCfg.MaxBarsPerLayer : 8;
         }
@@ -357,12 +364,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             double totalLength = CalculateTotalLength(group, sections);
 
-            // Backbone weight
+            // Backbone weight - FIX: Dùng hệ số hao hụt/nối chồng thực tế ~5% thay vì LapSpliceMultiplier (40)
+            double lapFactor = 1.05;
             double backboneWeight = WeightCalculator.CalculateBackboneWeight(
                 candidate.Diameter,
                 totalLength,
                 candidate.CountTop + candidate.CountBot,
-                _settings.Beam?.LapSpliceMultiplier ?? 1.02);
+                lapFactor);
 
             // Estimate addon weight
             double addonWeight = EstimateAddonWeight(candidate, sections, group);
@@ -373,8 +381,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         /// <summary>
         /// CRITICAL FIX: Tính tổng chiều dài với heuristic unit detection.
-        /// Nếu giá trị < 200, giả định là mét (m) và nhân 1000.
-        /// Nếu giá trị >= 200, giả định đã là milimet (mm).
+        /// Thống nhất logic: < 200 => Meters, >= 200 => MM.
         /// </summary>
         private double CalculateTotalLength(BeamGroup group, List<DesignSection> sections)
         {
@@ -391,18 +398,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             else
             {
                 // Fallback: estimate 3m per section
-                return sections.Count * 3000;
+                totalLen = sections.Count * 3.0; // Assume 3m
             }
 
-            // Heuristic check: If total length is small (< 200), assume it's Meters and convert to MM.
-            // If it is large (e.g. 20000), assume it is already MM.
-            if (totalLen < 200)
+            // Heuristic check: If total length is small (< 500m), assume it's Meters and convert to MM.
+            // If it is large (e.g. 5000), assume it is already MM.
+            // Ngưỡng 500m là an toàn cho beam group.
+            if (totalLen < 500)
             {
-                Utils.RebarLogger.Log($"  Length unit detected: Meters ({totalLen}m) -> converting to MM");
                 return totalLen * 1000;
             }
 
-            Utils.RebarLogger.Log($"  Length unit detected: MM ({totalLen}mm)");
             return totalLen;
         }
 
@@ -515,13 +521,24 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 .FirstOrDefault();
         }
 
+        /// <summary>
+        /// CRITICAL FIX: Thống nhất logic unit detection với CalculateTotalLength.
+        /// </summary>
         private double GetSpanLength(DesignSection section, BeamGroup group)
         {
+            double len = 5.0; // Default 5m
+
             if (group?.Spans != null && section.SpanIndex < group.Spans.Count)
             {
-                return group.Spans[section.SpanIndex].Length * 1000;
+                len = group.Spans[section.SpanIndex].Length;
             }
-            return 5000; // Default 5m
+
+            // Heuristic: < 200 => Meters, >= 200 => MM
+            if (len < 200)
+            {
+                return len * 1000;
+            }
+            return len;
         }
 
         #endregion
@@ -719,11 +736,15 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // Calculate total steel weight
             double totalLength = CalculateTotalLength(group, sections);
 
+            // FIX: LapSpliceMultiplier (VD: 40) là hệ số neo d, không phải hệ số nhân trọng lượng.
+            // Dùng hệ số hao hụt/nối chồng thực tế ~5% (1.05).
+            double lapFactor = 1.05;
+
             double backboneWeight = WeightCalculator.CalculateBackboneWeight(
                 solution.BackboneDiameter,
                 totalLength,
                 solution.BackboneCount_Top + solution.BackboneCount_Bot,
-                _settings.Beam?.LapSpliceMultiplier ?? 1.02);
+                lapFactor);
 
             // Addon weight from SpanResults
             double addonWeight = 0;
@@ -741,17 +762,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 }
             }
 
-            solution.TotalSteelWeight = backboneWeight + addonWeight;
+            solution.TotalSteelWeight = (backboneWeight + addonWeight);
 
-            // Waste calculation
-            double totalRequired = sections.Sum(s => s.ReqTop + s.ReqBot);
-            double totalProvided = solution.As_Backbone_Top * sections.Count
-                                 + solution.As_Backbone_Bot * sections.Count
-                                 + solution.Reinforcements.Values.Sum(r => r.Count * Math.PI * r.Diameter * r.Diameter / 400.0);
-
-            solution.WastePercentage = totalRequired > 0
-                ? Math.Max(0, (totalProvided - totalRequired) / totalRequired * 100)
-                : 0;
+            // Score based on efficiency
+            double totalReqArea = sections.Sum(s => s.ReqTop + s.ReqBot);
+            solution.WastePercentage = 0;
+            if (totalReqArea > 0.1)
+            {
+                double provArea = (solution.As_Backbone_Top + solution.As_Backbone_Bot) * sections.Count;
+                provArea += solution.Reinforcements.Values.Sum(r => r.Count * Math.PI * r.Diameter * r.Diameter / 400.0);
+                solution.WastePercentage = Math.Max(0, (provArea - totalReqArea) / totalReqArea * 100.0);
+            }
 
             // Efficiency & Total Score - DÙNG SETTING
             double effWeight = _settings.Beam?.EfficiencyScoreWeight ?? 0.6;

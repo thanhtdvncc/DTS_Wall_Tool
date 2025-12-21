@@ -183,12 +183,11 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 int maxLayersForHeight = CalculateMaxLayers(usableHeight, dia);
                 int actualMaxLayers = Math.Min(_maxLayers, maxLayersForHeight);
 
-                // CRITICAL FIX: Mở rộng phạm vi tìm kiếm dựa trên MaxBarsPerLayer từ settings
-                int configMaxBarsPerLayer = _settings.Beam?.MaxBarsPerLayer ?? 8;
-                int maxTotalBars = Math.Min(maxPerLayer * actualMaxLayers, configMaxBarsPerLayer * actualMaxLayers);
+                // CRITICAL FIX V4.2: Giới hạn tổng số thanh tối đa có thể chứa được
+                int maxTotalBarsPossible = maxPerLayer * actualMaxLayers;
 
-                // Mở rộng phạm vi tìm kiếm thêm 4 thanh (thay vì 6)
-                int searchMax = Math.Min(maxTotalBars, minBars + 4);
+                // Mở rộng phạm vi tìm kiếm dựa trên yêu cầu thép
+                int searchMax = Math.Min(maxTotalBarsPossible, minBars + 4);
 
                 for (int totalBars = minBars; totalBars <= searchMax; totalBars++)
                 {
@@ -197,7 +196,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
                     foreach (var config in configs)
                     {
-                        // Validate all layers fit
+                        // Validate all layers fit (Double check with strict spacing)
                         bool allFit = config.All(n => CheckSpacing(usableWidth, n, dia));
                         if (!allFit) continue;
 
@@ -246,6 +245,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // First layer (or subsequent): try different bar counts
             int minInLayer = current.Count == 0 ? _minBarsPerLayer : 2;
             int maxInLayer = Math.Min(remaining, maxPerLayer);
+
+            // V4.2: Nếu còn quá nhiều thanh mà không còn nhiều lớp, phải lấy tối đa cho lớp này
+            int remainingLayers = maxLayers - current.Count;
+            if (remaining > maxPerLayer * (remainingLayers - 1))
+            {
+                minInLayer = Math.Max(minInLayer, remaining - maxPerLayer * (remainingLayers - 1));
+            }
 
             for (int n = maxInLayer; n >= minInLayer; n--)
             {
@@ -334,18 +340,16 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         private int CalculateMaxBarsPerLayer(double usableWidth, int diameter)
         {
             double minClear = GetMinClearSpacing(diameter);
-            double available = usableWidth;
 
-            // n bars: n * diameter + (n-1) * clearSpacing <= available
-            // n * (diameter + clearSpacing) - clearSpacing <= available
-            // n <= (available + clearSpacing) / (diameter + clearSpacing)
-
-            double n = (available + minClear) / (diameter + minClear);
-            int maxBars = (int)Math.Floor(n);
+            // V4.2 STRICT FORMULA: n*d + (n-1)*s <= UsableWidth
+            // => n*(d+s) - s <= UsableWidth
+            // => n <= (UsableWidth + s) / (d + s)
+            double n = (usableWidth + minClear) / (diameter + minClear);
+            int maxBars = (int)Math.Floor(n + 0.001); // Thêm sai số làm tròn floating point
 
             // CRITICAL: Giới hạn bởi MaxBarsPerLayer từ settings
             int configMax = _settings.Beam?.MaxBarsPerLayer ?? 8;
-            return Math.Max(_minBarsPerLayer, Math.Min(maxBars, configMax));
+            return Math.Min(maxBars, configMax);
         }
 
         private int CalculateMaxLayers(double usableHeight, int diameter)
