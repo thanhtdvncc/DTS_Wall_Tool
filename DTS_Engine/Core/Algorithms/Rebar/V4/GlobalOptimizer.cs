@@ -263,10 +263,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         candidate.Diameter,
                         requiredWithSafety);
 
-                    // CRITICAL FIX: Kiểm tra backbone area với SafetyFactor
-                    if (!topFits && candidate.AreaTop >= requiredWithSafety)
+                    // CRITICAL FIX: KHÔNG bypass nếu backbone không có trong merged list
+                    // BUG CŨ: Cho phép backbone dù không có trong ValidArrangements
+                    // -> Gây ra "tính 1 đằng, ra 1 nẻo"
+                    if (!topFits)
                     {
-                        topFits = true;
+                        // Chỉ log warning, KHÔNG set topFits = true
+                        Utils.RebarLogger.LogWarning($"Backbone {candidate.CountTop}D{candidate.Diameter} NOT in merged list for {section.SectionId}_Top (Req={section.ReqTop:F2})");
                     }
 
                     if (topFits) fitCount++;
@@ -280,7 +283,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         }
                     }
                 }
-
                 // Check BOT với SafetyFactor
                 if (section.ReqBot > 0.01)
                 {
@@ -292,9 +294,11 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         candidate.Diameter,
                         requiredWithSafety);
 
-                    if (!botFits && candidate.AreaBot >= requiredWithSafety)
+                    // CRITICAL FIX: KHÔNG bypass nếu backbone không có trong merged list
+                    if (!botFits)
                     {
-                        botFits = true;
+                        // Chỉ log warning, KHÔNG set botFits = true
+                        Utils.RebarLogger.LogWarning($"Backbone {candidate.CountBot}D{candidate.Diameter} NOT in merged list for {section.SectionId}_Bot (Req={section.ReqBot:F2})");
                     }
 
                     if (botFits) fitCount++;

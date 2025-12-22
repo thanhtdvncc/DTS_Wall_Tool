@@ -9,19 +9,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
     /// Áp dụng ràng buộc Topology để đồng bộ hóa phương án giữa các mặt cắt liên quan.
     /// Xử lý ràng buộc Type 3 (Gối đỡ): Left và Right của cùng gối phải thống nhất.
     /// 
-    /// CRITICAL FIX: Đảm bảo governing logic - gối nào yêu cầu lớn hơn sẽ quyết định.
+    /// SMART UPDATE:
+    /// - Sử dụng cơ chế Intersection thông minh.
+    /// - Validate chặt chẽ với yêu cầu gốc (Original Requirement).
+    /// - Fail-Safe: Nếu không thể merge hợp lý, giữ nguyên phương án riêng để GlobalOptimizer xử lý Addon.
     /// </summary>
     public class TopologyMerger
     {
         #region Configuration
 
-        /// <summary>Tolerance cho việc xác định cùng vị trí (m)</summary>
         public double PositionTolerance { get; set; } = 0.02;
-
-        /// <summary>Chênh lệch số thanh tối đa cho phép khi merge</summary>
         public int MaxBarCountDifference { get; set; } = 2;
-
-        /// <summary>Chênh lệch số lớp tối đa cho phép khi merge</summary>
         public int MaxLayerCountDifference { get; set; } = 1;
 
         #endregion
@@ -43,39 +41,27 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         #region Public API
 
-        /// <summary>
-        /// Áp dụng ràng buộc Topology lên danh sách sections.
-        /// CRITICAL: Đảm bảo hai mặt cắt cùng gối LUÔN có kết quả giống nhau.
-        /// </summary>
         public bool ApplyConstraints(List<DesignSection> sections)
         {
             if (sections == null || sections.Count == 0) return false;
 
-            // Bước 1: Liên kết các cặp gối (Support Left - Support Right)
+            // Bước 1: Liên kết các cặp gối
             var supportPairs = IdentifySupportPairs(sections);
             Utils.RebarLogger.Log($"TopologyMerger: Found {supportPairs.Count} support pairs");
 
-            // Bước 2: Áp dụng GOVERNING MERGE cho từng cặp
+            // Bước 2: Áp dụng SMART MERGE
             foreach (var pair in supportPairs)
             {
-                MergeGoverning(pair);
-                Utils.RebarLogger.Log($"  Merged support {pair.SupportIndex}: " +
-                    $"TopOptions={pair.MergedTop?.Count ?? 0}, BotOptions={pair.MergedBot?.Count ?? 0}");
+                MergeSmart(pair);
             }
 
-            // Bước 3: Áp dụng ràng buộc Stirrup Compatibility
+            // Bước 3 & 4: Các ràng buộc phụ
             ApplyStirrupCompatibility(sections);
-
-            // Bước 4: Áp dụng ràng buộc Top-Bot Vertical Alignment
             ApplyVerticalAlignment(sections);
 
-            // Kiểm tra còn phương án không
             return ValidateAllSectionsHaveOptions(sections);
         }
 
-        /// <summary>
-        /// Lấy danh sách các cặp gối liên kết.
-        /// </summary>
         public List<SupportPair> GetSupportPairs(List<DesignSection> sections)
         {
             return IdentifySupportPairs(sections);
@@ -85,9 +71,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         #region Support Pair Identification
 
-        /// <summary>
-        /// Đại diện cho một cặp gối liên kết.
-        /// </summary>
         public class SupportPair
         {
             public int SupportIndex { get; set; }
@@ -102,29 +85,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         private List<SupportPair> IdentifySupportPairs(List<DesignSection> sections)
         {
             var pairs = new List<SupportPair>();
-
-            var supports = sections
-                .Where(s => s.Type == SectionType.Support)
-                .OrderBy(s => s.Position)
-                .ToList();
-
+            var supports = sections.Where(s => s.Type == SectionType.Support).OrderBy(s => s.Position).ToList();
             var groupedByPosition = new Dictionary<double, List<DesignSection>>();
 
             foreach (var support in supports)
             {
                 var matchingKey = groupedByPosition.Keys
                     .Where(k => Math.Abs(k - support.Position) <= PositionTolerance)
-                    .Cast<double?>()
-                    .FirstOrDefault();
+                    .Cast<double?>().FirstOrDefault();
 
-                if (matchingKey.HasValue)
-                {
-                    groupedByPosition[matchingKey.Value].Add(support);
-                }
-                else
-                {
-                    groupedByPosition[support.Position] = new List<DesignSection> { support };
-                }
+                if (matchingKey.HasValue) groupedByPosition[matchingKey.Value].Add(support);
+                else groupedByPosition[support.Position] = new List<DesignSection> { support };
             }
 
             int supportIndex = 0;
@@ -132,8 +103,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             {
                 if (group.Value.Count >= 2)
                 {
-                    var leftSection = group.Value.FirstOrDefault(s => s.IsSupportRight);
-                    var rightSection = group.Value.FirstOrDefault(s => s.IsSupportLeft);
+                    var leftSection = group.Value.FirstOrDefault(s => s.IsSupportRight); // End of left span
+                    var rightSection = group.Value.FirstOrDefault(s => s.IsSupportLeft); // Start of right span
 
                     if (leftSection != null && rightSection != null && leftSection != rightSection)
                     {
@@ -151,163 +122,163 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 }
                 supportIndex++;
             }
-
             return pairs;
         }
 
         #endregion
 
-        #region GOVERNING MERGE - Critical Fix
+        #region SMART MERGE LOGIC
 
         /// <summary>
-        /// GOVERNING MERGE: Lấy phương án LỚN HƠN từ hai bên gối.
-        /// Đảm bảo cả hai mặt cắt đều có cùng kết quả = MAX(left, right).
+        /// Thực hiện Merge thông minh với Validation.
         /// </summary>
-        private void MergeGoverning(SupportPair pair)
+        private void MergeSmart(SupportPair pair)
         {
             var left = pair.LeftSection;
             var right = pair.RightSection;
 
-            // === MERGE TOP ===
-            var mergedTop = MergeGoverningArrangements(
-                left.ValidArrangementsTop,
-                right.ValidArrangementsTop,
-                Math.Max(left.ReqTop, right.ReqTop));
+            Utils.RebarLogger.Log($"MERGE Support {pair.SupportIndex} (Pos {pair.Position:F1}):");
 
-            // Nếu không tìm được intersection, tạo từ governing requirement
-            if (mergedTop.Count == 0)
+            // --- MERGE TOP ---
+            var mergedTop = ExecuteMergeStrategy(left.ValidArrangementsTop, right.ValidArrangementsTop,
+                                                 left.ReqTop, right.ReqTop, "Top");
+
+            if (mergedTop != null && mergedTop.Count > 0)
             {
-                double governingReq = Math.Max(left.ReqTop, right.ReqTop);
-                if (governingReq > 0.01)
-                {
-                    // Lấy từ bên có requirement lớn hơn
-                    var source = left.ReqTop >= right.ReqTop 
-                        ? left.ValidArrangementsTop 
-                        : right.ValidArrangementsTop;
-                    
-                    if (source.Count > 0)
-                    {
-                        mergedTop = source.Select(CloneArrangement).ToList();
-                    }
-                }
+                // Merge Success: Apply to both
+                pair.MergedTop = mergedTop;
+                left.ValidArrangementsTop = mergedTop.Select(CloneArrangement).ToList();
+                right.ValidArrangementsTop = mergedTop.Select(CloneArrangement).ToList();
+                LogMergeDetails("Top", mergedTop);
+                Utils.RebarLogger.Log($"  -> Top Merged: {mergedTop.Count} options shared.");
+            }
+            else
+            {
+                // Merge Failed/Rejected: Keep separate
+                Utils.RebarLogger.Log($"  -> Top Merge ABORTED. Keeping separate (Left={left.ValidArrangementsTop.Count}, Right={right.ValidArrangementsTop.Count}). GlobalOptimizer will handle.");
             }
 
-            if (mergedTop.Count == 0)
+            // --- MERGE BOT ---
+            var mergedBot = ExecuteMergeStrategy(left.ValidArrangementsBot, right.ValidArrangementsBot,
+                                                 left.ReqBot, right.ReqBot, "Bot");
+
+            if (mergedBot != null && mergedBot.Count > 0)
             {
-                mergedTop.Add(SectionArrangement.Empty);
+                pair.MergedBot = mergedBot;
+                left.ValidArrangementsBot = mergedBot.Select(CloneArrangement).ToList();
+                right.ValidArrangementsBot = mergedBot.Select(CloneArrangement).ToList();
+                LogMergeDetails("Bot", mergedBot);
+                Utils.RebarLogger.Log($"  -> Bot Merged: {mergedBot.Count} options shared.");
+            }
+            else
+            {
+                Utils.RebarLogger.Log($"  -> Bot Merge ABORTED. Keeping separate.");
             }
 
-            // === MERGE BOT ===
-            var mergedBot = MergeGoverningArrangements(
-                left.ValidArrangementsBot,
-                right.ValidArrangementsBot,
-                Math.Max(left.ReqBot, right.ReqBot));
+            pair.IsMerged = (mergedTop != null || mergedBot != null);
+        }
 
-            if (mergedBot.Count == 0)
-            {
-                double governingReq = Math.Max(left.ReqBot, right.ReqBot);
-                if (governingReq > 0.01)
-                {
-                    var source = left.ReqBot >= right.ReqBot 
-                        ? left.ValidArrangementsBot 
-                        : right.ValidArrangementsBot;
-                    
-                    if (source.Count > 0)
-                    {
-                        mergedBot = source.Select(CloneArrangement).ToList();
-                    }
-                }
-            }
-
-            if (mergedBot.Count == 0)
-            {
-                mergedBot.Add(SectionArrangement.Empty);
-            }
-
-            // === APPLY TO BOTH SECTIONS ===
-            // CRITICAL: Cả hai bên gối PHẢI có cùng danh sách arrangements
-            pair.MergedTop = mergedTop;
-            pair.MergedBot = mergedBot;
-            pair.IsMerged = true;
-
-            left.ValidArrangementsTop = mergedTop.Select(CloneArrangement).ToList();
-            right.ValidArrangementsTop = mergedTop.Select(CloneArrangement).ToList();
-
-            left.ValidArrangementsBot = mergedBot.Select(CloneArrangement).ToList();
-            right.ValidArrangementsBot = mergedBot.Select(CloneArrangement).ToList();
+        private void LogMergeDetails(string side, List<SectionArrangement> list)
+        {
+            if (list == null || list.Count == 0) return;
+            var details = list.Take(5).Select(a => $"{a.TotalCount}D{a.PrimaryDiameter}({a.TotalArea:F2})");
+            string more = list.Count > 5 ? "..." : "";
+            Utils.RebarLogger.Log($"    {side}: {string.Join(", ", details)}{more}");
         }
 
         /// <summary>
-        /// Merge hai danh sách arrangements theo GOVERNING principle.
-        /// CRITICAL FIX: OrderByDescending để chọn MAX area (governing), không phải MIN.
-        /// Kết quả: Các phương án có diện tích >= governingReq, ưu tiên lớn nhất.
+        /// Chiến lược cốt lõi: Intersection -> Fallback -> Validate Original Req.
+        /// Trả về null nếu không tìm được phương án hợp lý.
         /// </summary>
-        private List<SectionArrangement> MergeGoverningArrangements(
+        private List<SectionArrangement> ExecuteMergeStrategy(
             List<SectionArrangement> list1,
             List<SectionArrangement> list2,
-            double governingReq)
+            double req1,
+            double req2,
+            string sideName)
+        {
+            double governingReq = Math.Max(req1, req2);
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            double tolerance = 1.0 - safetyFactor;
+            if (tolerance < 0) tolerance = 0;
+
+            // 1. Filter BOTH lists by Governing Req first
+            var valid1 = list1?.Where(a => a.TotalArea >= governingReq * (1 - tolerance)).ToList() ?? new List<SectionArrangement>();
+            var valid2 = list2?.Where(a => a.TotalArea >= governingReq * (1 - tolerance)).ToList() ?? new List<SectionArrangement>();
+
+            List<SectionArrangement> candidates = new List<SectionArrangement>();
+
+            // 2. Try Find Intersection (Giao thoa)
+            var intersection = FindIntersection(valid1, valid2);
+
+            if (intersection.Count > 0)
+            {
+                candidates = intersection;
+            }
+            else
+            {
+                // 3. Fallback: Intersection rỗng - Lấy từ Governing Side
+                if (req1 >= req2 && valid1.Count > 0)
+                {
+                    candidates = valid1.Select(CloneArrangement).ToList();
+                }
+                else if (req2 > req1 && valid2.Count > 0)
+                {
+                    candidates = valid2.Select(CloneArrangement).ToList();
+                }
+                else
+                {
+                    // Cả 2 đều rỗng -> Fail
+                    return null;
+                }
+            }
+
+            // 4. CRITICAL: Post-Merge Validation
+            if (!ValidateMergedCandidates(candidates, req1, tolerance) ||
+                !ValidateMergedCandidates(candidates, req2, tolerance))
+            {
+                // Nếu vi phạm yêu cầu gốc -> Fail
+                return null;
+            }
+
+            return candidates;
+        }
+
+        private List<SectionArrangement> FindIntersection(List<SectionArrangement> list1, List<SectionArrangement> list2)
         {
             var result = new List<SectionArrangement>();
 
-            if ((list1 == null || list1.Count == 0) && (list2 == null || list2.Count == 0))
+            if (list1 == null || list2 == null) return result;
+
+            foreach (var item1 in list1)
             {
-                return result;
+                var match = list2.FirstOrDefault(item2 =>
+                    item2.PrimaryDiameter == item1.PrimaryDiameter &&
+                    item2.TotalCount == item1.TotalCount &&
+                    Math.Abs(item2.LayerCount - item1.LayerCount) <= MaxLayerCountDifference);
+
+                if (match != null)
+                {
+                    result.Add(CloneArrangement(item1.Score >= match.Score ? item1 : match));
+                }
             }
 
-            // CRITICAL: Lấy SafetyFactor từ Settings thay vì hardcode
-            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
-            double tolerance = 1.0 - safetyFactor; // VD: SafetyFactor=1.0 → tolerance=0, SafetyFactor=0.98 → tolerance=0.02
-            if (tolerance < 0) tolerance = 0;
-            if (tolerance > 0.05) tolerance = 0.05; // Cap at 5%
+            return result.GroupBy(x => new { x.PrimaryDiameter, x.TotalCount })
+                         .Select(g => g.First())
+                         .OrderByDescending(a => a.Score)
+                         .ToList();
+        }
 
-            // Combine and filter by governing requirement
-            var allArrangements = new List<SectionArrangement>();
-            if (list1 != null) allArrangements.AddRange(list1);
-            if (list2 != null) allArrangements.AddRange(list2);
-
-            // CRITICAL FIX: Filter: Chỉ giữ những arrangement đủ cho governing requirement
-            // Áp dụng tolerance từ SafetyFactor
-            var validArrangements = allArrangements
-                .Where(a => a.TotalArea >= governingReq * (1 - tolerance))
-                .OrderByDescending(a => a.TotalArea) // FIX: OrderByDescending (MAX - governing)
-                .ThenByDescending(a => a.Score)
-                .ToList();
-
-            // Group by (Diameter, TotalCount) to find common solutions
-            var groups = validArrangements
-                .GroupBy(a => new { a.PrimaryDiameter, a.TotalCount })
-                .OrderByDescending(g => g.Count()) // Prefer solutions present in both lists
-                .ThenByDescending(g => g.First().TotalArea) // FIX: Prefer larger area (governing)
-                .ThenByDescending(g => g.Key.PrimaryDiameter); // Then prefer larger diameter
-
-            foreach (var group in groups)
-            {
-                // Take best from each group
-                var best = group.OrderByDescending(a => a.Score).First();
-                var cloned = CloneArrangement(best);
-                
-                // Recalculate efficiency based on governing requirement
-                if (governingReq > 0.01)
-                {
-                    cloned.Efficiency = cloned.TotalArea / governingReq;
-                }
-
-                if (!result.Any(r => r.PrimaryDiameter == cloned.PrimaryDiameter && 
-                                     r.TotalCount == cloned.TotalCount))
-                {
-                    result.Add(cloned);
-                }
-
-                // Limit results
-                if (result.Count >= 10) break;
-            }
-
-            return result;
+        private bool ValidateMergedCandidates(List<SectionArrangement> candidates, double reqArea, double tolerance)
+        {
+            if (reqArea <= 0.01) return true;
+            if (candidates == null || candidates.Count == 0) return false;
+            return candidates.Any(a => a.TotalArea >= reqArea * (1 - tolerance));
         }
 
         #endregion
 
-        #region Additional Constraints
+        #region Additional Constraints (Stirrup & Vertical)
 
         private void ApplyStirrupCompatibility(List<DesignSection> sections)
         {
@@ -316,15 +287,12 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             foreach (var section in sections)
             {
                 var validTopBotPairs = new List<(SectionArrangement top, SectionArrangement bot)>();
-
                 foreach (var topArr in section.ValidArrangementsTop)
                 {
                     foreach (var botArr in section.ValidArrangementsBot)
                     {
                         if (IsStirrupCompatible(topArr, botArr, section))
-                        {
                             validTopBotPairs.Add((topArr, botArr));
-                        }
                     }
                 }
 
@@ -333,13 +301,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     var validTops = validTopBotPairs.Select(c => c.top).Distinct().ToList();
                     var validBots = validTopBotPairs.Select(c => c.bot).Distinct().ToList();
 
-                    section.ValidArrangementsTop = section.ValidArrangementsTop
-                        .Where(a => validTops.Any(v => v.Equals(a)))
-                        .ToList();
-
-                    section.ValidArrangementsBot = section.ValidArrangementsBot
-                        .Where(a => validBots.Any(v => v.Equals(a)))
-                        .ToList();
+                    section.ValidArrangementsTop = section.ValidArrangementsTop.Intersect(validTops).ToList();
+                    section.ValidArrangementsBot = section.ValidArrangementsBot.Intersect(validBots).ToList();
                 }
             }
         }
@@ -347,17 +310,11 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         private bool IsStirrupCompatible(SectionArrangement topArr, SectionArrangement botArr, DesignSection section)
         {
             if (topArr.TotalCount == 0 && botArr.TotalCount == 0) return true;
-
             int topCount = topArr.TotalCount;
             int botCount = botArr.TotalCount;
-
-            int legs = _settings.Stirrup?.GetLegCount(
-                Math.Max(topCount, botCount),
-                hasAddon: topCount > 2 || botCount > 2) ?? 2;
-
+            int legs = _settings.Stirrup?.GetLegCount(Math.Max(topCount, botCount), topCount > 2 || botCount > 2) ?? 2;
             int cells = legs - 1;
             if (cells <= 0) return topCount <= 2 && botCount <= 2;
-
             int maxBars = 2 * cells + 2;
             return topCount <= maxBars && botCount <= maxBars;
         }
@@ -366,23 +323,18 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             if (_settings.Beam?.PreferVerticalAlignment != true) return;
 
-            // CRITICAL: Lấy penalty từ Settings thay vì hardcode
             double alignmentPenalty = _settings.Rules?.AlignmentPenaltyScore ?? 25.0;
-            // Scale penalty to 0-10 range for arrangement scoring (arrangements use 0-100 scale)
-            double scaledPenalty = alignmentPenalty / 5.0; // 25 → 5 points
+            double scaledPenalty = alignmentPenalty / 5.0;
 
             foreach (var section in sections)
             {
                 var alignedPairs = new List<(SectionArrangement top, SectionArrangement bot)>();
-
                 foreach (var topArr in section.ValidArrangementsTop)
                 {
                     foreach (var botArr in section.ValidArrangementsBot)
                     {
                         if (topArr.IsEvenCount == botArr.IsEvenCount)
-                        {
                             alignedPairs.Add((topArr, botArr));
-                        }
                     }
                 }
 
@@ -392,30 +344,21 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     var alignedBots = alignedPairs.Select(p => p.bot).Distinct().ToList();
 
                     foreach (var arr in section.ValidArrangementsTop)
-                    {
-                        if (!alignedTops.Any(v => v.Equals(arr)))
-                        {
-                            arr.Score = Math.Max(0, arr.Score - scaledPenalty);
-                        }
-                    }
+                        if (!alignedTops.Contains(arr)) arr.Score = Math.Max(0, arr.Score - scaledPenalty);
 
                     foreach (var arr in section.ValidArrangementsBot)
-                    {
-                        if (!alignedBots.Any(v => v.Equals(arr)))
-                        {
-                            arr.Score = Math.Max(0, arr.Score - scaledPenalty);
-                        }
-                    }
+                        if (!alignedBots.Contains(arr)) arr.Score = Math.Max(0, arr.Score - scaledPenalty);
                 }
             }
         }
 
         #endregion
 
-        #region Validation
+        #region Validation & Helpers
 
         private bool ValidateAllSectionsHaveOptions(List<DesignSection> sections)
         {
+            bool allOk = true;
             foreach (var section in sections)
             {
                 bool topOk = section.ReqTop <= 0.01 || section.ValidArrangementsTop.Count > 0;
@@ -423,22 +366,16 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
                 if (!topOk || !botOk)
                 {
-                    Utils.RebarLogger.LogError($"Section {section.SectionId} has no valid arrangements: TopOK={topOk}, BotOK={botOk}");
-                    return false;
+                    Utils.RebarLogger.LogError($"Section {section.SectionId} has no valid arrangements post-merge: TopOK={topOk}, BotOK={botOk}");
+                    allOk = false;
                 }
             }
-
-            return true;
+            return allOk;
         }
-
-        #endregion
-
-        #region Helpers
 
         private SectionArrangement CloneArrangement(SectionArrangement source)
         {
             if (source == null) return SectionArrangement.Empty;
-
             return new SectionArrangement
             {
                 TotalCount = source.TotalCount,
