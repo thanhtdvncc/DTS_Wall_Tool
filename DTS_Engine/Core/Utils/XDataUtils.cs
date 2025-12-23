@@ -329,7 +329,8 @@ namespace DTS_Engine.Core.Utils
             string[] webBarString,
             string belongToGroup = null,
             string beamType = null,
-            string selectedDesignJson = null)
+            string selectedDesignJson = null,
+            string backboneOptionsJson = null)  // FIX: Add BackboneOptions persistence
         {
             if (obj == null || tr == null) return;
 
@@ -377,6 +378,13 @@ namespace DTS_Engine.Core.Utils
             if (!string.IsNullOrEmpty(selectedDesignJson))
             {
                 dict["SelectedDesignJson"] = selectedDesignJson;
+            }
+
+            // FIX: Persist BackboneOptions (all calculation proposals)
+            // This ensures Viewer shows calculation results when reopening
+            if (!string.IsNullOrEmpty(backboneOptionsJson))
+            {
+                dict["BackboneOptionsJson"] = backboneOptionsJson;
             }
 
             // Legacy meta

@@ -2201,6 +2201,19 @@
                         drawInfoLabel(ctx, topRatio.text, cx, reqTopY, '#b91c1c', topRatio.isDeficit);
                         drawInfoLabel(ctx, botRatio.text, cx, reqBotY, '#1d4ed8', botRatio.isDeficit);
                     }
+                } else if (canvasMode === 'section') {
+                    // FIX: Section mode - display As_req labels (like Long mode but view-only)
+                    const reqTopY = beamY - 24;
+                    const reqBotY = beamY + BEAM_HEIGHT + 24;
+                    const posNames = ['L', 'M', 'R'];
+                    for (let li = 0; li < labelXs.length; li++) {
+                        const cx = labelXs[li];
+                        const pn = posNames[li];
+                        const topRatio = getAsRatioResult(span, 'Top', pn);
+                        const botRatio = getAsRatioResult(span, 'Bot', pn);
+                        drawInfoLabel(ctx, topRatio.text, cx, reqTopY, '#b91c1c', topRatio.isDeficit);
+                        drawInfoLabel(ctx, botRatio.text, cx, reqBotY, '#1d4ed8', botRatio.isDeficit);
+                    }
                 } else if (canvasMode === 'shear') {
                     // Shear-web mode: editable stirrup labels (provided) outside beam
                     const stirrupY = beamY + BEAM_HEIGHT + 22;

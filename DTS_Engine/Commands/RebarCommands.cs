@@ -822,6 +822,18 @@ namespace DTS_Engine.Commands
                                 catch { /* Ignore serialization errors */ }
                             }
 
+                            // FIX: Serialize BackboneOptions (only for first span - it's group-level data)
+                            // This ensures Viewer shows calculation results when reopening
+                            string backboneOptionsJson = null;
+                            if (i == 0 && group.BackboneOptions != null && group.BackboneOptions.Count > 0)
+                            {
+                                try
+                                {
+                                    backboneOptionsJson = Newtonsoft.Json.JsonConvert.SerializeObject(group.BackboneOptions);
+                                }
+                                catch { /* Ignore serialization errors */ }
+                            }
+
                             // Write to XData
                             XDataUtils.UpdateBeamSolutionXData(
                                 obj,
@@ -832,7 +844,8 @@ namespace DTS_Engine.Commands
                                 webStrings,
                                 group.GroupName,
                                 group.GroupType,
-                                selectedDesignJson);
+                                selectedDesignJson,
+                                backboneOptionsJson);  // Add new parameter
 
                             // Mark as manually modified if applicable
                             if (span.IsManualModified)
@@ -1098,6 +1111,25 @@ namespace DTS_Engine.Commands
                             if (design != null)
                             {
                                 group.SelectedDesign = design;
+                            }
+                        }
+                    }
+                    catch { /* Ignore deserialization errors */ }
+                }
+
+                // FIX: Restore BackboneOptions from first span (group-level data)
+                // This ensures Viewer shows calculation results when reopening
+                if (i == 0 && rawData.TryGetValue("BackboneOptionsJson", out var optionsJson) && optionsJson != null)
+                {
+                    try
+                    {
+                        string json = optionsJson.ToString();
+                        if (!string.IsNullOrEmpty(json))
+                        {
+                            var options = Newtonsoft.Json.JsonConvert.DeserializeObject<List<ContinuousBeamSolution>>(json);
+                            if (options != null && options.Count > 0)
+                            {
+                                group.BackboneOptions = options;
                             }
                         }
                     }
