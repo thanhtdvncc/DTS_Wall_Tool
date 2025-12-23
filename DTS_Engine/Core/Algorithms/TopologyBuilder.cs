@@ -307,8 +307,33 @@ namespace DTS_Engine.Core.Algorithms
             var motherBeamData = first.ElementData as BeamData;
             string groupLabel = motherBeamData?.GroupLabel;
             string groupTypeFromXData = motherBeamData?.GroupType;
+            string axisName = motherBeamData?.AxisName;
+            string groupDisplayName = null; // Will be populated from NOD if available
 
-            // Fallback to width-based classification if not in XData
+            // === NOD FALLBACK: Try registry if XData is missing ===
+            if (string.IsNullOrEmpty(groupLabel))
+            {
+                try
+                {
+                    using (var tr = Utils.AcadUtils.Db.TransactionManager.StartTransaction())
+                    {
+                        var regInfo = Engines.RegistryEngine.LookupBeamGroup(first.Handle, tr);
+                        if (regInfo != null)
+                        {
+                            groupLabel = regInfo.Name;
+                            groupDisplayName = regInfo.GroupName;
+                            if (string.IsNullOrEmpty(groupTypeFromXData))
+                                groupTypeFromXData = regInfo.GroupType;
+                            if (string.IsNullOrEmpty(axisName))
+                                axisName = regInfo.AxisName;
+                        }
+                        tr.Commit();
+                    }
+                }
+                catch { /* Silent fallback - continue without NOD data */ }
+            }
+
+            // Fallback to width-based classification if not in XData or NOD
             string groupType = !string.IsNullOrEmpty(groupTypeFromXData)
                 ? groupTypeFromXData
                 : (avgWidth >= girderThreshold ? "Girder" : "Beam");

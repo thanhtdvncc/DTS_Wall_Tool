@@ -461,7 +461,9 @@ namespace DTS_Engine.Commands
             UsingTransaction(tr =>
             {
                 // Step 1: Build topology graph (L->R sorted, Star Topology)
-                var allTopologies = topologyBuilder.BuildGraph(selectedIds, tr, autoEstablishLinks: true);
+                // HOTFIX: autoEstablishLinks = false to prevent geometry algorithm from 
+                // reconnecting beams that already have XData links (prevents Giant Group bug)
+                var allTopologies = topologyBuilder.BuildGraph(selectedIds, tr, autoEstablishLinks: false);
 
                 if (allTopologies.Count == 0)
                 {

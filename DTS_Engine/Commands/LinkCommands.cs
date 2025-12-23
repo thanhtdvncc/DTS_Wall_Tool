@@ -1382,7 +1382,13 @@ namespace DTS_Engine.Commands
                                     IsSingleBeam = sortedGroup.Count == 1, // Mark single-beam groups
                                     // Store geometry center for NamingEngine sorting
                                     GeometryCenterX = sortedGroup.Average(b => b.CenterX),
-                                    GeometryCenterY = sortedGroup.Average(b => b.CenterY)
+                                    GeometryCenterY = sortedGroup.Average(b => b.CenterY),
+                                    // Generate axis-based GroupName for display (Phase 3)
+                                    GroupName = Core.Utils.GridUtils.GenerateGroupDisplayName(
+                                        groupType,
+                                        isXDirection ? "X" : "Y",
+                                        majorityAxisName,
+                                        sortedGroup.Count)
                                 };
 
                                 allBeamGroups.Add(beamGroup);
@@ -1454,8 +1460,23 @@ namespace DTS_Engine.Commands
                                     XDataUtils.WriteElementData(motherObj, beamData, tr);
                                 }
                             }
+
+                            // === DUAL-WRITE: Sync to NOD Registry ===
+                            // This provides redundant storage for self-healing capabilities
+                            Core.Engines.RegistryEngine.RegisterBeamGroup(
+                                motherHandle: motherHandle,
+                                groupName: group.GroupName,
+                                name: group.Name,
+                                groupType: group.GroupType,
+                                direction: group.Direction,
+                                axisName: group.AxisName,
+                                levelZ: group.LevelZ,
+                                width: group.Width,
+                                height: group.Height,
+                                childHandles: group.EntityHandles.Skip(1).ToList(),
+                                tr: tr);
                         }
-                        WriteMessage($"  → Đã lưu tên nhóm vào XData của các Mother beams.");
+                        WriteMessage($"  → Đã lưu tên nhóm vào XData + NOD Registry.");
                     }
                 });
 

@@ -213,6 +213,7 @@
     <Compile Include="Core\Data\SyncStatus.cs" />
     <Compile Include="Core\Data\WallData.cs" />
     <Compile Include="Core\Engines\AuditEngine.cs" />
+    <Compile Include="Core\Engines\RegistryEngine.cs" />
     <Compile Include="Core\Engines\LoadCalculator.cs" />
     <Compile Include="Core\Engines\MappingEngine.cs" />
     <Compile Include="Core\Engines\ModelInventory.cs" />
@@ -248,6 +249,7 @@
     <Compile Include="Core\Utils\UnitManager.cs" />
     <Compile Include="Core\Utils\VisualUtils.cs" />
     <Compile Include="Core\Utils\XDataUtils.cs" />
+    <Compile Include="Core\Utils\GridUtils.cs" />
     <Compile Include="Core\Utils\RebarXDataBridge.cs" />
     <Compile Include="DataStructures\SpatialHash.cs" />
     <Compile Include="Models\AxisLine.cs" />
