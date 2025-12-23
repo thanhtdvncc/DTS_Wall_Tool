@@ -575,7 +575,12 @@
                 renderPlanView();
             } else {
                 storyContainer.classList.add('hidden');
+                // FIX: Reset zoom/pan and auto-center when switching modes
+                canvasZoom = 1.0;
+                canvasPanX = 0;
+                canvasPanY = 0;
                 renderCanvas();
+                centerCanvas();  // Auto-center view
             }
         }
 
@@ -639,7 +644,27 @@
 
         function loadStory(z) {
             Beam.State.currentStoryZ = parseFloat(z);
+
+            // FIX: Re-populate group dropdown to show only groups on this story
+            populateGroupSelect();
+
+            // Load first group on this story if any
+            const groupsOnStory = getGroupsOnCurrentStory();
+            if (groupsOnStory.length > 0) {
+                loadGroup(groupsOnStory[0].originalIndex);
+            }
+
             renderPlanView();
+        }
+
+        // Helper: Get groups on current story
+        function getGroupsOnCurrentStory() {
+            const z = Beam.State.currentStoryZ;
+            const Z_TOL = 500;
+            if (!data.groups) return [];
+            return data.groups
+                .map((g, i) => ({ ...g, originalIndex: i }))
+                .filter(g => Math.abs((g.LevelZ || 0) - z) < Z_TOL);
         }
 
         function renderPlanView() {
@@ -720,10 +745,8 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             // Draw grid lines from AutoCAD layer (dts_axis)
-            const gridsOnStory = (data.allGrids || []).filter(g => {
-                const gridZ = g.Z || 0;
-                return Math.abs(gridZ - z) < Z_TOLERANCE;
-            });
+            // FIX: Grid/axis lines are reference lines - display on ALL stories (no Z filter)
+            const gridsToDisplay = data.allGrids || [];
 
             ctx.strokeStyle = '#cbd5e1';
             ctx.lineWidth = 1;
@@ -731,7 +754,7 @@
             ctx.font = '10px sans-serif';
             ctx.fillStyle = '#64748b';
 
-            gridsOnStory.forEach(grid => {
+            gridsToDisplay.forEach(grid => {
                 ctx.beginPath();
                 ctx.moveTo(tx(grid.StartX), ty(grid.StartY));
                 ctx.lineTo(tx(grid.EndX), ty(grid.EndY));
@@ -792,10 +815,11 @@
                 ctx.stroke();
             });
 
-            // Draw columns from AutoCAD layer (dts_point)
+            // Draw columns from AutoCAD layer (dts_point) 
+            // FIX: Use same Z_TOLERANCE (500mm) as beam filtering for consistency
             const columnsOnStory = (data.allColumns || []).filter(col => {
                 const colZ = col.Z || 0;
-                return Math.abs(colZ - z) < Z_TOLERANCE;
+                return Math.abs(colZ - z) < Z_TOLERANCE;  // Use same tolerance as beams
             });
 
             columnsOnStory.forEach(col => {
@@ -1328,6 +1352,17 @@
                 console.log('Single beam mode - no groups to display');
                 return;
             }
+            // FIX: Auto-set story from first group's LevelZ (elements selected from AutoCAD)
+            if (data.groups && data.groups.length > 0) {
+                const firstGroupZ = data.groups[0].LevelZ || 0;
+                // Round to match story grouping tolerance
+                const roundedZ = Math.round(firstGroupZ / 500) * 500;
+                Beam.State.currentStoryZ = roundedZ;
+
+                // Update story dropdown to match
+                const storySelect = document.getElementById('storySelect');
+                if (storySelect) storySelect.value = roundedZ;
+            }
 
             populateGroupSelect();
             if (data.groups && data.groups.length > 0) {
@@ -1339,12 +1374,26 @@
             const sel = document.getElementById('groupSelect');
             sel.innerHTML = '';
             if (!data.groups) return;
+
+            // FIX: Filter groups by current story Z (Plan View mode)
+            const z = Beam.State.currentStoryZ;
+            const Z_TOL = 500;
+
             data.groups.forEach((g, i) => {
+                const groupZ = g.LevelZ || 0;
+                // Only show groups that match current story
+                if (z != null && Math.abs(groupZ - z) >= Z_TOL) return;
+
                 const opt = document.createElement('option');
-                opt.value = i;
+                opt.value = i;  // Original index in data.groups
                 opt.textContent = `${g.GroupName || 'Group ' + (i + 1)} (${g.Spans?.length || 0} nhịp)`;
                 sel.appendChild(opt);
             });
+
+            // If current group is not on this story, select first available
+            if (sel.options.length > 0 && !Array.from(sel.options).some(o => o.value == currentGroupIndex)) {
+                // Current group not visible, switch to first
+            }
         }
 
         function loadGroup(index) {

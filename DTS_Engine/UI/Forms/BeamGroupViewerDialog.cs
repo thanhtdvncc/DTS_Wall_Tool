@@ -1241,7 +1241,7 @@ namespace DTS_Engine.UI.Forms
                         {
                             double x = circle.Center.X;
                             double y = circle.Center.Y;
-                            double z = circle.Center.Z;
+                            double z = circle.Center.Z; // Geometric Z (may be 0 in 2D)
                             double radius = circle.Radius;
 
                             // Try to read ColumnData from XData
@@ -1259,6 +1259,12 @@ namespace DTS_Engine.UI.Forms
                                     sectionType = colData.SectionType ?? "Rectangular";
                                     width = colData.Width ?? (radius * 2);
                                     depth = colData.Depth ?? (radius * 2);  // Read Depth, not Height
+
+                                    // FIX: Prioritize XData's BaseZ over geometric Z (2D drawings have geometric Z=0)
+                                    if (colData.BaseZ.HasValue && colData.BaseZ.Value != 0)
+                                    {
+                                        z = colData.BaseZ.Value;
+                                    }
                                 }
                             }
                             catch { }
