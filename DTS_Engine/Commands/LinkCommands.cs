@@ -1227,7 +1227,9 @@ namespace DTS_Engine.Commands
                             Height = beamData?.Depth ?? beamData?.Height ?? 400,
                             SupportI = beamData?.SupportI ?? 1,
                             SupportJ = beamData?.SupportJ ?? 1,
-                            ResultData = rebarData
+                            ResultData = rebarData,
+                            // FIX: Store XData's BaseZ for correct story grouping (2D drawings have geometric Z=0)
+                            BaseZ = beamData?.BaseZ
                         };
 
                         beamGeometries.Add(geom);
@@ -1262,8 +1264,16 @@ namespace DTS_Engine.Commands
                     const double Z_TOLERANCE = 500; // mm - tolerance cho cùng tầng
 
                     // 3.1. Nhóm theo Story (Z elevation)
+                    // FIX: Prioritize XData's BaseZ over geometric Z (2D drawings have geometric Z=0)
                     var storyGroups = beamGeometries
-                        .GroupBy(b => System.Math.Round((b.StartZ + b.EndZ) / 2 / Z_TOLERANCE) * Z_TOLERANCE)
+                        .GroupBy(b =>
+                        {
+                            // Use BaseZ from XData if available and non-zero
+                            if (b.BaseZ.HasValue && b.BaseZ.Value != 0)
+                                return System.Math.Round(b.BaseZ.Value / Z_TOLERANCE) * Z_TOLERANCE;
+                            // Fallback to geometric Z
+                            return System.Math.Round((b.StartZ + b.EndZ) / 2 / Z_TOLERANCE) * Z_TOLERANCE;
+                        })
                         .OrderBy(g => g.Key)
                         .ToList();
 

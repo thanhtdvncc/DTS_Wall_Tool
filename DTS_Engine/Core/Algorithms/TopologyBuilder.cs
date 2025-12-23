@@ -201,6 +201,18 @@ namespace DTS_Engine.Core.Algorithms
                 // Xác định hướng geometry (L->R hay R->L)
                 bool isGeometryReversed = startPt.X > endPt.X;
 
+                // FIX: Prioritize XData's BaseZ over geometric Z (2D drawings have Z=0 in geometry)
+                double levelZ = 0;
+                if (elemData is BeamData beamDataZ && beamDataZ.BaseZ.HasValue && beamDataZ.BaseZ.Value != 0)
+                {
+                    levelZ = beamDataZ.BaseZ.Value;
+                }
+                else
+                {
+                    // Fallback to geometric Z
+                    levelZ = Math.Round((startPt.Z + endPt.Z) / 2.0 / Z_TOLERANCE) * Z_TOLERANCE;
+                }
+
                 // Tính toán các thông số
                 var topology = new BeamTopology
                 {
@@ -211,7 +223,7 @@ namespace DTS_Engine.Core.Algorithms
                     MidPoint = startPt + (endPt - startPt) * 0.5,
                     Length = curve.GetDistanceAtParameter(curve.EndParam),
                     IsGeometryReversed = isGeometryReversed,
-                    LevelZ = Math.Round((startPt.Z + endPt.Z) / 2.0 / Z_TOLERANCE) * Z_TOLERANCE,
+                    LevelZ = levelZ,
 
                     // Thông tin từ XData
                     ElementData = elemData,

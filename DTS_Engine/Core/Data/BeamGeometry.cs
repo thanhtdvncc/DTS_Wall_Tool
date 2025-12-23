@@ -39,6 +39,12 @@ namespace DTS_Engine.Core.Data
         /// <summary>End point Z (mm) - for story matching</summary>
         public double EndZ { get; set; }
 
+        /// <summary>
+        /// Base Z from XData (if available). Prioritized over geometric Z for 2D drawings.
+        /// This value comes from BeamData.BaseZ (e.g., 11700mm = Story 4).
+        /// </summary>
+        public double? BaseZ { get; set; }
+
         /// <summary>Section width (mm)</summary>
         public double Width { get; set; }
 

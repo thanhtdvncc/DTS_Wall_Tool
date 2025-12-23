@@ -1346,34 +1346,51 @@ namespace DTS_Engine.UI.Forms
                         string handle = ent.Handle.ToString();
                         if (capturedHandles.Contains(handle)) continue;
 
-                        // Z Level check
+                        // Z Level check - FIX: Prioritize XData's BaseZ over geometric Z (2D drawings have geometric Z=0)
                         double z = 0;
-                        if (ent is Line line) z = line.StartPoint.Z;
-                        else if (ent is Polyline pl) z = pl.Elevation;
-                        else if (ent is Polyline2d pl2) z = pl2.Elevation;
-                        else continue; // Skip other curves
 
-                        // Tolerance 100mm
-                        if (!targetLevels.Any(lvl => Math.Abs(lvl - z) < 100)) continue;
+                        // First try to get Z from XData
+                        BeamData beamData = null;
+                        try
+                        {
+                            beamData = XDataUtils.ReadElementData(ent) as BeamData;
+                            if (beamData?.BaseZ != null && beamData.BaseZ.Value != 0)
+                            {
+                                z = beamData.BaseZ.Value;
+                            }
+                            else
+                            {
+                                // Fallback to geometric Z
+                                if (ent is Line line) z = line.StartPoint.Z;
+                                else if (ent is Polyline pl) z = pl.Elevation;
+                                else if (ent is Polyline2d pl2) z = pl2.Elevation;
+                                else continue; // Skip other curves
+                            }
+                        }
+                        catch
+                        {
+                            // Fallback to geometric Z on error
+                            if (ent is Line line) z = line.StartPoint.Z;
+                            else if (ent is Polyline pl) z = pl.Elevation;
+                            else if (ent is Polyline2d pl2) z = pl2.Elevation;
+                            else continue;
+                        }
+
+                        // Tolerance 500mm (match story grouping tolerance)
+                        if (!targetLevels.Any(lvl => Math.Abs(lvl - z) < 500)) continue;
 
                         // Extract info for Neighbor
                         string groupName = "";
                         double width = 200;
                         double height = 400;
 
-                        // Try read XData
-                        try
+                        // Use already-read beamData if available
+                        if (beamData != null)
                         {
-                            var beamData = XDataUtils.ReadElementData(ent) as BeamData;
-                            if (beamData != null)
-                            {
-                                // Fix: Handle potential missing GroupDisplayName and nullable types
-                                groupName = beamData.GroupLabel ?? "";
-                                if (beamData.Width.HasValue) width = beamData.Width.Value;
-                                if (beamData.Height.HasValue) height = beamData.Height.Value;
-                            }
+                            groupName = beamData.GroupLabel ?? "";
+                            if (beamData.Width.HasValue) width = beamData.Width.Value;
+                            if (beamData.Height.HasValue) height = beamData.Height.Value;
                         }
-                        catch { }
 
                         // Extract Geometry
                         double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
