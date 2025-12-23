@@ -340,11 +340,16 @@ namespace DTS_Engine.Core.Algorithms
 
             var group = new BeamGroup
             {
-                // Use GroupLabel from XData (from NamingEngine), fallback to Handle-based name
-                GroupName = !string.IsNullOrEmpty(groupLabel) ? groupLabel : $"{groupType}_{first.Handle}",
-                Name = groupLabel, // Also set Name for compatibility
+                // FIX: Use axis-based GroupName for display, Label for rebar grouping
+                // Priority: groupDisplayName (from NOD) > auto-generate > Handle fallback
+                // groupLabel (NamingEngine) goes to Name property only
+                GroupName = !string.IsNullOrEmpty(groupDisplayName)
+                    ? groupDisplayName
+                    : $"{groupType} [{axisName ?? first.Handle}] @Z={first.LevelZ:F0}",
+                Name = groupLabel, // Label from NamingEngine (like "1GHY5") for rebar grouping
                 GroupType = groupType,
                 Direction = direction,
+                AxisName = axisName, // Also store axis name for reference
                 Width = avgWidth,
                 Height = topologies.Average(t => t.Height),
                 TotalLength = topologies.Sum(t => t.Length) / 1000.0, // mm -> m

@@ -751,7 +751,9 @@
 
             // Draw beams
             beamsOnStory.forEach(b => {
-                const isSelected = currentGroup?.GroupName === b.GroupName;
+                // FIX: Use EntityHandles membership instead of GroupName string matching
+                // This prevents highlighting ALL beams with same label
+                const isSelected = currentGroup?.EntityHandles?.includes(b.Handle) || false;
                 ctx.strokeStyle = isSelected ? '#3b82f6' : '#475569';
                 ctx.lineWidth = isSelected ? 4 : 2;
                 ctx.beginPath();

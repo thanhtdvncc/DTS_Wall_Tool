@@ -149,6 +149,16 @@ namespace DTS_Engine.UI.Forms
 
                                     foreach (var seg in span.Segments)
                                     {
+                                        // === FIX: Use GroupName (display) NOT Name (label) ===
+                                        // GroupName = axis-based display name ("GX-B (3 spans)")
+                                        // Name = Label for rebar grouping ("1GHY4")
+                                        // GroupId = unique identifier (mother handle) for matching
+                                        string displayName = !string.IsNullOrEmpty(group.GroupName)
+                                            ? group.GroupName
+                                            : (!string.IsNullOrEmpty(group.Name) ? group.Name : $"Group_{group.EntityHandles?.FirstOrDefault() ?? ""}");
+
+                                        string groupId = group.EntityHandles?.FirstOrDefault() ?? "";
+
                                         allBeams.Add(new
                                         {
                                             Handle = seg.EntityHandle,
@@ -160,7 +170,8 @@ namespace DTS_Engine.UI.Forms
                                             Width = group.Width,
                                             Height = group.Height,
                                             LevelZ = group.LevelZ,
-                                            GroupName = !string.IsNullOrEmpty(group.Name) ? group.Name : (group.GroupName ?? "")
+                                            GroupName = displayName,  // For dropdown display
+                                            GroupId = groupId         // For unique matching
                                         });
                                     }
                                 }
