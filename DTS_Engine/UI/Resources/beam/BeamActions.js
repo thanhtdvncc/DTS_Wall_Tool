@@ -78,6 +78,8 @@
 
         /**
          * Apply selected option to spans (only if not user-edited)
+         * FIX 1.5: Sync backbone strings across ALL 3 zones (Left, Mid, Right)
+         * This ensures XData persistence works correctly
          */
         applyOptionToSpans() {
             const beamState = global.Beam?.State;
@@ -86,20 +88,33 @@
 
             if (!group?.Spans?.length || !opt) return;
 
+            // Format backbone strings
             const backboneTop = `${opt.BackboneCount_Top || 2}D${opt.BackboneDiameter || opt.BackboneDiameter_Top || 20}`;
             const backboneBot = `${opt.BackboneCount_Bot || 2}D${opt.BackboneDiameter || opt.BackboneDiameter_Bot || 20}`;
 
             group.Spans.forEach(span => {
                 // Only apply if span was NOT manually edited by user
                 if (!span._userEdited && !span.IsManualModified) {
+                    // Initialize arrays if needed
                     if (!span.TopRebar) span.TopRebar = [[], [], []];
                     if (!span.BotRebar) span.BotRebar = [[], [], []];
-                    
-                    // Layer 0, Zone 0 = backbone
-                    span.TopRebar[0] = span.TopRebar[0] || [];
-                    span.BotRebar[0] = span.BotRebar[0] || [];
-                    span.TopRebar[0][0] = backboneTop;
-                    span.BotRebar[0][0] = backboneBot;
+
+                    // Ensure layer 0 array exists
+                    if (!span.TopRebar[0]) span.TopRebar[0] = [];
+                    if (!span.BotRebar[0]) span.BotRebar[0] = [];
+
+                    // FIX 1.5: Set backbone for ALL 3 zones (Left=0, Mid=1, Right=2)
+                    // This ensures C# XData write gets correct data for all positions
+                    span.TopRebar[0][0] = backboneTop;  // Left zone
+                    span.TopRebar[0][1] = backboneTop;  // Mid zone
+                    span.TopRebar[0][2] = backboneTop;  // Right zone
+                    span.BotRebar[0][0] = backboneBot;  // Left zone
+                    span.BotRebar[0][1] = backboneBot;  // Mid zone
+                    span.BotRebar[0][2] = backboneBot;  // Right zone
+
+                    // Also update visual properties for renderer
+                    span.TopBackbone = { Count: opt.BackboneCount_Top, Diameter: opt.BackboneDiameter || opt.BackboneDiameter_Top };
+                    span.BotBackbone = { Count: opt.BackboneCount_Bot, Diameter: opt.BackboneDiameter || opt.BackboneDiameter_Bot };
                 }
             });
         },
@@ -140,7 +155,7 @@
 
             // 1. Deep clone the selected option
             const lockedDesign = JSON.parse(JSON.stringify(opt));
-            
+
             // 2. CRITICAL: Capture current span edits into the locked design
             lockedDesign._capturedSpans = [];
             if (group.Spans) {
@@ -179,7 +194,7 @@
 
             // 5. Notify C# with groupIndex|lockedDesignJson format
             // Format expected by C#: LOCK_DESIGN|groupIndex|lockedDesignJson
-            this.sendToHost('LOCK_DESIGN', 
+            this.sendToHost('LOCK_DESIGN',
                 `${beamState.currentGroupIndex}|${JSON.stringify(lockedDesign)}`);
         },
 
@@ -193,8 +208,8 @@
 
             group.SelectedDesign = null;
             group.LockedAt = null;
-            beamState.selectedOptionKey = group.BackboneOptions?.length > 0 
-                ? String(group.SelectedBackboneIndex || 0) 
+            beamState.selectedOptionKey = group.BackboneOptions?.length > 0
+                ? String(group.SelectedBackboneIndex || 0)
                 : null;
 
             this.populateOptionDropdown();
@@ -232,8 +247,8 @@
 
             // Restore span data from locked design
             captured.forEach(cs => {
-                const span = group.Spans?.find(s => s.SpanId === cs.SpanId) 
-                          || group.Spans?.[cs.SpanIndex];
+                const span = group.Spans?.find(s => s.SpanId === cs.SpanId)
+                    || group.Spans?.[cs.SpanIndex];
                 if (!span) return;
 
                 if (cs.TopRebar) span.TopRebar = JSON.parse(JSON.stringify(cs.TopRebar));

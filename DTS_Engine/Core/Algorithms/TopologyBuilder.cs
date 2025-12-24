@@ -259,16 +259,26 @@ namespace DTS_Engine.Core.Algorithms
         /// <summary>
         /// [V5.0] Thiết lập Star Topology: S1 (Left-most) là Mother, các entity khác link về S1.
         /// Now also writes GroupIdentity and GroupState to ALL entities for self-sufficiency.
+        /// FIX 1.3R: Always re-establish links to repair stale data.
         /// </summary>
         private void EstablishStarTopology(List<BeamTopology> sortedList, Transaction tr)
         {
             if (sortedList.Count < 1) return;
 
-            // V5.0: Generate unique GroupId for this group
-            string groupId = Guid.NewGuid().ToString();
-
             var motherTopology = sortedList[0]; // S1 = Left-most = Mother
             var motherObj = tr.GetObject(motherTopology.ObjectId, OpenMode.ForWrite);
+
+            // FIX 1.3R: Reuse existing GroupId if available, otherwise generate new
+            string groupId;
+            var (existingGroupId, _) = XDataUtils.ReadGroupIdentity(motherObj);
+            if (!string.IsNullOrEmpty(existingGroupId))
+            {
+                groupId = existingGroupId;  // Reuse existing for consistency
+            }
+            else
+            {
+                groupId = Guid.NewGuid().ToString();  // Generate new
+            }
 
             // V5.0: Write GroupIdentity/GroupState to ALL entities
             for (int i = 0; i < sortedList.Count; i++)
@@ -276,23 +286,19 @@ namespace DTS_Engine.Core.Algorithms
                 var topology = sortedList[i];
                 var obj = tr.GetObject(topology.ObjectId, OpenMode.ForWrite);
 
-                // Write GroupIdentity: GroupId + SpanIndex
+                // Write GroupIdentity: GroupId + SpanIndex (ALWAYS update to ensure correct index)
                 XDataUtils.WriteGroupIdentity(obj, groupId, i, tr);
 
                 // Write GroupState: SelectedIdx=0, IsLocked=false (initial state)
                 XDataUtils.WriteGroupState(obj, selectedIdx: 0, isLocked: false, tr);
 
-                // Establish star topology links for children
+                // FIX 1.3R: ALWAYS establish star topology links for children (removes conditional)
+                // This repairs stale self-references and ensures correct Mother-Child relationships
                 if (i > 0)
                 {
-                    if (topology.OriginHandle != motherTopology.Handle)
-                    {
-                        var result = XDataUtils.RegisterLink(obj, motherObj, isReference: false, tr);
-                        if (result == LinkRegistrationResult.Primary)
-                        {
-                            topology.OriginHandle = motherTopology.Handle;
-                        }
-                    }
+                    // Always call RegisterLink to overwrite any stale OriginHandle
+                    var result = XDataUtils.RegisterLink(obj, motherObj, isReference: false, tr);
+                    topology.OriginHandle = motherTopology.Handle;  // Always update memory state
                 }
             }
 

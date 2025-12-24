@@ -587,6 +587,55 @@ namespace DTS_Engine.UI.Forms
                 group.BackboneOptions = proposals;
                 group.SelectedBackboneIndex = 0;
 
+                // ===== FIX 1.2: PERSIST BackboneOptions TO XDATA IMMEDIATELY =====
+                // This ensures calculation results are saved even if viewer is closed unexpectedly
+                using (doc.LockDocument())
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                {
+                    try
+                    {
+                        // Convert ContinuousBeamSolution to RebarOptionData format
+                        var optionDataList = new List<XDataUtils.RebarOptionData>();
+                        foreach (var sol in proposals)
+                        {
+                            if (sol == null) continue;
+                            string topL0 = $"{sol.BackboneCount_Top}D{sol.BackboneDiameter}";
+                            string botL0 = $"{sol.BackboneCount_Bot}D{sol.BackboneDiameter}";
+                            optionDataList.Add(new XDataUtils.RebarOptionData
+                            {
+                                TopL0 = topL0,
+                                TopL1 = "",  // Addons handled separately
+                                BotL0 = botL0,
+                                BotL1 = ""
+                            });
+                        }
+
+                        // Write options to all entities in group
+                        if (group.EntityHandles != null && group.EntityHandles.Count > 0)
+                        {
+                            foreach (var handle in group.EntityHandles)
+                            {
+                                var objId = Core.Utils.AcadUtils.GetObjectIdFromHandle(handle);
+                                if (objId.IsNull) continue;
+
+                                var obj = tr.GetObject(objId, OpenMode.ForWrite);
+                                if (obj == null) continue;
+
+                                // Write all 5 options to XData (Opt0-4)
+                                XDataUtils.WriteRebarOptions(obj, optionDataList, tr);
+                            }
+                        }
+                        tr.Commit();
+                        DTS_Engine.Core.Algorithms.Rebar.Utils.RebarLogger.Log("[FIX 1.2] BackboneOptions persisted to XData successfully.");
+                    }
+                    catch (Exception persistEx)
+                    {
+                        tr.Abort();
+                        DTS_Engine.Core.Algorithms.Rebar.Utils.RebarLogger.Log($"[FIX 1.2] Failed to persist: {persistEx.Message}");
+                    }
+                }
+                // ===== END FIX 1.2 =====
+
                 // NOTE: ApplySolutionToGroup is already called INSIDE V4RebarCalculator.Calculate()
                 // Do NOT call ApplySolutionToSpanData here to avoid overwriting with potentially
                 // mismatched data. The calculator has already synced SpanResults to Spans.

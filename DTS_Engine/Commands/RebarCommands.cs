@@ -495,15 +495,17 @@ namespace DTS_Engine.Commands
                     {
                         objIds.Add(topo.ObjectId);
 
-                        // Get RebarData (may need to flip if geometry is reversed)
+                        // Get RebarData 
                         var data = topo.RebarData;
                         if (data != null)
                         {
-                            // CRITICAL: Flip data if geometry is R->L
-                            if (topo.IsGeometryReversed)
-                            {
-                                data = FlipBeamResultData(data);
-                            }
+                            // FIX 1.4: REMOVED FlipBeamResultData - TopologyBuilder already sorts L→R
+                            // Double-flip was causing data scrambling
+                            // Old code:
+                            // if (topo.IsGeometryReversed)
+                            // {
+                            //     data = FlipBeamResultData(data);
+                            // }
                             spanResults.Add(data);
                         }
                         else
@@ -1346,11 +1348,12 @@ namespace DTS_Engine.Commands
                 var designData = topo.RebarData;
                 if (designData == null) continue;
 
-                // Flip if geometry reversed
-                if (topo.IsGeometryReversed)
-                {
-                    designData = FlipBeamResultData(designData);
-                }
+                // FIX 1.4: REMOVED FlipBeamResultData - TopologyBuilder already sorts L→R
+                // Old code:
+                // if (topo.IsGeometryReversed)
+                // {
+                //     designData = FlipBeamResultData(designData);
+                // }
 
                 // Update span dimensions from XData
                 if (designData.Width > 0)
