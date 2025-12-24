@@ -35,8 +35,7 @@ namespace DTS_Engine.Core.Utils
 
         // V5.0: Rebar Options Persistence Keys
         public const string KEY_GROUP_IDENTITY = "GroupIdentity";  // "G:ABC123|I:0"
-        public const string KEY_GROUP_STATE = "GroupState";        // "Idx:2|Lock:1"
-        public const string KEY_CALCULATED_AT = "CalculatedAt";
+        // NOTE: KEY_GROUP_STATE và KEY_CALCULATED_AT đã xóa - dùng IsLocked từ WriteIsLocked
         public const string KEY_IS_MANUAL = "IsManual";
 
         #endregion
@@ -159,9 +158,8 @@ namespace DTS_Engine.Core.Utils
                 case "REBAR_DATA":
                     return new BeamResultData();
                 case "REBAR_SOLUTION":
-#pragma warning disable CS0618 // Kept for backward compatibility
-                    return new BeamRebarSolution();
-#pragma warning restore CS0618
+                    // NOTE: BeamRebarSolution đã xóa - dùng BeamResultData thay thế
+                    return new BeamResultData();
                 // Thêm các loại mới ở đây...
                 default:
                     return null;
@@ -231,9 +229,9 @@ namespace DTS_Engine.Core.Utils
             if (dict == null) return null;
 
             // Check if beam data exists (by key presence, not xType)
-            // Include SupportI/SupportJ for Girder detection before SAP result import
-            bool hasRebarData = dict.ContainsKey("TopArea") || dict.ContainsKey("SapElementName");
-            bool hasSupportData = dict.ContainsKey("SupportI") || dict.ContainsKey("xSupport_I");
+            // ISO/IEC 25010: Single Source of Truth - dùng xKeys
+            bool hasRebarData = dict.ContainsKey("TopArea") || dict.ContainsKey("xSapFrameName");
+            bool hasSupportData = dict.ContainsKey("xSupport_I");
             if (!hasRebarData && !hasSupportData)
                 return null;
 
@@ -278,8 +276,7 @@ namespace DTS_Engine.Core.Utils
             if (!string.IsNullOrEmpty(beamType))
                 dict[KEY_BEAM_TYPE] = beamType;
 
-            // Update timestamp
-            dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            // NOTE: Không ghi LastModified - đã loại bỏ
 
             SetRawData(obj, dict, tr);
         }
@@ -315,98 +312,20 @@ namespace DTS_Engine.Core.Utils
             foreach (var kv in updates)
                 dict[kv.Key] = kv.Value;
 
-            if (updateTimestamp)
-                dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            // NOTE: Không ghi LastModified - đã loại bỏ (tham số updateTimestamp bỏ qua)
 
             SetRawData(obj, dict, tr);
         }
-
-        /// <summary>
-        /// XData-first: cập nhật kết quả bố trí thép vào XData của phần tử, nhưng KHÔNG ghi đè các key khác (đặc biệt xType=BEAM).
-        /// Lưu các field: TopRebarString/BotRebarString/StirrupString/WebBarString.
-        /// NOTE: TopAreaProv/BotAreaProv đã được xóa - tính từ RebarString khi cần.
-        /// Đồng thời giữ tương thích ngược bằng cách update các key legacy (TopRebar/BotRebar/Stirrup/SideBar).
-        /// V5: Thêm SelectedDesignJson để persist phương án đã chốt.
-        /// </summary>
-        public static void UpdateBeamSolutionXData(
-            DBObject obj,
-            Transaction tr,
-            string[] topRebarString,
-            string[] botRebarString,
-            string[] stirrupString,
-            string[] webBarString,
-            string belongToGroup = null,
-            string beamType = null,
-            string selectedDesignJson = null,
-            string backboneOptionsJson = null)  // FIX: Add BackboneOptions persistence
-        {
-            if (obj == null || tr == null) return;
-
-            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
-
-            string[] top = null;
-            string[] bot = null;
-            string[] stir = null;
-            string[] web = null;
-
-            if (topRebarString != null)
-            {
-                top = Normalize3(topRebarString);
-                dict["TopRebarString"] = top;
-                // REMOVED: TopAreaProv - calculate from RebarString when needed
-                dict[KEY_TOP_REBAR] = top[1] ?? "";
-            }
-
-            if (botRebarString != null)
-            {
-                bot = Normalize3(botRebarString);
-                dict["BotRebarString"] = bot;
-                // REMOVED: BotAreaProv - calculate from RebarString when needed
-                dict[KEY_BOT_REBAR] = bot[1] ?? "";
-            }
-
-            if (stirrupString != null)
-            {
-                stir = Normalize3(stirrupString);
-                dict["StirrupString"] = stir;
-                dict[KEY_STIRRUP] = stir[1] ?? "";
-            }
-
-            if (webBarString != null)
-            {
-                web = Normalize3(webBarString);
-                dict["WebBarString"] = web;
-                dict[KEY_SIDE_BAR] = web[1] ?? "";
-            }
-
-            if (!string.IsNullOrEmpty(belongToGroup)) dict["BelongToGroup"] = belongToGroup;
-            if (!string.IsNullOrEmpty(beamType)) dict["BeamType"] = beamType;
-
-            // V5: Persist SelectedDesign (backbone info + locked timestamp)
-            if (!string.IsNullOrEmpty(selectedDesignJson))
-            {
-                dict["SelectedDesignJson"] = selectedDesignJson;
-            }
-
-            // FIX: Persist BackboneOptions (all calculation proposals)
-            // This ensures Viewer shows calculation results when reopening
-            if (!string.IsNullOrEmpty(backboneOptionsJson))
-            {
-                dict["BackboneOptionsJson"] = backboneOptionsJson;
-            }
-
-            // Legacy meta
-            if (!string.IsNullOrEmpty(belongToGroup)) dict[KEY_BEAM_GROUP] = belongToGroup;
-            if (!string.IsNullOrEmpty(beamType)) dict[KEY_BEAM_TYPE] = beamType;
-            dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-
-            SetRawData(obj, dict, tr);
-        }
+        // NOTE: UpdateBeamSolutionXData (TopRebarString/BotRebarString/StirrupString/WebBarString) đã xóa
+        // V6.0: Dùng OptUser là Single Source of Truth
 
         /// <summary>
         /// XData-first: cập nhật dữ liệu yêu cầu thép (từ SAP) vào XData của phần tử,
         /// nhưng KHÔNG ghi đè các key layout/solution (TopRebarString/BotRebarString/StirrupString/WebBarString...).
         /// Đồng thời KHÔNG ghi đè xType (thường là BEAM từ DTS_PLOT_FROM_SAP).
+        /// 
+        /// CLEAN v2: Xóa các trường trùng lặp với xSectionName/xWidth/xDepth/xSapFrameName.
+        /// Áp dụng RoundRebarArray cho các area arrays.
         /// </summary>
         public static void UpdateBeamRequiredXData(
             DBObject obj,
@@ -417,34 +336,26 @@ namespace DTS_Engine.Core.Utils
             double[] shearArea,
             double[] ttArea,
             string designCombo = null,
-            string sectionName = null,
-            double? width = null,
-            double? sectionHeight = null,
+            string sectionName = null,      // NOT SAVED - dùng xSectionName
+            double? width = null,            // NOT SAVED - dùng xWidth
+            double? sectionHeight = null,    // NOT SAVED - dùng xDepth
             double? torsionFactorUsed = null,
-            string sapElementName = null,
-            string mappingSource = null)
+            string sapElementName = null,    // NOT SAVED - dùng xSapFrameName
+            string mappingSource = null)     // NOT SAVED - không cần thiết
         {
             if (obj == null || tr == null) return;
 
             var dict = GetRawData(obj) ?? new Dictionary<string, object>();
 
-            if (topArea != null) dict["TopArea"] = RoundArray8(Normalize3(topArea));
-            if (botArea != null) dict["BotArea"] = RoundArray8(Normalize3(botArea));
-            if (torsionArea != null) dict["TorsionArea"] = RoundArray8(Normalize3(torsionArea));
-            if (shearArea != null) dict["ShearArea"] = RoundArray8(Normalize3(shearArea));
-            if (ttArea != null) dict["TTArea"] = RoundArray8(Normalize3(ttArea));
+            // CLEAN: Sử dụng RoundRebarArray (2 chữ số nếu >=1, 4 chữ số nếu <1)
+            if (topArea != null) dict["TopArea"] = RoundRebarArray(Normalize3(topArea));
+            if (botArea != null) dict["BotArea"] = RoundRebarArray(Normalize3(botArea));
+            if (torsionArea != null) dict["TorsionArea"] = RoundRebarArray(Normalize3(torsionArea));
+            if (shearArea != null) dict["ShearArea"] = RoundRebarArray(Normalize3(shearArea));
+            if (ttArea != null) dict["TTArea"] = RoundRebarArray(Normalize3(ttArea));
 
-            if (!string.IsNullOrEmpty(designCombo)) dict["DesignCombo"] = designCombo;
+            // NOTE: DesignCombo và TorsionFactorUsed không còn được ghi vào XData
 
-            if (!string.IsNullOrEmpty(sectionName)) dict["SectionName"] = sectionName;
-            if (width.HasValue) dict["Width"] = Math.Round(width.Value, 8);
-            if (sectionHeight.HasValue) dict["SectionHeight"] = Math.Round(sectionHeight.Value, 8);
-            if (torsionFactorUsed.HasValue) dict["TorsionFactorUsed"] = Math.Round(torsionFactorUsed.Value, 8);
-
-            if (!string.IsNullOrEmpty(sapElementName)) dict["SapElementName"] = sapElementName;
-            if (!string.IsNullOrEmpty(mappingSource)) dict["MappingSource"] = mappingSource;
-
-            dict[KEY_LAST_MODIFIED] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             SetRawData(obj, dict, tr);
         }
 
@@ -463,6 +374,27 @@ namespace DTS_Engine.Core.Utils
             var res = new double[arr.Length];
             for (int i = 0; i < arr.Length; i++)
                 res[i] = Math.Round(arr[i], 8);
+            return res;
+        }
+
+        /// <summary>
+        /// SMART ROUNDING for rebar area values.
+        /// Rule: <1 → 4 decimal places, ≥1 → 2 decimal places
+        /// </summary>
+        private static double[] RoundRebarArray(double[] arr)
+        {
+            if (arr == null) return null;
+            var res = new double[arr.Length];
+            for (int i = 0; i < arr.Length; i++)
+            {
+                double v = arr[i];
+                if (double.IsNaN(v) || double.IsInfinity(v) || v <= 0)
+                    res[i] = 0;
+                else if (v < 1)
+                    res[i] = Math.Round(v, 4);
+                else
+                    res[i] = Math.Round(v, 2);
+            }
             return res;
         }
 
@@ -1010,23 +942,13 @@ namespace DTS_Engine.Core.Utils
             var dict = GetRawData(obj);
             if (dict == null) return (null, -1);
 
-            // Try new v5.0 format first
+            // Single Source of Truth: KEY_GROUP_IDENTITY
             if (dict.TryGetValue(KEY_GROUP_IDENTITY, out var gi) && gi != null)
             {
                 return ParseGroupIdentity(gi.ToString());
             }
 
-            // Backward compatibility: try old format
-            if (dict.TryGetValue("BelongToGroup", out var bg) && bg != null)
-            {
-                return (bg.ToString(), 0);  // Legacy: no SpanIndex info
-            }
-
-            if (dict.TryGetValue(KEY_BEAM_GROUP, out var bgn) && bgn != null)
-            {
-                return (bgn.ToString(), 0);
-            }
-
+            // NOTE: BelongToGroup và KEY_BEAM_GROUP fallback đã xóa
             return (null, -1);
         }
 
@@ -1060,65 +982,8 @@ namespace DTS_Engine.Core.Utils
             }
         }
 
-        /// <summary>
-        /// [V5.0] Write GroupState (SelectedIdx + IsLocked) to entity.
-        /// Format: "Idx:{idx}|Lock:{0/1}"
-        /// </summary>
-        public static void WriteGroupState(DBObject obj, int selectedIdx, bool isLocked, Transaction tr)
-        {
-            if (obj == null || tr == null) return;
 
-            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
-            dict[KEY_GROUP_STATE] = $"Idx:{selectedIdx}|Lock:{(isLocked ? 1 : 0)}";
-            SetRawData(obj, dict, tr);
-        }
-
-        /// <summary>
-        /// [V5.0] Read GroupState from entity.
-        /// </summary>
-        /// <returns>Tuple of (SelectedIdx, IsLocked). Returns (-1, false) if not found.</returns>
-        public static (int SelectedIdx, bool IsLocked) ReadGroupState(DBObject obj)
-        {
-            var dict = GetRawData(obj);
-            if (dict == null) return (-1, false);
-
-            if (dict.TryGetValue(KEY_GROUP_STATE, out var gs) && gs != null)
-            {
-                return ParseGroupState(gs.ToString());
-            }
-
-            return (-1, false);
-        }
-
-        /// <summary>
-        /// [V5.0] Parse GroupState string format.
-        /// </summary>
-        private static (int SelectedIdx, bool IsLocked) ParseGroupState(string state)
-        {
-            if (string.IsNullOrEmpty(state)) return (-1, false);
-
-            try
-            {
-                // Format: "Idx:2|Lock:1"
-                var parts = state.Split('|');
-                int idx = -1;
-                bool locked = false;
-
-                foreach (var part in parts)
-                {
-                    if (part.StartsWith("Idx:"))
-                        int.TryParse(part.Substring(4), out idx);
-                    else if (part.StartsWith("Lock:"))
-                        locked = part.Substring(5) == "1";
-                }
-
-                return (idx, locked);
-            }
-            catch
-            {
-                return (-1, false);
-            }
-        }
+        // NOTE: WriteGroupState/ReadGroupState/ParseGroupState đã xóa - dùng WriteIsLocked/ReadIsLocked
 
         /// <summary>
         /// [V5.0] Clear all rebar options and calculation results from entity XData.
@@ -1176,7 +1041,7 @@ namespace DTS_Engine.Core.Utils
                 dict.Remove($"BotOpt{i}");
             }
 
-            // Write up to 5 options in compact format
+            // Write up to 5 options in compact format using ToOptString()
             if (options != null)
             {
                 for (int i = 0; i < Math.Min(5, options.Count); i++)
@@ -1184,19 +1049,11 @@ namespace DTS_Engine.Core.Utils
                     var opt = options[i];
                     if (opt == null) continue;
 
-                    // Format: "T:backbone|addon;B:backbone|addon"
-                    string topPart = string.IsNullOrEmpty(opt.TopL1)
-                        ? $"T:{opt.TopL0 ?? ""}"
-                        : $"T:{opt.TopL0 ?? ""}|{opt.TopL1}";
-                    string botPart = string.IsNullOrEmpty(opt.BotL1)
-                        ? $"B:{opt.BotL0 ?? ""}"
-                        : $"B:{opt.BotL0 ?? ""}|{opt.BotL1}";
-
-                    dict[$"Opt{i}"] = $"{topPart};{botPart}";
+                    // V6.0: Use ToOptString() for consistent format "T:..;B:..;S:..;W:.."
+                    dict[$"Opt{i}"] = opt.ToOptString();
                 }
             }
 
-            dict[KEY_CALCULATED_AT] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             SetRawData(obj, dict, tr);
         }
 
@@ -1334,57 +1191,121 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// [V5.0] Data class for rebar option.
+        /// [V6.0] Data class for rebar option - Single Source of Truth.
+        /// Format: "T:{L0}|{L1};B:{L0}|{L1};S:{stirrup};W:{web}"
         /// </summary>
         public class RebarOptionData
         {
-            public string TopL0 { get; set; } = "";  // Top backbone (e.g., "2d20")
-            public string TopL1 { get; set; } = "";  // Top addon (e.g., "1d12")
+            public string TopL0 { get; set; } = "";  // Top backbone (e.g., "2D22")
+            public string TopL1 { get; set; } = "";  // Top addon (e.g., "1D12")
             public string BotL0 { get; set; } = "";  // Bot backbone
             public string BotL1 { get; set; } = "";  // Bot addon
+            public string Stirrup { get; set; } = ""; // Stirrup (e.g., "2-d10a150")
+            public string Web { get; set; } = "";     // Web bar (e.g., "2D12")
+
+            /// <summary>
+            /// Build OptUser string from this data.
+            /// Format: "T:2D22|1D12;B:2D22|;S:2-d10a150;W:"
+            /// </summary>
+            public string ToOptString()
+            {
+                string top = string.IsNullOrEmpty(TopL1) ? $"T:{TopL0}" : $"T:{TopL0}|{TopL1}";
+                string bot = string.IsNullOrEmpty(BotL1) ? $"B:{BotL0}" : $"B:{BotL0}|{BotL1}";
+                return $"{top};{bot};S:{Stirrup ?? ""};W:{Web ?? ""}";
+            }
+
+            /// <summary>
+            /// Parse OptUser string to RebarOptionData.
+            /// </summary>
+            public static RebarOptionData Parse(string optStr)
+            {
+                var result = new RebarOptionData();
+                if (string.IsNullOrEmpty(optStr)) return result;
+
+                // Split by semicolon: T:..., B:..., S:..., W:...
+                var parts = optStr.Split(';');
+                foreach (var part in parts)
+                {
+                    if (part.StartsWith("T:"))
+                    {
+                        var layers = part.Substring(2).Split('|');
+                        result.TopL0 = layers.Length > 0 ? layers[0] : "";
+                        result.TopL1 = layers.Length > 1 ? layers[1] : "";
+                    }
+                    else if (part.StartsWith("B:"))
+                    {
+                        var layers = part.Substring(2).Split('|');
+                        result.BotL0 = layers.Length > 0 ? layers[0] : "";
+                        result.BotL1 = layers.Length > 1 ? layers[1] : "";
+                    }
+                    else if (part.StartsWith("S:"))
+                    {
+                        result.Stirrup = part.Substring(2);
+                    }
+                    else if (part.StartsWith("W:"))
+                    {
+                        result.Web = part.Substring(2);
+                    }
+                }
+                return result;
+            }
         }
 
         /// <summary>
-        /// [V5.0] Write current rebar state (layers) to entity.
+        /// [V6.0] Write OptUser (user's selected option) to entity.
         /// </summary>
-        public static void WriteCurrentRebar(DBObject obj, string[] topL0, string[] topL1, string[] botL0, string[] botL1, Transaction tr)
+        public static void WriteOptUser(DBObject obj, RebarOptionData opt, Transaction tr)
         {
-            if (obj == null || tr == null) return;
+            if (obj == null || tr == null || opt == null) return;
 
             var dict = GetRawData(obj) ?? new Dictionary<string, object>();
-
-            if (topL0 != null && topL0.Length >= 3)
-                dict["TopL0"] = $"{topL0[0] ?? ""}|{topL0[1] ?? ""}|{topL0[2] ?? ""}";
-            if (topL1 != null && topL1.Length >= 3)
-                dict["TopL1"] = $"{topL1[0] ?? ""}|{topL1[1] ?? ""}|{topL1[2] ?? ""}";
-            if (botL0 != null && botL0.Length >= 3)
-                dict["BotL0"] = $"{botL0[0] ?? ""}|{botL0[1] ?? ""}|{botL0[2] ?? ""}";
-            if (botL1 != null && botL1.Length >= 3)
-                dict["BotL1"] = $"{botL1[0] ?? ""}|{botL1[1] ?? ""}|{botL1[2] ?? ""}";
-
+            dict["OptUser"] = opt.ToOptString();
             SetRawData(obj, dict, tr);
         }
 
         /// <summary>
-        /// [V5.0] Read current rebar state from entity.
+        /// [V6.0] Read OptUser from entity.
         /// </summary>
-        public static (string[] TopL0, string[] TopL1, string[] BotL0, string[] BotL1) ReadCurrentRebar(DBObject obj)
+        public static RebarOptionData ReadOptUser(DBObject obj)
         {
             var dict = GetRawData(obj);
-            if (dict == null) return (null, null, null, null);
+            if (dict == null) return null;
 
-            // Try new spec-compliant keys first, fallback to old keys for backward compat
-            string[] topL0 = dict.TryGetValue("TopL0", out var t0) ? ParseOptionString(t0?.ToString())
-                : dict.TryGetValue("TopRebarL0", out var t0Old) ? ParseOptionString(t0Old?.ToString()) : null;
-            string[] topL1 = dict.TryGetValue("TopL1", out var t1) ? ParseOptionString(t1?.ToString())
-                : dict.TryGetValue("TopRebarL1", out var t1Old) ? ParseOptionString(t1Old?.ToString()) : null;
-            string[] botL0 = dict.TryGetValue("BotL0", out var b0) ? ParseOptionString(b0?.ToString())
-                : dict.TryGetValue("BotRebarL0", out var b0Old) ? ParseOptionString(b0Old?.ToString()) : null;
-            string[] botL1 = dict.TryGetValue("BotL1", out var b1) ? ParseOptionString(b1?.ToString())
-                : dict.TryGetValue("BotRebarL1", out var b1Old) ? ParseOptionString(b1Old?.ToString()) : null;
-
-            return (topL0, topL1, botL0, botL1);
+            if (dict.TryGetValue("OptUser", out var optVal) && optVal != null)
+            {
+                return RebarOptionData.Parse(optVal.ToString());
+            }
+            return null;
         }
+
+        /// <summary>
+        /// [V6.0] Write IsLocked flag to entity.
+        /// </summary>
+        public static void WriteIsLocked(DBObject obj, bool isLocked, Transaction tr)
+        {
+            if (obj == null || tr == null) return;
+
+            var dict = GetRawData(obj) ?? new Dictionary<string, object>();
+            dict["IsLocked"] = isLocked ? "1" : "0";
+            SetRawData(obj, dict, tr);
+        }
+
+        /// <summary>
+        /// [V6.0] Read IsLocked flag from entity.
+        /// </summary>
+        public static bool ReadIsLocked(DBObject obj)
+        {
+            var dict = GetRawData(obj);
+            if (dict == null) return false;
+
+            if (dict.TryGetValue("IsLocked", out var val) && val != null)
+            {
+                return val.ToString() == "1";
+            }
+            return false;
+        }
+
+        // NOTE: WriteCurrentRebar/ReadCurrentRebar (TopL0/TopL1/BotL0/BotL1) đã xóa - dùng WriteOptUser/ReadOptUser
 
         /// <summary>
         /// [V5.0] Set IsManual flag on entity.
@@ -1414,22 +1335,7 @@ namespace DTS_Engine.Core.Utils
             return false;
         }
 
-        /// <summary>
-        /// [V5.0] Read CalculatedAt timestamp from entity.
-        /// </summary>
-        public static DateTime? ReadCalculatedAt(DBObject obj)
-        {
-            var dict = GetRawData(obj);
-            if (dict == null) return null;
-
-            if (dict.TryGetValue(KEY_CALCULATED_AT, out var val) && val != null)
-            {
-                if (DateTime.TryParse(val.ToString(), out var dt))
-                    return dt;
-            }
-
-            return null;
-        }
+        // NOTE: ReadCalculatedAt đã xóa - không còn ghi CalculatedAt
 
         #endregion // V5.0: Rebar Options Persistence
     }

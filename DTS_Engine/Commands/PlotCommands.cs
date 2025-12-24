@@ -560,7 +560,7 @@ namespace DTS_Engine.Commands
                         Height = f.Height,  // t3 từ SAP (Section depth)
                         Material = string.IsNullOrEmpty(f.Material) ? "Concrete" : f.Material,
                         ConcreteGrade = f.ConcreteGrade,
-                        BeamType = "Main", // TODO: Detect Girder vs Beam based on connectivity
+                        // NOTE: BeamType không còn được lưu - GroupType được xác định bởi BeamGroupDetector
                         // SOURCE-BASED SUPPORT DETECTION: Ghi support info từ SAP
                         SupportI = f.HasSupportI ? 1 : 0,
                         SupportJ = f.HasSupportJ ? 1 : 0,
@@ -660,7 +660,7 @@ namespace DTS_Engine.Commands
                         Height = frame.Height,
                         Material = string.IsNullOrEmpty(frame.Material) ? "Concrete" : frame.Material,
                         ConcreteGrade = frame.ConcreteGrade,
-                        BeamType = "Main",
+                        // NOTE: BeamType không còn được lưu - GroupType được xác định bởi BeamGroupDetector
                         SapFrameName = frame.Name
                     };
                 }

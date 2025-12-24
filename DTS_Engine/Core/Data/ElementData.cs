@@ -154,11 +154,8 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xNote", out var note))
                 Note = note?.ToString();
 
-            if (dict.TryGetValue("xLastModified", out var lastMod))
-                LastModified = lastMod?.ToString();
-
-            if (dict.TryGetValue("xDataVersion", out var version))
-                DataVersion = ConvertToInt(version) ?? 1;
+            // NOTE: xLastModified không còn được đọc/ghi vào XData
+            // NOTE: xDataVersion không còn được đọc/ghi vào XData
 
             if (dict.TryGetValue("xChildHandles", out var children))
                 ChildHandles = ConvertToStringList(children);
@@ -187,7 +184,7 @@ namespace DTS_Engine.Core.Data
         protected void WriteBaseProperties(Dictionary<string, object> dict)
         {
             dict["xType"] = XType;
-            dict["xDataVersion"] = DataVersion;
+            // NOTE: xDataVersion không còn được ghi vào XData
 
             if (!string.IsNullOrEmpty(OriginHandle))
                 dict["xOriginHandle"] = OriginHandle;
@@ -201,8 +198,7 @@ namespace DTS_Engine.Core.Data
             if (!string.IsNullOrEmpty(Note))
                 dict["xNote"] = Note;
 
-            if (!string.IsNullOrEmpty(LastModified))
-                dict["xLastModified"] = LastModified;
+            // NOTE: xLastModified không còn được ghi vào XData
 
             if (ChildHandles != null && ChildHandles.Count > 0)
                 dict["xChildHandles"] = ChildHandles;

@@ -429,6 +429,53 @@ namespace DTS_Engine.UI.Forms
                         System.Diagnostics.Debug.WriteLine(
                             $"[BeamGroupViewer] Design locked for group {groupIndex}, " +
                             $"SelectedDesign and Spans updated");
+
+                        // V6.0: Persist to XData - Write OptUser + IsLocked for all entities in group
+                        var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                        if (doc != null && group.EntityHandles != null)
+                        {
+                            using (doc.LockDocument())
+                            using (var tr = doc.Database.TransactionManager.StartTransaction())
+                            {
+                                try
+                                {
+                                    foreach (var handle in group.EntityHandles)
+                                    {
+                                        var objId = Core.Utils.AcadUtils.GetObjectIdFromHandle(handle);
+                                        if (objId.IsNull) continue;
+
+                                        var obj = tr.GetObject(objId, OpenMode.ForWrite);
+                                        if (obj == null) continue;
+
+                                        // Build OptUser from locked design
+                                        string topL0 = design?.BackboneCount_Top > 0
+                                            ? $"{design.BackboneCount_Top}D{design.BackboneDiameter}" : "";
+                                        string botL0 = design?.BackboneCount_Bot > 0
+                                            ? $"{design.BackboneCount_Bot}D{design.BackboneDiameter}" : "";
+
+                                        var optUser = new XDataUtils.RebarOptionData
+                                        {
+                                            TopL0 = topL0,
+                                            TopL1 = "",
+                                            BotL0 = botL0,
+                                            BotL1 = "",
+                                            Stirrup = "",
+                                            Web = ""
+                                        };
+
+                                        XDataUtils.WriteOptUser(obj, optUser, tr);
+                                        XDataUtils.WriteIsLocked(obj, true, tr); // Locked = true
+                                    }
+                                    tr.Commit();
+                                    System.Diagnostics.Debug.WriteLine("[BeamGroupViewer] LOCK_DESIGN: OptUser + IsLocked persisted to XData");
+                                }
+                                catch (Exception persistEx)
+                                {
+                                    tr.Abort();
+                                    System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] LOCK_DESIGN persist error: {persistEx.Message}");
+                                }
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -445,10 +492,32 @@ namespace DTS_Engine.UI.Forms
                     string idxStr = message.Substring(14);
                     if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
                     {
+                        var group = _groups[groupIndex];
                         // Clear SelectedDesign
-                        _groups[groupIndex].SelectedDesign = null;
-                        _groups[groupIndex].LockedAt = null;
+                        group.SelectedDesign = null;
+                        group.LockedAt = null;
                         System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Design unlocked for group {groupIndex}");
+
+                        // V6.0: Persist IsLocked=false to XData
+                        var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                        if (doc != null && group.EntityHandles != null)
+                        {
+                            using (doc.LockDocument())
+                            using (var tr = doc.Database.TransactionManager.StartTransaction())
+                            {
+                                foreach (var handle in group.EntityHandles)
+                                {
+                                    var objId = Core.Utils.AcadUtils.GetObjectIdFromHandle(handle);
+                                    if (objId.IsNull) continue;
+
+                                    var obj = tr.GetObject(objId, OpenMode.ForWrite);
+                                    if (obj == null) continue;
+
+                                    XDataUtils.WriteIsLocked(obj, false, tr);
+                                }
+                                tr.Commit();
+                            }
+                        }
                     }
                 }
                 catch { }
@@ -627,6 +696,13 @@ namespace DTS_Engine.UI.Forms
 
                                 // Write all 5 options to XData (Opt0-4)
                                 XDataUtils.WriteRebarOptions(obj, optionDataList, tr);
+
+                                // V6.0: Write OptUser = first option (default selection) + IsLocked = false
+                                if (optionDataList.Count > 0)
+                                {
+                                    XDataUtils.WriteOptUser(obj, optionDataList[0], tr);
+                                    XDataUtils.WriteIsLocked(obj, false, tr);
+                                }
                             }
                         }
                         tr.Commit();
@@ -787,21 +863,36 @@ namespace DTS_Engine.UI.Forms
                                 }
                                 if (isReversed) ReverseBeamResultData(rebarData);
 
-                                // Apply rebar strings to Span for viewer display
-                                // XData format: [L1, Mid, L2] maps to SpanData positions [0, 2, 4] (GốiT, Giữa, GốiP)
-                                if (rebarData.TopRebarString != null && rebarData.TopRebarString.Length >= 3)
+                                // V6.0: Read OptUser first (new Single Source of Truth)
+                                var optUser = XDataUtils.ReadOptUser(obj);
+                                if (optUser != null && !string.IsNullOrEmpty(optUser.TopL0))
                                 {
-                                    // Layer 0 = backbone, positions 0,2,4 = L1,Mid,L2
-                                    span.TopRebarInternal[0, 0] = rebarData.TopRebarString[0]; // L1
-                                    span.TopRebarInternal[0, 2] = rebarData.TopRebarString[1]; // Mid
-                                    span.TopRebarInternal[0, 4] = rebarData.TopRebarString[2]; // L2
+                                    // Use OptUser data
+                                    span.TopRebarInternal[0, 0] = optUser.TopL0;
+                                    span.TopRebarInternal[0, 2] = optUser.TopL0;
+                                    span.TopRebarInternal[0, 4] = optUser.TopL0;
+                                    span.BotRebarInternal[0, 0] = optUser.BotL0;
+                                    span.BotRebarInternal[0, 2] = optUser.BotL0;
+                                    span.BotRebarInternal[0, 4] = optUser.BotL0;
+
+                                    // Read IsLocked
+                                    bool isLocked = XDataUtils.ReadIsLocked(obj);
+                                    span.IsManualModified = isLocked;
                                 }
-                                if (rebarData.BotRebarString != null && rebarData.BotRebarString.Length >= 3)
+                                // Fallback: Read from TopRebarString (legacy data)
+                                else if (rebarData.TopRebarString != null && rebarData.TopRebarString.Length >= 3)
                                 {
-                                    span.BotRebarInternal[0, 0] = rebarData.BotRebarString[0]; // L1
-                                    span.BotRebarInternal[0, 2] = rebarData.BotRebarString[1]; // Mid
-                                    span.BotRebarInternal[0, 4] = rebarData.BotRebarString[2]; // L2
+                                    span.TopRebarInternal[0, 0] = rebarData.TopRebarString[0];
+                                    span.TopRebarInternal[0, 2] = rebarData.TopRebarString[1];
+                                    span.TopRebarInternal[0, 4] = rebarData.TopRebarString[2];
                                 }
+                                if (optUser == null && rebarData.BotRebarString != null && rebarData.BotRebarString.Length >= 3)
+                                {
+                                    span.BotRebarInternal[0, 0] = rebarData.BotRebarString[0];
+                                    span.BotRebarInternal[0, 2] = rebarData.BotRebarString[1];
+                                    span.BotRebarInternal[0, 4] = rebarData.BotRebarString[2];
+                                }
+
                                 // Map TopArea/BotArea to As_Top/As_Bot (6-position array)  
                                 // XData [0,1,2] = [L1, Mid, L2] → [0, 2, 4] positions
                                 if (rebarData.TopArea != null && rebarData.TopArea.Length >= 3)
@@ -1329,7 +1420,7 @@ namespace DTS_Engine.UI.Forms
                     // 1. Tạo GroupId mới cho entity này
                     string newGroupId = Guid.NewGuid().ToString().Substring(0, 8).ToUpperInvariant();
                     Core.Utils.XDataUtils.WriteGroupIdentity(obj, newGroupId, 0, tr);
-                    Core.Utils.XDataUtils.WriteGroupState(obj, 0, false, tr);
+                    Core.Utils.XDataUtils.WriteIsLocked(obj, false, tr);
 
                     // 2. Update NOD cũ (loại bỏ entity này)
                     if (!string.IsNullOrEmpty(oldGroupId))
@@ -1384,7 +1475,7 @@ namespace DTS_Engine.UI.Forms
                         // Mỗi entity thành group riêng
                         string newGroupId = Guid.NewGuid().ToString().Substring(0, 8).ToUpperInvariant();
                         Core.Utils.XDataUtils.WriteGroupIdentity(obj, newGroupId, 0, tr);
-                        Core.Utils.XDataUtils.WriteGroupState(obj, 0, false, tr);
+                        Core.Utils.XDataUtils.WriteIsLocked(obj, false, tr);
                         Core.Engines.RegistryEngine.ResurrectGroup(newGroupId, new List<string> { handleStr }, tr);
                     }
 
@@ -1452,7 +1543,7 @@ namespace DTS_Engine.UI.Forms
 
                         var obj = tr.GetObject(objId, OpenMode.ForWrite);
                         Core.Utils.XDataUtils.WriteGroupIdentity(obj, groupId, i, tr);
-                        Core.Utils.XDataUtils.WriteGroupState(obj, 0, false, tr);
+                        Core.Utils.XDataUtils.WriteIsLocked(obj, false, tr);
                     }
 
                     // Register new group

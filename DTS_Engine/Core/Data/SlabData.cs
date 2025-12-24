@@ -183,7 +183,7 @@ namespace DTS_Engine.Core.Data
             if (LiveLoad.HasValue) dict["xLiveLoad"] = LiveLoad.Value;
             if (FinishLoad.HasValue) dict["xFinishLoad"] = FinishLoad.Value;
             dict["xUnitWeight"] = UnitWeight;
-            if (!string.IsNullOrEmpty(LoadPattern)) dict["xLoadPattern"] = LoadPattern;
+            // NOTE: xLoadPattern không còn được ghi vào XData - dùng default "DL"
 
             // Serialize Loads (ILoadBearing)
             if (Loads != null && Loads.Count > 0)
@@ -216,7 +216,7 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xLiveLoad", out var ll)) LiveLoad = ConvertToDouble(ll);
             if (dict.TryGetValue("xFinishLoad", out var fl)) FinishLoad = ConvertToDouble(fl);
             if (dict.TryGetValue("xUnitWeight", out var uw)) UnitWeight = ConvertToDouble(uw) ?? 25.0;
-            if (dict.TryGetValue("xLoadPattern", out var lp)) LoadPattern = lp?.ToString();
+            // NOTE: xLoadPattern không còn được đọc - dùng default "DL"
 
             // Deserialize Loads (ILoadBearing)
             if (dict.TryGetValue("xLoads", out var loadsJson))

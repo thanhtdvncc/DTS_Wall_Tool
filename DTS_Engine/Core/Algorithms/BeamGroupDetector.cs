@@ -220,7 +220,10 @@ namespace DTS_Engine.Core.Algorithms
             // Tính dimensions chung
             group.Width = chain.First().Width;
             group.Height = chain.First().Height;
-            group.GroupType = chain.First().Width >= 300 ? "Girder" : "Beam";
+
+            // GroupType dựa trên đa số phần tử con: nếu >= 50% là Girder thì group là Girder
+            int girderCount = chain.Count(b => b.IsGirder);
+            group.GroupType = girderCount >= (chain.Count / 2.0) ? "Girder" : "Beam";
 
             // === SMART NAMING: Populate LevelZ for story matching ===
             // Get Z from first beam's StartZ

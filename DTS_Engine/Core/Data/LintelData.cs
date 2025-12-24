@@ -80,7 +80,7 @@ namespace DTS_Engine.Core.Data
             if (Length.HasValue) dict["xLength"] = Length.Value;
             if (!string.IsNullOrEmpty(LintelType)) dict["xLintelType"] = LintelType;
             if (!string.IsNullOrEmpty(Material)) dict["xMaterial"] = Material;
-            if (!string.IsNullOrEmpty(ConcreteGrade)) dict["xConcreteGrade"] = ConcreteGrade;
+            // NOTE: xConcreteGrade không còn được ghi - có thể suy ra từ xMaterial
 
             return dict;
         }
@@ -94,7 +94,7 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xLength", out var l)) Length = ConvertToDouble(l);
             if (dict.TryGetValue("xLintelType", out var lt)) LintelType = lt?.ToString();
             if (dict.TryGetValue("xMaterial", out var mat)) Material = mat?.ToString();
-            if (dict.TryGetValue("xConcreteGrade", out var cg)) ConcreteGrade = cg?.ToString();
+            // NOTE: xConcreteGrade không còn được đọc - có thể suy ra từ xMaterial
         }
 
         #endregion

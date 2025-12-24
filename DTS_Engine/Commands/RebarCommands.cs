@@ -105,11 +105,11 @@ namespace DTS_Engine.Commands
                         mappingSource = "XData";
                         // WriteMessage($" -> Match via SapFrameName: {sapName}");
                     }
-                    // === PRIORITY 2: Raw XData key SapElementName (independent of xType) ===
+                    // === PRIORITY 2: Raw XData key xSapFrameName (Single Source of Truth) ===
                     else
                     {
                         var raw = XDataUtils.GetRawData(obj);
-                        if (raw != null && raw.TryGetValue("SapElementName", out var sapObj))
+                        if (raw != null && raw.TryGetValue("xSapFrameName", out var sapObj))
                         {
                             var sapFromRaw = sapObj?.ToString();
                             if (!string.IsNullOrEmpty(sapFromRaw))
@@ -167,9 +167,9 @@ namespace DTS_Engine.Commands
                         {
                             designData.TorsionFactorUsed = dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25;
 
-                            // Store mapping info for future use
+                            // Store SAP name for XData (xSapFrameName is the Single Source)
                             designData.SapElementName = sapName;
-                            designData.MappingSource = mappingSources.TryGetValue(cadId, out var src) ? src : "XData";
+                            // NOTE: MappingSource đã loại bỏ
 
                             // Validate ObjectId before accessing
                             if (!cadId.IsValid || cadId.IsErased)
@@ -251,8 +251,8 @@ namespace DTS_Engine.Commands
                                     width: designData.Width,
                                     sectionHeight: designData.SectionHeight,
                                     torsionFactorUsed: designData.TorsionFactorUsed,
-                                    sapElementName: designData.SapElementName,
-                                    mappingSource: designData.MappingSource);
+                                    sapElementName: designData.SapElementName);
+                                // NOTE: mappingSource đã loại bỏ
                             }
                             catch (System.Exception ex2)
                             {
@@ -489,11 +489,11 @@ namespace DTS_Engine.Commands
                     return;
                 }
 
-                WriteMessage($"Đã tìm thấy {allTopologies.Count} dầm, đang phân nhóm...");
+                WriteMessage($"Đã tìm thấy {allTopologies.Count} dầm, đang xử lý...");
 
-                // Step 2: Split into separate groups based on links
+                // Step 2: Split into separate groups based on existing links
                 var topologyGroups = topologyBuilder.SplitIntoGroups(allTopologies);
-                WriteMessage($"Đã phân thành {topologyGroups.Count} nhóm dầm.");
+                // NOTE: Không in message "phân nhóm" vì lệnh này không phân nhóm - chỉ tính toán
 
                 var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
 
@@ -553,8 +553,8 @@ namespace DTS_Engine.Commands
                     group.BackboneOptions = proposals;
                     group.SelectedBackboneIndex = 0;
 
-                    // V5.0: Ensure all entities have GroupIdentity (handles orphan beams)
-                    EnsureGroupIdentity(tr, topoGroup);
+                    // NOTE: Không gọi EnsureGroupIdentity - lệnh Calculate không tạo GroupIdentity mới
+                    // GroupIdentity chỉ được tạo bởi lệnh Group beam
 
                     // V5.0: Write all 5 options to ALL entities (per spec Section 4.2)
                     WriteOptionsToAllEntities(tr, topoGroup, proposals);
@@ -638,7 +638,7 @@ namespace DTS_Engine.Commands
                 Width = original.Width,
                 SectionHeight = original.SectionHeight,
                 SapElementName = original.SapElementName,
-                MappingSource = original.MappingSource,
+                // NOTE: MappingSource đã deprecated - không copy
                 DesignCombo = original.DesignCombo,
                 SectionName = original.SectionName,
                 TorsionFactorUsed = original.TorsionFactorUsed,
@@ -766,57 +766,22 @@ namespace DTS_Engine.Commands
                     //     stirrupStrings = FlipArray(stirrupStrings);
                 }
 
-                // Update XData (legacy format - backward compatible)
-                XDataUtils.UpdateBeamSolutionXData(
-                    obj,
-                    tr,
-                    topStrings,
-                    botStrings,
-                    stirrupStrings,
-                    null, // WebBarString - placeholder
-                    group?.GroupName,
-                    group?.GroupType);
-
-                // V5.0: Write current state in separated layer format per spec Section 4.2
-                // This stores backbone (L0) and addon (L1) separately for easier manipulation
-                var topL0 = new string[3] { backboneTop, backboneTop, backboneTop };
-                var botL0 = new string[3] { backboneBot, backboneBot, backboneBot };
-                var topL1 = new string[3];
-                var botL1 = new string[3];
-
-                if (sol.Reinforcements != null)
+                // NOTE: UpdateBeamSolutionXData (legacy TopRebarString/BotRebarString) đã xóa
+                // V6.0: OptUser là Single Source of Truth
+                // V6.0: Write OptUser (Single Source of Truth)
+                var optUser = new XDataUtils.RebarOptionData
                 {
-                    if (sol.Reinforcements.TryGetValue($"{spanId}_Top_Left", out var tl1))
-                        topL1[0] = $"{tl1.Count}D{tl1.Diameter}";
-                    if (sol.Reinforcements.TryGetValue($"{spanId}_Top_Mid", out var tm1))
-                        topL1[1] = $"{tm1.Count}D{tm1.Diameter}";
-                    if (sol.Reinforcements.TryGetValue($"{spanId}_Top_Right", out var tr1))
-                        topL1[2] = $"{tr1.Count}D{tr1.Diameter}";
-                    if (sol.Reinforcements.TryGetValue($"{spanId}_Bot_Left", out var bl1))
-                        botL1[0] = $"{bl1.Count}D{bl1.Diameter}";
-                    if (sol.Reinforcements.TryGetValue($"{spanId}_Bot_Mid", out var bm1))
-                        botL1[1] = $"{bm1.Count}D{bm1.Diameter}";
-                    if (sol.Reinforcements.TryGetValue($"{spanId}_Bot_Right", out var br1))
-                        botL1[2] = $"{br1.Count}D{br1.Diameter}";
-                }
+                    TopL0 = backboneTop,
+                    TopL1 = "", // Addon - not used in backbone
+                    BotL0 = backboneBot,
+                    BotL1 = "",
+                    Stirrup = stirrupStrings?[1] ?? "", // Use Mid zone
+                    Web = "" // No web bar for now
+                };
+                XDataUtils.WriteOptUser(obj, optUser, tr);
 
-                // FIX 1.4: REMOVED flip logic - L0/L1 stored in L→R order
-                // Old code:
-                // if (topo.IsGeometryReversed)
-                // {
-                //     topL0 = FlipArray(topL0);
-                //     botL0 = FlipArray(botL0);
-                //     topL1 = FlipArray(topL1);
-                //     botL1 = FlipArray(botL1);
-                // }
-
-                XDataUtils.WriteCurrentRebar(obj, topL0, topL1, botL0, botL1, tr);
-
-                // V5.0: Write GroupState to ALL entities for self-sufficiency
-                // This ensures state redundancy - each entity knows the current selection
-                int bestIdx = group?.BackboneOptions?.FindIndex(o => o == sol) ?? 0;
-                if (bestIdx < 0) bestIdx = 0;
-                XDataUtils.WriteGroupState(obj, bestIdx, isLocked: false, tr);
+                // V6.0: Write IsLocked (always false after initial calculation)
+                XDataUtils.WriteIsLocked(obj, isLocked: false, tr);
 
                 // Reset color to ByLayer
                 if (obj is Entity ent) ent.ColorIndex = 256;
@@ -895,31 +860,7 @@ namespace DTS_Engine.Commands
             }
         }
 
-        /// <summary>
-        /// [V5.0] Ensure all entities in group have GroupIdentity.
-        /// Creates new GroupId for orphan beams that were never linked.
-        /// </summary>
-        private void EnsureGroupIdentity(Transaction tr, List<BeamTopology> topoGroup)
-        {
-            if (topoGroup == null || topoGroup.Count == 0) return;
-
-            // Check if first entity has GroupIdentity
-            var firstObj = tr.GetObject(topoGroup[0].ObjectId, OpenMode.ForRead);
-            var (existingGroupId, _) = XDataUtils.ReadGroupIdentity(firstObj);
-
-            // If no existing GroupId, create new one for this group
-            if (string.IsNullOrEmpty(existingGroupId))
-            {
-                string newGroupId = Guid.NewGuid().ToString();
-
-                for (int i = 0; i < topoGroup.Count; i++)
-                {
-                    var obj = tr.GetObject(topoGroup[i].ObjectId, OpenMode.ForWrite);
-                    XDataUtils.WriteGroupIdentity(obj, newGroupId, i, tr);
-                    XDataUtils.WriteGroupState(obj, selectedIdx: 0, isLocked: false, tr);
-                }
-            }
-        }
+        // NOTE: EnsureGroupIdentity đã xóa - việc tạo GroupIdentity là của lệnh Group beam
 
         /// <summary>
         /// V5 PUBLIC: Sync BeamGroup spans to XData on entities.
@@ -989,19 +930,9 @@ namespace DTS_Engine.Commands
                                 webStrings = FlipArrayStatic(webStrings);
                             }
 
-                            // Write to XData (legacy format - backward compatible)
-                            XDataUtils.UpdateBeamSolutionXData(
-                                obj,
-                                tr,
-                                topStrings,
-                                botStrings,
-                                stirrupStrings,
-                                webStrings,
-                                group.GroupName,
-                                group.GroupType);
-
-                            // V5.0: Write GroupState to ALL entities (state redundancy)
-                            XDataUtils.WriteGroupState(obj, selectedIdx, isLocked, tr);
+                            // NOTE: UpdateBeamSolutionXData (legacy) đã xóa - dùng OptUser
+                            // V6.0: Write IsLocked flag
+                            XDataUtils.WriteIsLocked(obj, isLocked, tr);
 
                             // V5.0: Write current state in separated layer format for consistency
                             // Convert RebarInfo to string format "nDd" (e.g., "2D16")
@@ -1023,17 +954,19 @@ namespace DTS_Engine.Commands
                                 span.BotAddRight != null && span.BotAddRight.Count > 0 ? $"{span.BotAddRight.Count}D{span.BotAddRight.Diameter}" : ""
                             };
 
-                            if (isReversed)
+                            // V6.0: Write OptUser instead of separate Lx arrays
+                            var optUser = new XDataUtils.RebarOptionData
                             {
-                                topL0 = FlipArrayStatic(topL0);
-                                botL0 = FlipArrayStatic(botL0);
-                                topL1 = FlipArrayStatic(topL1);
-                                botL1 = FlipArrayStatic(botL1);
-                            }
+                                TopL0 = isReversed ? topL0[2] : topL0[0], // After flip, use correct position
+                                TopL1 = isReversed ? topL1[2] : topL1[0],
+                                BotL0 = isReversed ? botL0[2] : botL0[0],
+                                BotL1 = isReversed ? botL1[2] : botL1[0],
+                                Stirrup = span.Stirrup != null && span.Stirrup.Length > 1 ? span.Stirrup[1] : "", // Mid zone
+                                Web = span.WebBar != null && span.WebBar.Length > 1 ? span.WebBar[1] : "" // Mid zone
+                            };
+                            XDataUtils.WriteOptUser(obj, optUser, tr);
 
-                            XDataUtils.WriteCurrentRebar(obj, topL0, topL1, botL0, botL1, tr);
-
-                            // V5.0: Use SetIsManual instead of merge raw data
+                            // V6.0: Use SetIsManual for manual modification flag
                             if (span.IsManualModified)
                             {
                                 XDataUtils.SetIsManual(obj, true, tr);
@@ -1193,7 +1126,7 @@ namespace DTS_Engine.Commands
                 {
                     var obj = tr.GetObject(topoGroup[i].ObjectId, OpenMode.ForWrite);
                     XDataUtils.WriteGroupIdentity(obj, groupId, i, tr);
-                    XDataUtils.WriteGroupState(obj, 0, false, tr);
+                    XDataUtils.WriteIsLocked(obj, false, tr);
                 }
 
                 // Register with NOD - convert Handle to string
@@ -1283,7 +1216,7 @@ namespace DTS_Engine.Commands
                     {
                         var obj = tr.GetObject(topoGroup[i].ObjectId, OpenMode.ForWrite);
                         XDataUtils.WriteGroupIdentity(obj, newGroupId, i, tr);
-                        XDataUtils.WriteGroupState(obj, 0, false, tr);
+                        XDataUtils.WriteIsLocked(obj, false, tr);
                     }
 
                     // Register new group in NOD
@@ -1305,7 +1238,7 @@ namespace DTS_Engine.Commands
                         {
                             var obj = tr.GetObject(objId, OpenMode.ForWrite);
                             XDataUtils.WriteGroupIdentity(obj, newGroupId, idx, tr);
-                            XDataUtils.WriteGroupState(obj, 0, false, tr);
+                            XDataUtils.WriteIsLocked(obj, false, tr);
                         }
                     }
 
@@ -1511,15 +1444,13 @@ namespace DTS_Engine.Commands
                     catch { /* Ignore deserialization errors */ }
                 }
 
-                // V5.0: Read GroupState for SelectedIdx and IsLocked
+                // V6.0: Read IsLocked flag
                 if (i == 0)
                 {
-                    var (selectedIdx, isLocked) = XDataUtils.ReadGroupState(obj);
-                    if (selectedIdx >= 0)
-                    {
-                        group.SelectedBackboneIndex = selectedIdx;
-                        group.IsLocked = isLocked;
-                    }
+                    bool isLocked = XDataUtils.ReadIsLocked(obj);
+                    group.IsLocked = isLocked;
+                    // NOTE: SelectedBackboneIndex no longer stored in XData - use first option
+                    group.SelectedBackboneIndex = 0;
                 }
 
                 // V5.0: Read rebar options from Opt0-4 format if available
@@ -1560,16 +1491,7 @@ namespace DTS_Engine.Commands
                 {
                     span.IsManualModified = true;
                 }
-
-                // Legacy check for old DesignLocked key (backward compat)
-                if (!span.IsManualModified && rawData.TryGetValue("DesignLocked", out var lockedObj))
-                {
-                    bool isLocked = lockedObj?.ToString() == "True" || lockedObj?.ToString() == "1";
-                    if (isLocked)
-                    {
-                        span.IsManualModified = true;
-                    }
-                }
+                // NOTE: DesignLocked legacy key fallback đã xóa
             }
         }
 

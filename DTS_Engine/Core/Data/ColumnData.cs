@@ -98,7 +98,7 @@ namespace DTS_Engine.Core.Data
             if (!string.IsNullOrEmpty(SectionType)) dict["xSectionType"] = SectionType;
             if (Diameter.HasValue) dict["xDiameter"] = Diameter.Value;
             if (!string.IsNullOrEmpty(Material)) dict["xMaterial"] = Material;
-            if (!string.IsNullOrEmpty(ConcreteGrade)) dict["xConcreteGrade"] = ConcreteGrade;
+            // NOTE: xConcreteGrade không còn được ghi - có thể suy ra từ xMaterial
 
             return dict;
         }
@@ -113,7 +113,7 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xSectionType", out var st)) SectionType = st?.ToString();
             if (dict.TryGetValue("xDiameter", out var dia)) Diameter = ConvertToDouble(dia);
             if (dict.TryGetValue("xMaterial", out var mat)) Material = mat?.ToString();
-            if (dict.TryGetValue("xConcreteGrade", out var cg)) ConcreteGrade = cg?.ToString();
+            // NOTE: xConcreteGrade không còn được đọc - có thể suy ra từ xMaterial
         }
 
         #endregion

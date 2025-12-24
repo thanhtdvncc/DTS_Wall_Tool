@@ -496,21 +496,7 @@ namespace DTS_Engine.Core.Utils
             return id;
         }
 
-        /// <summary>
-        /// Alias cho CreateLine (backward compatibility)
-        /// </summary>
-        public static void CreateVisualLine(Point2D p1, Point2D p2, string layer, int colorIndex, Transaction tr)
-        {
-            CreateLine(p1, p2, layer, colorIndex, tr);
-        }
-
-        /// <summary>
-        /// Alias cho CreateCircle (backward compatibility)
-        /// </summary>
-        public static void CreateHighlightCircle(Point2D center, double radius, string layer, int colorIndex, Transaction tr)
-        {
-            CreateCircle(center, radius, layer, colorIndex, tr);
-        }
+        // NOTE: CreateVisualLine và CreateHighlightCircle aliases đã xóa - dùng CreateLine/CreateCircle trực tiếp
 
         #endregion
 

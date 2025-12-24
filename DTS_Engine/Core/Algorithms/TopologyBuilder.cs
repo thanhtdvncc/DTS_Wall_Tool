@@ -296,8 +296,8 @@ namespace DTS_Engine.Core.Algorithms
                 // Write GroupIdentity: GroupId + SpanIndex (ALWAYS update to ensure correct index)
                 XDataUtils.WriteGroupIdentity(obj, groupId, i, tr);
 
-                // Write GroupState: SelectedIdx=0, IsLocked=false (initial state)
-                XDataUtils.WriteGroupState(obj, selectedIdx: 0, isLocked: false, tr);
+                // V6.0: Write IsLocked flag (initial state = unlocked)
+                XDataUtils.WriteIsLocked(obj, isLocked: false, tr);
 
                 // FIX 1.3R + Stale Mother Fix: ALWAYS establish links
                 if (i > 0)
@@ -387,14 +387,31 @@ namespace DTS_Engine.Core.Algorithms
                 ? groupTypeFromXData
                 : (avgWidth >= girderThreshold ? "Girder" : "Beam");
 
+            // FIX: Check if beams have GroupIdentity (were grouped via Group command)
+            // If no GroupIdentity, this is an ungrouped single beam - use Handle as name
+            bool hasGroupIdentity = !string.IsNullOrEmpty(first.GroupId);
+
+            string displayName;
+            if (!string.IsNullOrEmpty(groupDisplayName))
+            {
+                // Use existing GroupName from XData/NOD
+                displayName = groupDisplayName;
+            }
+            else if (hasGroupIdentity)
+            {
+                // Has GroupIdentity but no GroupName - use axis-based naming
+                displayName = $"{groupType} [{axisName ?? first.Handle}] @Z={first.LevelZ:F0}";
+            }
+            else
+            {
+                // No GroupIdentity = ungrouped single beam - use Handle
+                displayName = $"Frame [{first.Handle}]";
+            }
+
             var group = new BeamGroup
             {
-                // FIX: Use axis-based GroupName for display, Label for rebar grouping
-                // Priority: groupDisplayName (from NOD) > auto-generate > Handle fallback
-                // groupLabel (NamingEngine) goes to Name property only
-                GroupName = !string.IsNullOrEmpty(groupDisplayName)
-                    ? groupDisplayName
-                    : $"{groupType} [{axisName ?? first.Handle}] @Z={first.LevelZ:F0}",
+                // FIX: Use display name logic above
+                GroupName = displayName,
                 Name = sectionLabel, // Label from NamingEngine (like "1GHY5") for rebar grouping
                 GroupType = groupType,
                 Direction = direction,

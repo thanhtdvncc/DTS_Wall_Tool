@@ -545,14 +545,7 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public bool AllowOddLegs { get; set; } = false;
 
-        /// <summary>
-        /// DEPRECATED (V3.5.2): Use DtsSettings.Stirrup.GetLegCount() instead.
-        /// Quy tắc tự động số nhánh theo bề rộng - Kept for backward compatibility only.
-        /// Format: "250-2 400-3 600-4" (b≤250→2 nhánh, b≤400→3 nhánh...)
-        /// </summary>
-        [Obsolete("Use DtsSettings.Stirrup.GetLegCount(barCount, hasAddon) instead")]
-        [JsonIgnore]
-        public string AutoLegsRules { get; set; } = "250-2 400-3 600-4";
+        // NOTE: AutoLegsRules đã xóa - dùng DtsSettings.Stirrup.GetLegCount() thay thế
 
         /// <summary>
         /// Chiều cao tối thiểu để đặt thép sườn (mm)
@@ -613,11 +606,7 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public double DensityHeuristic { get; set; } = 180.0;
 
-        // ===== BACKWARD COMPATIBILITY =====
-        // Các property cũ để không break code cũ
-        [JsonIgnore] public double TorsionDist_Top { get => TorsionDist_TopBar; set => TorsionDist_TopBar = value; }
-        [JsonIgnore] public double TorsionDist_Bot { get => TorsionDist_BotBar; set => TorsionDist_BotBar = value; }
-        [JsonIgnore] public double TorsionDist_Side { get => TorsionDist_SideBar; set => TorsionDist_SideBar = value; }
+        // NOTE: TorsionDist_Top/Bot/Side aliases đã xóa - dùng TorsionDist_TopBar/BotBar/SideBar trực tiếp
     }
 
     /// <summary>
@@ -668,17 +657,8 @@ namespace DTS_Engine.Core.Data
     /// </summary>
     public class NamingConfig
     {
-        // === LEGACY PROPERTIES (DEPRECATED) ===
-        // Giữ lại để backward compat khi đọc JSON cũ.
-        // Sử dụng StoryNamingConfig.BeamPrefix/GirderPrefix/Suffix thay thế.
-        [Obsolete("Use StoryNamingConfig per-story settings instead")]
-        public string BeamPrefix { get; set; } = "B";
-        [Obsolete("Use StoryNamingConfig per-story settings instead")]
-        public string GirderPrefix { get; set; } = "G";
-        [Obsolete("Use StoryNamingConfig per-story settings instead")]
-        public string ColumnPrefix { get; set; } = "C";
-        [Obsolete("Use StoryNamingConfig per-story settings instead")]
-        public string BeamSuffix { get; set; } = "";
+        // NOTE: BeamPrefix/GirderPrefix/ColumnPrefix/BeamSuffix đã xóa
+        // Sử dụng StoryNamingConfig per-story settings thay thế
 
         /// <summary>
         /// Nhóm theo trục (A1, B2...)

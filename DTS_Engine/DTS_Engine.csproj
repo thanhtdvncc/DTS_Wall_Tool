@@ -250,7 +250,7 @@
     <Compile Include="Core\Utils\VisualUtils.cs" />
     <Compile Include="Core\Utils\XDataUtils.cs" />
     <Compile Include="Core\Utils\GridUtils.cs" />
-    <Compile Include="Core\Utils\RebarXDataBridge.cs" />
+    <!-- NOTE: RebarXDataBridge.cs đã xóa - dead code không được sử dụng -->
     <Compile Include="DataStructures\SpatialHash.cs" />
     <Compile Include="Models\AxisLine.cs" />
     <Compile Include="Models\Base\LineGeometryBase.cs" />

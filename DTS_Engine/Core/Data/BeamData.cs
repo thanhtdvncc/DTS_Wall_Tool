@@ -202,16 +202,16 @@ namespace DTS_Engine.Core.Data
             if (!string.IsNullOrEmpty(SectionName)) dict["xSectionName"] = SectionName;
             if (Length.HasValue) dict["xLength"] = Length.Value;
             if (!string.IsNullOrEmpty(Material)) dict["xMaterial"] = Material;
-            if (!string.IsNullOrEmpty(ConcreteGrade)) dict["xConcreteGrade"] = ConcreteGrade;
+            // NOTE: xConcreteGrade không còn được ghi - có thể suy ra từ xMaterial
             dict["xSupport_I"] = SupportI;
             dict["xSupport_J"] = SupportJ;
             if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
             if (!string.IsNullOrEmpty(SectionLabel)) dict["xSectionLabel"] = SectionLabel;
             if (!string.IsNullOrEmpty(GroupType)) dict["xGroupType"] = GroupType;
             if (!string.IsNullOrEmpty(GroupName)) dict["xGroupName"] = GroupName;
-            if (!string.IsNullOrEmpty(BeamType)) dict["xBeamType"] = BeamType;
-            dict["xUnitWeight"] = UnitWeight;
-            if (!string.IsNullOrEmpty(LoadPattern)) dict["xLoadPattern"] = LoadPattern;
+            // NOTE: xBeamType không còn được ghi vào XData - GroupType được xác định bởi BeamGroupDetector
+            // NOTE: xUnitWeight không còn được ghi - dùng default 25.0 kN/m³
+            // NOTE: xLoadPattern không còn được ghi vào XData - dùng default "DL" trong CalculateLoads()
             dict["xSupport_I"] = SupportI;
             dict["xSupport_J"] = SupportJ;
 
@@ -243,16 +243,15 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xSectionName", out var sn)) SectionName = sn?.ToString();
             if (dict.TryGetValue("xLength", out var len)) Length = ConvertToDouble(len);
             if (dict.TryGetValue("xMaterial", out var mat)) Material = mat?.ToString();
-            if (dict.TryGetValue("xConcreteGrade", out var cg)) ConcreteGrade = cg?.ToString();
-            if (dict.TryGetValue("xBeamType", out var bt)) BeamType = bt?.ToString();
-            if (dict.TryGetValue("xUnitWeight", out var uw)) UnitWeight = ConvertToDouble(uw) ?? 25.0;
-            if (dict.TryGetValue("xLoadPattern", out var lp)) LoadPattern = lp?.ToString();
+            // NOTE: xConcreteGrade không còn được đọc - có thể suy ra từ xMaterial
+            // NOTE: xBeamType không còn được đọc - GroupType được xác định bởi BeamGroupDetector
+            // NOTE: xUnitWeight không còn được đọc - dùng default 25.0 kN/m³
+            // NOTE: xLoadPattern không còn được đọc - dùng default "DL"
             if (dict.TryGetValue("xSupport_I", out var si)) SupportI = System.Convert.ToInt32(si);
             if (dict.TryGetValue("xSupport_J", out var sj)) SupportJ = System.Convert.ToInt32(sj);
             if (dict.TryGetValue("xOnAxis", out var oa)) AxisName = oa?.ToString();
             if (dict.TryGetValue("xSectionLabel", out var sl)) SectionLabel = sl?.ToString();
-            // Backward compat: also try old key
-            if (string.IsNullOrEmpty(SectionLabel) && dict.TryGetValue("xGroupLabel", out var gl)) SectionLabel = gl?.ToString();
+            // NOTE: xGroupLabel fallback đã xóa - dùng xSectionLabel duy nhất
             if (dict.TryGetValue("xGroupType", out var gt)) GroupType = gt?.ToString();
             if (dict.TryGetValue("xGroupName", out var gn)) GroupName = gn?.ToString();
 
