@@ -727,12 +727,13 @@ namespace DTS_Engine.Commands
                         botStrings[2] += $"+{br.Count}D{br.Diameter}";
                 }
 
-                // CRITICAL: If geometry is R->L, flip the strings back before saving
-                if (topo.IsGeometryReversed)
-                {
-                    topStrings = FlipArray(topStrings);
-                    botStrings = FlipArray(botStrings);
-                }
+                // FIX 1.4: REMOVED flip logic - XData stores L→R canonical order
+                // Old code:
+                // if (topo.IsGeometryReversed)
+                // {
+                //     topStrings = FlipArray(topStrings);
+                //     botStrings = FlipArray(botStrings);
+                // }
 
                 // Get stirrup strings
                 var stirrupStrings = new string[3];
@@ -742,8 +743,9 @@ namespace DTS_Engine.Commands
                     sol.StirrupDesigns.TryGetValue($"{spanId}_Stirrup_Mid", out stirrupStrings[1]);
                     sol.StirrupDesigns.TryGetValue($"{spanId}_Stirrup_Right", out stirrupStrings[2]);
 
-                    if (topo.IsGeometryReversed)
-                        stirrupStrings = FlipArray(stirrupStrings);
+                    // FIX 1.4: REMOVED flip logic
+                    // if (topo.IsGeometryReversed)
+                    //     stirrupStrings = FlipArray(stirrupStrings);
                 }
 
                 // Update XData (legacy format - backward compatible)
@@ -780,13 +782,15 @@ namespace DTS_Engine.Commands
                         botL1[2] = $"{br1.Count}D{br1.Diameter}";
                 }
 
-                if (topo.IsGeometryReversed)
-                {
-                    topL0 = FlipArray(topL0);
-                    botL0 = FlipArray(botL0);
-                    topL1 = FlipArray(topL1);
-                    botL1 = FlipArray(botL1);
-                }
+                // FIX 1.4: REMOVED flip logic - L0/L1 stored in L→R order
+                // Old code:
+                // if (topo.IsGeometryReversed)
+                // {
+                //     topL0 = FlipArray(topL0);
+                //     botL0 = FlipArray(botL0);
+                //     topL1 = FlipArray(topL1);
+                //     botL1 = FlipArray(botL1);
+                // }
 
                 XDataUtils.WriteCurrentRebar(obj, topL0, topL1, botL0, botL1, tr);
 
@@ -1417,13 +1421,14 @@ namespace DTS_Engine.Commands
                 if (rawData.TryGetValue("StirrupString", out var stirObj) && stirObj is object[] stirArr)
                     stirrupStrings = stirArr.Select(x => x?.ToString()).ToArray();
 
-                // Flip if geometry reversed
-                if (topo.IsGeometryReversed)
-                {
-                    topStrings = FlipArray(topStrings);
-                    botStrings = FlipArray(botStrings);
-                    stirrupStrings = FlipArray(stirrupStrings);
-                }
+                // FIX 1.4: REMOVED flip logic - XData is in L→R canonical order
+                // Old code:
+                // if (topo.IsGeometryReversed)
+                // {
+                //     topStrings = FlipArray(topStrings);
+                //     botStrings = FlipArray(botStrings);
+                //     stirrupStrings = FlipArray(stirrupStrings);
+                // }
 
                 // Parse strings into RebarInfo structures
                 if (topStrings != null && topStrings.Length >= 3)

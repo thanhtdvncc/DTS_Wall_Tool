@@ -602,14 +602,16 @@ namespace DTS_Engine.Core.Algorithms
             var torsionArea = data.TorsionArea ?? new double[3];
             var shearArea = data.ShearArea ?? new double[3];
 
-            // Nếu geometry bị đảo ngược (R->L), flip dữ liệu
-            if (topo.IsGeometryReversed)
-            {
-                topArea = FlipArray(topArea);
-                botArea = FlipArray(botArea);
-                torsionArea = FlipArray(torsionArea);
-                shearArea = FlipArray(shearArea);
-            }
+            // FIX 1.4: REMOVED flip logic - TopologyBuilder sorts beams L→R
+            // SAP data is read in geometric order, which is now canonical L→R
+            // Old code:
+            // if (topo.IsGeometryReversed)
+            // {
+            //     topArea = FlipArray(topArea);
+            //     botArea = FlipArray(botArea);
+            //     torsionArea = FlipArray(torsionArea);
+            //     shearArea = FlipArray(shearArea);
+            // }
 
             // Map 3 zones -> 6 positions
             for (int zi = 0; zi < 3; zi++)
