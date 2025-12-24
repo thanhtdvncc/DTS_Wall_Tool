@@ -49,11 +49,11 @@ namespace DTS_Engine.Core.Utils
             // Range format: "A-B" or "1-5"
             string startPart = FormatGridWithOffset(startGrid.Name, startDiff);
             string endPart = FormatGridWithOffset(endGrid.Name, endDiff);
-            
+
             // Clean up: if both are simple names, just show range
             if (!startPart.Contains("(") && !endPart.Contains("("))
                 return $"{startPart}-{endPart}";
-            
+
             // Otherwise show full format
             return $"{startPart}-{endPart}";
         }
@@ -121,7 +121,7 @@ namespace DTS_Engine.Core.Utils
 
             // === BUILD CROSS-AXIS RANGE ===
             string crossRange = FindAxisRange(crossAxisMin, crossAxisMax, crossAxisGrids);
-            
+
             // Clean the range for display
             if (crossRange.Contains("-"))
             {
@@ -139,9 +139,9 @@ namespace DTS_Engine.Core.Utils
                 // Check if we need to show offset from named axis
                 if (primaryAxisGrids != null && primaryAxisGrids.Count > 0)
                 {
-                    var matchedGrid = primaryAxisGrids.FirstOrDefault(g => 
+                    var matchedGrid = primaryAxisGrids.FirstOrDefault(g =>
                         g.Name.Equals(axisName, StringComparison.OrdinalIgnoreCase));
-                    
+
                     if (matchedGrid != null)
                     {
                         double offset = primaryAxisCoord - matchedGrid.Coordinate;

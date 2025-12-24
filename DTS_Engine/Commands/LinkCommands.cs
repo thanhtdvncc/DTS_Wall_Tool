@@ -863,13 +863,14 @@ namespace DTS_Engine.Commands
                     if (childObj == null) return;
 
                     var elemData = XDataUtils.ReadElementData(childObj);
-                    if (elemData == null || string.IsNullOrEmpty(elemData.OriginHandle))
+                    // V7.0: Check MotherHandle instead of OriginHandle for Group
+                    if (elemData == null || string.IsNullOrEmpty(elemData.MotherHandle))
                     {
                         WriteMessage("Dầm này không thuộc nhóm nào.");
                         return;
                     }
 
-                    motherHandle = elemData.OriginHandle;
+                    motherHandle = elemData.MotherHandle;
 
                     // Get Mother
                     var motherId = AcadUtils.GetObjectIdFromHandle(motherHandle);
@@ -1085,7 +1086,8 @@ namespace DTS_Engine.Commands
                         {
                             // Single beam - check if it has orphan link
                             var beam = group[0];
-                            if (!string.IsNullOrEmpty(beam.OriginHandle))
+                            // V7.0: Check MotherHandle instead of OriginHandle for Group
+                            if (!string.IsNullOrEmpty(beam.MotherHandle))
                             {
                                 // Has link but alone in group - orphan
                                 orphanBeams++;
@@ -1104,7 +1106,8 @@ namespace DTS_Engine.Commands
 
                             for (int i = 1; i < group.Count; i++)
                             {
-                                if (group[i].OriginHandle != mother.Handle)
+                                // V7.0: Check MotherHandle instead of OriginHandle
+                                if (group[i].MotherHandle != mother.Handle)
                                 {
                                     isValid = false;
                                     WriteMessage($"  ❌ Nhóm [{mother.Handle}]: Beam {group[i].Handle} không link đúng về Mother.");
@@ -1278,6 +1281,22 @@ namespace DTS_Engine.Commands
                         // Set SupportI/J for Girder classification
                         geom.SupportI = beamData?.SupportI ?? 1;
                         geom.SupportJ = beamData?.SupportJ ?? 1;
+
+                        // V7.0: Read Origin Point → StoryData → OffsetX/Y for relative coordinates
+                        if (!string.IsNullOrEmpty(elemData?.OriginHandle))
+                        {
+                            var originId = AcadUtils.GetObjectIdFromHandle(elemData.OriginHandle);
+                            if (originId != ObjectId.Null && !originId.IsErased)
+                            {
+                                var originObj = tr.GetObject(originId, OpenMode.ForRead);
+                                var storyData = XDataUtils.ReadStoryData(originObj);
+                                if (storyData != null)
+                                {
+                                    geom.OriginOffsetX = storyData.OffsetX;
+                                    geom.OriginOffsetY = storyData.OffsetY;
+                                }
+                            }
+                        }
                     }
 
                     // 3. GROUP BY COLLINEARITY + CONNECTIVITY (NOT by AxisName!)
@@ -1411,9 +1430,10 @@ namespace DTS_Engine.Commands
                                     // X-direction beam: runs along X-axis, is ON a Y-grid line
                                     // Primary axis = Y (grid lines like A, B, C, D, E)
                                     // Cross axis = X (grid lines like 1, 2, 3, ..., 12)
-                                    primaryAxisCoord = sortedGroup.Average(b => b.CenterY);
-                                    crossAxisMin = sortedGroup.Min(b => System.Math.Min(b.StartX, b.EndX));
-                                    crossAxisMax = sortedGroup.Max(b => System.Math.Max(b.StartX, b.EndX));
+                                    // V7.0: Use RelativeCenter/Start/End for offset calculation
+                                    primaryAxisCoord = sortedGroup.Average(b => b.RelativeCenterY);
+                                    crossAxisMin = sortedGroup.Min(b => System.Math.Min(b.RelativeStartX, b.RelativeEndX));
+                                    crossAxisMax = sortedGroup.Max(b => System.Math.Max(b.RelativeStartX, b.RelativeEndX));
                                     primaryAxisGrids = yGrids;
                                     crossAxisGrids = xGrids;
                                 }
@@ -1422,9 +1442,10 @@ namespace DTS_Engine.Commands
                                     // Y-direction beam: runs along Y-axis, is ON an X-grid line
                                     // Primary axis = X (grid lines like 1, 2, 3)
                                     // Cross axis = Y (grid lines like A, B, C)
-                                    primaryAxisCoord = sortedGroup.Average(b => b.CenterX);
-                                    crossAxisMin = sortedGroup.Min(b => System.Math.Min(b.StartY, b.EndY));
-                                    crossAxisMax = sortedGroup.Max(b => System.Math.Max(b.StartY, b.EndY));
+                                    // V7.0: Use RelativeCenter/Start/End for offset calculation
+                                    primaryAxisCoord = sortedGroup.Average(b => b.RelativeCenterX);
+                                    crossAxisMin = sortedGroup.Min(b => System.Math.Min(b.RelativeStartY, b.RelativeEndY));
+                                    crossAxisMax = sortedGroup.Max(b => System.Math.Max(b.RelativeStartY, b.RelativeEndY));
                                     primaryAxisGrids = xGrids;
                                     crossAxisGrids = yGrids;
                                 }

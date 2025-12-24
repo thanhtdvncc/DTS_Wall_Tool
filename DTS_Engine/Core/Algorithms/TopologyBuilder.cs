@@ -122,10 +122,10 @@ namespace DTS_Engine.Core.Algorithms
 
                     if (elemData != null)
                     {
-                        // Tìm Mother (OriginHandle)
-                        if (!string.IsNullOrEmpty(elemData.OriginHandle))
+                        // V7.0: Tìm Mother (MotherHandle) - không dùng OriginHandle (Origin Point tầng)
+                        if (!string.IsNullOrEmpty(elemData.MotherHandle))
                         {
-                            var motherId = AcadUtils.GetObjectIdFromHandle(elemData.OriginHandle);
+                            var motherId = AcadUtils.GetObjectIdFromHandle(elemData.MotherHandle);
                             if (motherId != ObjectId.Null && !motherId.IsErased && !expandedSet.Contains(motherId))
                             {
                                 expandedSet.Add(motherId);
@@ -229,6 +229,7 @@ namespace DTS_Engine.Core.Algorithms
                     ElementData = elemData,
                     RebarData = rebarData,
                     OriginHandle = elemData?.OriginHandle,
+                    MotherHandle = elemData?.MotherHandle, // V7.0: Group mother handle
                     SapElementName = rebarData?.SapElementName ?? (elemData as BeamData)?.SapFrameName
                 };
 
@@ -303,16 +304,16 @@ namespace DTS_Engine.Core.Algorithms
                 if (i > 0)
                 {
                     // Child: Link to Mother
-                    // Always call RegisterLink to overwrite any stale OriginHandle
+                    // V7.0: Write MotherHandle (Group) + keep OriginHandle (Origin Point tầng)
                     var result = XDataUtils.RegisterLink(obj, motherObj, isReference: false, tr);
-                    topology.OriginHandle = motherTopology.Handle;  // Always update memory state
+                    topology.MotherHandle = motherTopology.Handle;  // V7.0: Update Group Mother
                 }
                 else
                 {
-                    // Mother (i=0): Must point to ITSELF as Origin
-                    // This fixes the bug where Mother keeps stale OriginHandle (e.g., 3AA -> 33B)
+                    // Mother (i=0): Must point to ITSELF as Mother
+                    // V7.0: Mother self-references via MotherHandle
                     var result = XDataUtils.RegisterLink(obj, obj, isReference: false, tr);
-                    topology.OriginHandle = topology.Handle; // Self-reference
+                    topology.MotherHandle = topology.Handle; // V7.0: Self-reference
                 }
             }
 
@@ -725,12 +726,13 @@ namespace DTS_Engine.Core.Algorithms
                             continue;
 
                         // FIX P1: Check nếu connected via Link OR GroupId
-                        // GroupId fallback ensures correct grouping even when OriginHandle is stale
+                        // V7.0: GroupId fallback ensures correct grouping even when MotherHandle is stale
                         bool sameGroup = !string.IsNullOrEmpty(current.GroupId) &&
                                         current.GroupId == other.GroupId;
+                        // V7.0: Check MotherHandle thay vì OriginHandle cho Group logic
                         bool isLinked = sameGroup ||
-                                       current.OriginHandle == other.Handle ||
-                                       other.OriginHandle == current.Handle;
+                                       current.MotherHandle == other.Handle ||
+                                       other.MotherHandle == current.Handle;
 
                         if (isLinked)
                         {
@@ -862,7 +864,8 @@ namespace DTS_Engine.Core.Algorithms
             for (int i = 1; i < sortedGroup.Count; i++)
             {
                 var child = sortedGroup[i];
-                if (child.OriginHandle != expectedMother.Handle)
+                // V7.0: Check MotherHandle thay vì OriginHandle
+                if (child.MotherHandle != expectedMother.Handle)
                 {
                     needsRepair = true;
                     break;
@@ -1061,6 +1064,10 @@ namespace DTS_Engine.Core.Algorithms
 
         // Link info
         public string OriginHandle { get; set; }
+        /// <summary>
+        /// [V7.0] Handle của Mother beam trong Group
+        /// </summary>
+        public string MotherHandle { get; set; }
         public string SapElementName { get; set; }
 
         // V5.0: Group identification

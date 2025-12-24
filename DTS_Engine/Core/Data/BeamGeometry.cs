@@ -83,5 +83,39 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public bool IsGirder => (SupportI == 1 && SupportJ == 1)
                              || ((SupportI == 1 || SupportJ == 1) && !string.IsNullOrEmpty(AxisName));
+
+        #region V7.0: Origin Offset (để tính tọa độ tương đối cho GroupName)
+
+        /// <summary>
+        /// OffsetX từ Origin Point tầng (từ StoryData.OffsetX).
+        /// Dùng để tính tọa độ tương đối cho GroupName.
+        /// </summary>
+        public double OriginOffsetX { get; set; } = 0;
+
+        /// <summary>
+        /// OffsetY từ Origin Point tầng (từ StoryData.OffsetY).
+        /// Dùng để tính tọa độ tương đối cho GroupName.
+        /// </summary>
+        public double OriginOffsetY { get; set; } = 0;
+
+        /// <summary>Relative Start X (trừ OriginOffsetX)</summary>
+        public double RelativeStartX => StartX - OriginOffsetX;
+
+        /// <summary>Relative Start Y (trừ OriginOffsetY)</summary>
+        public double RelativeStartY => StartY - OriginOffsetY;
+
+        /// <summary>Relative End X (trừ OriginOffsetX)</summary>
+        public double RelativeEndX => EndX - OriginOffsetX;
+
+        /// <summary>Relative End Y (trừ OriginOffsetY)</summary>
+        public double RelativeEndY => EndY - OriginOffsetY;
+
+        /// <summary>Relative Center X</summary>
+        public double RelativeCenterX => (RelativeStartX + RelativeEndX) / 2;
+
+        /// <summary>Relative Center Y</summary>
+        public double RelativeCenterY => (RelativeStartY + RelativeEndY) / 2;
+
+        #endregion
     }
 }

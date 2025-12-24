@@ -30,9 +30,15 @@ namespace DTS_Engine.Core.Data
 
         /// <summary>
         /// Handle của đối tượng cha (Origin/Story)
-        /// Khi có giá trị = đã được liên kết với Origin
+        /// Khi có giá trị = đã được liên kết với Origin Point của tầng
         /// </summary>
         public string OriginHandle { get; set; } = null;
+
+        /// <summary>
+        /// [V7.0] Handle của Mother beam trong Group (dầm đầu tiên trong nhóm)
+        /// Khác với OriginHandle (Origin Point tầng)
+        /// </summary>
+        public string MotherHandle { get; set; } = null;
 
         /// <summary>
         /// Danh sách Handle của các đối tượng con
@@ -49,6 +55,11 @@ namespace DTS_Engine.Core.Data
         /// Kiểm tra đã được liên kết với Origin chưa
         /// </summary>
         public bool IsLinked => !string.IsNullOrEmpty(OriginHandle);
+
+        /// <summary>
+        /// [V7.0] Kiểm tra có thuộc Group (có Mother) không
+        /// </summary>
+        public bool HasMother => !string.IsNullOrEmpty(MotherHandle);
 
         #endregion
 
@@ -145,6 +156,10 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xOriginHandle", out var origin))
                 OriginHandle = origin?.ToString();
 
+            // V7.0: Read MotherHandle (Group mother beam)
+            if (dict.TryGetValue("xMotherHandle", out var mother))
+                MotherHandle = mother?.ToString();
+
             if (dict.TryGetValue("xBaseZ", out var baseZ))
                 BaseZ = ConvertToDouble(baseZ);
 
@@ -188,6 +203,10 @@ namespace DTS_Engine.Core.Data
 
             if (!string.IsNullOrEmpty(OriginHandle))
                 dict["xOriginHandle"] = OriginHandle;
+
+            // V7.0: Write MotherHandle (Group mother beam)
+            if (!string.IsNullOrEmpty(MotherHandle))
+                dict["xMotherHandle"] = MotherHandle;
 
             if (BaseZ.HasValue)
                 dict["xBaseZ"] = BaseZ.Value;

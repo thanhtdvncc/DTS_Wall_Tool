@@ -495,24 +495,40 @@ namespace DTS_Engine.Core.Utils
             }
             else
             {
-                // Gán làm Cha chính (Primary)
-                if (childData.OriginHandle == parentHandle)
-                    return LinkRegistrationResult.AlreadyLinked;
+                // V7.0: Phan biet Origin Point tang va Group Mother
+                // - Neu parentObj la Story -> ghi OriginHandle (Origin Point tang)
+                // - Neu parentObj la Beam/Frame -> ghi MotherHandle (Group Mother)
 
-                // Nếu đang có cha cũ khác, phải gỡ con khỏi cha cũ trước
-                if (!string.IsNullOrEmpty(childData.OriginHandle) && childData.OriginHandle != parentHandle)
-                {
-                    RemoveChildFromParentList(childData.OriginHandle, childHandle, tr);
-                }
-
-                childData.OriginHandle = parentHandle;
-
-                // Kế thừa cao độ nếu cha là Story
                 var pStory = ReadStoryData(parentObj);
                 if (pStory != null)
                 {
+                    // Parent la Story -> ghi OriginHandle (Origin Point tang)
+                    if (childData.OriginHandle == parentHandle)
+                        return LinkRegistrationResult.AlreadyLinked;
+
+                    // Neu dang co Origin cu khac, phai go truoc
+                    if (!string.IsNullOrEmpty(childData.OriginHandle) && childData.OriginHandle != parentHandle)
+                    {
+                        RemoveChildFromParentList(childData.OriginHandle, childHandle, tr);
+                    }
+
+                    childData.OriginHandle = parentHandle;
                     childData.BaseZ = pStory.Elevation;
                     childData.Height = pStory.StoryHeight;
+                }
+                else
+                {
+                    // V7.0: Parent la Beam/Frame -> ghi MotherHandle (Group Mother)
+                    if (childData.MotherHandle == parentHandle)
+                        return LinkRegistrationResult.AlreadyLinked;
+
+                    // Neu dang co Mother cu khac, phai go truoc
+                    if (!string.IsNullOrEmpty(childData.MotherHandle) && childData.MotherHandle != parentHandle)
+                    {
+                        RemoveChildFromParentList(childData.MotherHandle, childHandle, tr);
+                    }
+
+                    childData.MotherHandle = parentHandle;
                 }
 
                 result = LinkRegistrationResult.Primary;
@@ -546,23 +562,20 @@ namespace DTS_Engine.Core.Utils
 
             bool changed = false;
             string childHandle = childObj.Handle.ToString();
-            string promotedParent = null;
 
-            // Trường hợp A: Gỡ Cha chính
+            // V7.0: Truong hop A1: Go OriginHandle (Origin Point tang)
             if (childData.OriginHandle == targetParentHandle)
             {
                 childData.OriginHandle = null;
                 changed = true;
-
-                // Tự động dọn Reference đầu tiên lên làm Cha chính (nếu có)
-                if (childData.ReferenceHandles != null && childData.ReferenceHandles.Count > 0)
-                {
-                    promotedParent = childData.ReferenceHandles[0];
-                    childData.ReferenceHandles.RemoveAt(0);
-                    childData.OriginHandle = promotedParent;
-                }
             }
-            // Trường hợp B: Gỡ Reference
+            // V7.0: Truong hop A2: Go MotherHandle (Group Mother beam)
+            else if (childData.MotherHandle == targetParentHandle)
+            {
+                childData.MotherHandle = null;
+                changed = true;
+            }
+            // Truong hop B: Go Reference
             else if (childData.ReferenceHandles != null && childData.ReferenceHandles.Contains(targetParentHandle))
             {
                 childData.ReferenceHandles.Remove(targetParentHandle);
@@ -571,10 +584,10 @@ namespace DTS_Engine.Core.Utils
 
             if (changed)
             {
-                // Lưu Con (CRITICAL: Use UpdateElementData to preserve RebarData)
+                // Luu Con (CRITICAL: Use UpdateElementData to preserve RebarData)
                 UpdateElementData(childObj, childData, tr);
 
-                // Xóa Con khỏi danh sách của Cha (Target)
+                // Xoa Con khoi danh sach cua Cha (Target)
                 RemoveChildFromParentList(targetParentHandle, childHandle, tr);
 
                 return true;
@@ -584,7 +597,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// [ATOMIC] Xoa TOAN BO lien ket cua con (voi moi cha: Primary + References).
+        /// [ATOMIC] Xoa TOAN BO lien ket cua con (voi moi cha: Primary + Mother + References).
         /// </summary>
         public static void ClearAllLinks(DBObject childObj, Transaction tr)
         {
@@ -593,14 +606,21 @@ namespace DTS_Engine.Core.Utils
 
             string myHandle = childObj.Handle.ToString();
 
-            // 1. Go khoi Cha chinh
+            // V7.0: 1. Go khoi OriginHandle (Origin Point tang)
             if (!string.IsNullOrEmpty(data.OriginHandle))
             {
                 RemoveChildFromParentList(data.OriginHandle, myHandle, tr);
                 data.OriginHandle = null;
             }
 
-            // 2. Go khoi tat ca Reference
+            // V7.0: 2. Go khoi MotherHandle (Group Mother beam)
+            if (!string.IsNullOrEmpty(data.MotherHandle))
+            {
+                RemoveChildFromParentList(data.MotherHandle, myHandle, tr);
+                data.MotherHandle = null;
+            }
+
+            // 3. Go khoi tat ca Reference
             if (data.ReferenceHandles != null && data.ReferenceHandles.Count > 0)
             {
                 foreach (string refHandle in data.ReferenceHandles)
@@ -615,7 +635,7 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
-        /// Lay danh sach tat ca Parents (Primary + References) cua mot doi tuong.
+        /// Lay danh sach tat ca Parents (Origin + Mother + References) cua mot doi tuong.
         /// </summary>
         public static List<string> GetAllParentHandles(DBObject obj)
         {
@@ -623,8 +643,13 @@ namespace DTS_Engine.Core.Utils
             var data = ReadElementData(obj);
             if (data == null) return result;
 
+            // V7.0: Include OriginHandle (Origin Point tang)
             if (!string.IsNullOrEmpty(data.OriginHandle))
                 result.Add(data.OriginHandle);
+
+            // V7.0: Include MotherHandle (Group Mother beam)
+            if (!string.IsNullOrEmpty(data.MotherHandle))
+                result.Add(data.MotherHandle);
 
             if (data.ReferenceHandles != null)
                 result.AddRange(data.ReferenceHandles);
