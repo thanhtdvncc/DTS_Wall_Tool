@@ -232,6 +232,13 @@ namespace DTS_Engine.Core.Algorithms
                     SapElementName = rebarData?.SapElementName ?? (elemData as BeamData)?.SapFrameName
                 };
 
+                // CRITICAL FIX: Read GroupId from XData for Fix P1 GroupId fallback
+                var (groupId, _) = XDataUtils.ReadGroupIdentity(obj);
+                if (!string.IsNullOrEmpty(groupId))
+                {
+                    topology.GroupId = groupId;
+                }
+
                 // Lấy section dimensions
                 if (rebarData != null)
                 {
@@ -688,8 +695,12 @@ namespace DTS_Engine.Core.Algorithms
                         if (processed.Contains(other.Handle))
                             continue;
 
-                        // Check nếu connected via Link
-                        bool isLinked = current.OriginHandle == other.Handle ||
+                        // FIX P1: Check nếu connected via Link OR GroupId
+                        // GroupId fallback ensures correct grouping even when OriginHandle is stale
+                        bool sameGroup = !string.IsNullOrEmpty(current.GroupId) &&
+                                        current.GroupId == other.GroupId;
+                        bool isLinked = sameGroup ||
+                                       current.OriginHandle == other.Handle ||
                                        other.OriginHandle == current.Handle;
 
                         if (isLinked)

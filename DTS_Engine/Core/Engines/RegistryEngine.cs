@@ -227,6 +227,9 @@ namespace DTS_Engine.Core.Engines
 
             var catDict = EnsureCategoryDictionary(CATEGORY_BEAM_GROUPS, tr);
 
+            // Use GroupName as key for easier debugging, fallback to motherHandle
+            string registryKey = !string.IsNullOrEmpty(groupName) ? groupName : motherHandle;
+
             // Build Xrecord data
             var rb = new ResultBuffer();
             rb.Add(new TypedValue((int)DxfCode.Text, SCHEMA_VERSION));       // 0: Version
@@ -241,6 +244,7 @@ namespace DTS_Engine.Core.Engines
             rb.Add(new TypedValue((int)DxfCode.Text, DateTime.Now.ToString("o"))); // 9: CreatedAt
             rb.Add(new TypedValue((int)DxfCode.Text, DateTime.Now.ToString("o"))); // 10: ModifiedAt
             rb.Add(new TypedValue((int)DxfCode.Int32, childHandles?.Count ?? 0));  // 11: ChildCount
+            rb.Add(new TypedValue((int)DxfCode.Text, motherHandle));         // 12: MotherHandle (for lookup)
 
             // Add child handles
             if (childHandles != null)
@@ -251,16 +255,21 @@ namespace DTS_Engine.Core.Engines
                 }
             }
 
-            // Remove existing entry if present
+            // Remove existing entry if present (check both old key and new key)
             if (catDict.Contains(motherHandle))
             {
                 var oldRec = tr.GetObject(catDict.GetAt(motherHandle), OpenMode.ForWrite);
                 oldRec.Erase();
             }
+            if (registryKey != motherHandle && catDict.Contains(registryKey))
+            {
+                var oldRec = tr.GetObject(catDict.GetAt(registryKey), OpenMode.ForWrite);
+                oldRec.Erase();
+            }
 
-            // Create new entry
+            // Create new entry with GroupName key
             var xRec = new Xrecord { Data = rb };
-            catDict.SetAt(motherHandle, xRec);
+            catDict.SetAt(registryKey, xRec);
             tr.AddNewlyCreatedDBObject(xRec, true);
         }
 
