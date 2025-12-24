@@ -319,7 +319,18 @@ namespace DTS_Engine.Core.Algorithms
                     });
                     group.HasConsole = true;
                 }
-                // Else: internal joint without support = skip (no support between spans)
+                else
+                {
+                    // Internal joint (End of current beam, Start of next)
+                    // Force add support (Width=0) so Span logic creates separate span
+                    foundSupports.Add(new SupportData
+                    {
+                        Position = cumLen,
+                        Type = SupportType.Column, // Virtual column/joint
+                        SupportId = $"J{foundSupports.Count + 1}",
+                        Width = 0
+                    });
+                }
             }
 
             // Remove duplicate supports at same position (tolerance 0.05m)

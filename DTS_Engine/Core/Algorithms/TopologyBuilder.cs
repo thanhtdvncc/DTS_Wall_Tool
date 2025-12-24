@@ -299,13 +299,20 @@ namespace DTS_Engine.Core.Algorithms
                 // Write GroupState: SelectedIdx=0, IsLocked=false (initial state)
                 XDataUtils.WriteGroupState(obj, selectedIdx: 0, isLocked: false, tr);
 
-                // FIX 1.3R: ALWAYS establish star topology links for children (removes conditional)
-                // This repairs stale self-references and ensures correct Mother-Child relationships
+                // FIX 1.3R + Stale Mother Fix: ALWAYS establish links
                 if (i > 0)
                 {
+                    // Child: Link to Mother
                     // Always call RegisterLink to overwrite any stale OriginHandle
                     var result = XDataUtils.RegisterLink(obj, motherObj, isReference: false, tr);
                     topology.OriginHandle = motherTopology.Handle;  // Always update memory state
+                }
+                else
+                {
+                    // Mother (i=0): Must point to ITSELF as Origin
+                    // This fixes the bug where Mother keeps stale OriginHandle (e.g., 3AA -> 33B)
+                    var result = XDataUtils.RegisterLink(obj, obj, isReference: false, tr);
+                    topology.OriginHandle = topology.Handle; // Self-reference
                 }
             }
 
@@ -455,16 +462,20 @@ namespace DTS_Engine.Core.Algorithms
                         Width = hasEndSupport ? 400 : 0
                     });
                 }
-                else if (hasEndSupport)
+                else
                 {
-                    // Internal support
+                    // Internal node (End of current beam, Start of next)
+                    // ALWAYS add a support here to split spans, satisfying user requirement
+                    // to display/calculate each segment separately.
+                    // If hasEndSupport=false, we create a "Virtual Joint" (Width=0).
+
                     supports.Add(new SupportData
                     {
                         SupportId = $"C{supports.Count + 1}",
                         SupportIndex = supports.Count,
-                        Type = SupportType.Column,
+                        Type = hasEndSupport ? SupportType.Column : SupportType.Column, // Treat as point support
                         Position = cumPosition,
-                        Width = 400
+                        Width = hasEndSupport ? 400 : 0 // Virtual joint has 0 width
                     });
                 }
             }
