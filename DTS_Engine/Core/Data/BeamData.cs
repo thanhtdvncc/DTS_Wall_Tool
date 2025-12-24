@@ -88,16 +88,23 @@ namespace DTS_Engine.Core.Data
         public string AxisName { get; set; }
 
         /// <summary>
-        /// Tên nhóm từ NamingEngine (VD: "0GX1", "0BY3").
-        /// Được ghi vào XData của mother beam khi grouping.
+        /// Nhãn tiết diện từ NamingEngine (VD: "0GX1", "0BY3").
+        /// Dùng để nhóm các dầm cùng tiết diện/thép (Rebar Section Grouping).
+        /// KHÔNG PHẢI tên hiển thị group - đó là GroupName.
         /// </summary>
-        public string GroupLabel { get; set; }
+        public string SectionLabel { get; set; }
 
         /// <summary>
         /// Loại nhóm: "Girder" hoặc "Beam".
         /// Được ghi vào XData của mother beam khi grouping.
         /// </summary>
         public string GroupType { get; set; }
+
+        /// <summary>
+        /// Tên hiển thị nhóm (display name), ví dụ: "Girder D x 1-12 @Z=19500".
+        /// Được sinh từ Grid System và lưu vào XData để Viewer hiển thị thống nhất.
+        /// </summary>
+        public string GroupName { get; set; }
 
         #endregion
 
@@ -199,8 +206,9 @@ namespace DTS_Engine.Core.Data
             dict["xSupport_I"] = SupportI;
             dict["xSupport_J"] = SupportJ;
             if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
-            if (!string.IsNullOrEmpty(GroupLabel)) dict["xGroupLabel"] = GroupLabel;
+            if (!string.IsNullOrEmpty(SectionLabel)) dict["xSectionLabel"] = SectionLabel;
             if (!string.IsNullOrEmpty(GroupType)) dict["xGroupType"] = GroupType;
+            if (!string.IsNullOrEmpty(GroupName)) dict["xGroupName"] = GroupName;
             if (!string.IsNullOrEmpty(BeamType)) dict["xBeamType"] = BeamType;
             dict["xUnitWeight"] = UnitWeight;
             if (!string.IsNullOrEmpty(LoadPattern)) dict["xLoadPattern"] = LoadPattern;
@@ -242,8 +250,11 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xSupport_I", out var si)) SupportI = System.Convert.ToInt32(si);
             if (dict.TryGetValue("xSupport_J", out var sj)) SupportJ = System.Convert.ToInt32(sj);
             if (dict.TryGetValue("xOnAxis", out var oa)) AxisName = oa?.ToString();
-            if (dict.TryGetValue("xGroupLabel", out var gl)) GroupLabel = gl?.ToString();
+            if (dict.TryGetValue("xSectionLabel", out var sl)) SectionLabel = sl?.ToString();
+            // Backward compat: also try old key
+            if (string.IsNullOrEmpty(SectionLabel) && dict.TryGetValue("xGroupLabel", out var gl)) SectionLabel = gl?.ToString();
             if (dict.TryGetValue("xGroupType", out var gt)) GroupType = gt?.ToString();
+            if (dict.TryGetValue("xGroupName", out var gn)) GroupName = gn?.ToString();
 
             // Deserialize Loads (ILoadBearing)
             if (dict.TryGetValue("xLoads", out var loadsJson))

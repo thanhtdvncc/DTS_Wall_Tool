@@ -5,6 +5,7 @@ using DTS_Engine.Core.Data;
 using DTS_Engine.Core.Utils;
 using System.Collections.Generic;
 using System.Linq;
+using System;
 
 namespace DTS_Engine.Commands
 {
@@ -1149,6 +1150,9 @@ namespace DTS_Engine.Commands
         /// Các dầm thẳng hàng (cùng trục Y hoặc X trong phạm vi tolerance) 
         /// và liên tục (khoảng cách đầu-đuôi nhỏ) sẽ được gom thành 1 nhóm.
         /// Mỗi nhóm sử dụng Star Topology: dầm trái nhất là Mother.
+        /// 
+        /// [FIXED] Now uses Grid System from SAP for proper naming like AuditEngine.
+        /// Output format: "Girder D x 1-12 @Z=19500" or "Beam 3 x A-E @Z=19500"
         /// </summary>
         [CommandMethod("DTS_REBAR_GROUP_AUTO")]
         public void DTS_REBAR_GROUP_AUTO()
@@ -1173,6 +1177,25 @@ namespace DTS_Engine.Commands
                 int groupCount = 0;
                 int totalLinks = 0;
                 var detectedGroups = new List<Core.Data.BeamGroup>();
+                // FIX: Track used GroupNames to ensure uniqueness
+                var usedGroupNames = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+                // === LOAD GRID LINES FROM SAP ===
+                // This enables proper grid-based naming like AuditEngine
+                List<SapUtils.GridLineRecord> xGrids = new List<SapUtils.GridLineRecord>();
+                List<SapUtils.GridLineRecord> yGrids = new List<SapUtils.GridLineRecord>();
+
+                if (SapUtils.IsConnected)
+                {
+                    var allGrids = SapUtils.GetGridLines();
+                    xGrids = allGrids.Where(g => g.Orientation == "X").OrderBy(g => g.Coordinate).ToList();
+                    yGrids = allGrids.Where(g => g.Orientation == "Y").OrderBy(g => g.Coordinate).ToList();
+                    WriteMessage($"  Đã tải {xGrids.Count} trục X và {yGrids.Count} trục Y từ SAP.");
+                }
+                else
+                {
+                    WriteMessage("  [CẢNH BÁO] Chưa kết nối SAP - tên nhóm sẽ dùng tọa độ thay vì tên trục.");
+                }
 
                 UsingTransaction(tr =>
                 {
@@ -1192,7 +1215,6 @@ namespace DTS_Engine.Commands
 
                         var beamData = elemData as BeamData;
 
-                        // Get geometry
                         double startX = 0, startY = 0, startZ = 0;
                         double endX = 0, endY = 0, endZ = 0;
 
@@ -1210,7 +1232,6 @@ namespace DTS_Engine.Commands
                         }
                         else continue;
 
-                        // Get ResultData for A_req propagation
                         var rebarData = XDataUtils.ReadRebarData(ent);
 
                         var geom = new Core.Data.BeamGeometry
@@ -1228,7 +1249,6 @@ namespace DTS_Engine.Commands
                             SupportI = beamData?.SupportI ?? 1,
                             SupportJ = beamData?.SupportJ ?? 1,
                             ResultData = rebarData,
-                            // FIX: Store XData's BaseZ for correct story grouping (2D drawings have geometric Z=0)
                             BaseZ = beamData?.BaseZ
                         };
 
@@ -1307,8 +1327,6 @@ namespace DTS_Engine.Commands
                                 foreach (var other in beamsInStory)
                                 {
                                     if (usedHandles.Contains(other.Handle)) continue;
-
-                                    // Must have same direction
                                     if (isXDirection != other.IsXDirection) continue;
 
                                     // Check collinearity
@@ -1378,7 +1396,55 @@ namespace DTS_Engine.Commands
                                     .FirstOrDefault();
                                 string majorityAxisName = axisNames?.Key ?? "";
 
-                                // Create BeamGroup
+                                // === CALCULATE COORDINATES FOR GRID-BASED NAMING ===
+                                // Primary axis: The axis the beam runs ALONG (X-direction beam is on Y-axis)
+                                // Cross axis: The axis the beam spans ACROSS (X-direction beam spans X-axis)
+
+                                double primaryAxisCoord; // Coordinate on primary axis (for offset calculation)
+                                double crossAxisMin;     // Min coordinate on cross axis
+                                double crossAxisMax;     // Max coordinate on cross axis
+                                List<SapUtils.GridLineRecord> primaryAxisGrids;
+                                List<SapUtils.GridLineRecord> crossAxisGrids;
+
+                                if (isXDirection)
+                                {
+                                    // X-direction beam: runs along X-axis, is ON a Y-grid line
+                                    // Primary axis = Y (grid lines like A, B, C, D, E)
+                                    // Cross axis = X (grid lines like 1, 2, 3, ..., 12)
+                                    primaryAxisCoord = sortedGroup.Average(b => b.CenterY);
+                                    crossAxisMin = sortedGroup.Min(b => System.Math.Min(b.StartX, b.EndX));
+                                    crossAxisMax = sortedGroup.Max(b => System.Math.Max(b.StartX, b.EndX));
+                                    primaryAxisGrids = yGrids;
+                                    crossAxisGrids = xGrids;
+                                }
+                                else
+                                {
+                                    // Y-direction beam: runs along Y-axis, is ON an X-grid line
+                                    // Primary axis = X (grid lines like 1, 2, 3)
+                                    // Cross axis = Y (grid lines like A, B, C)
+                                    primaryAxisCoord = sortedGroup.Average(b => b.CenterX);
+                                    crossAxisMin = sortedGroup.Min(b => System.Math.Min(b.StartY, b.EndY));
+                                    crossAxisMax = sortedGroup.Max(b => System.Math.Max(b.StartY, b.EndY));
+                                    primaryAxisGrids = xGrids;
+                                    crossAxisGrids = yGrids;
+                                }
+
+                                // === GENERATE GROUP NAME USING GRID SYSTEM ===
+                                string baseGroupName = Core.Utils.GridUtils.GenerateUniqueGroupName(
+                                    groupType,
+                                    isXDirection ? "X" : "Y",
+                                    majorityAxisName,
+                                    crossAxisMin,
+                                    crossAxisMax,
+                                    storyZ,
+                                    crossAxisGrids,
+                                    primaryAxisGrids,
+                                    primaryAxisCoord);
+
+                                // Ensure truly unique by checking against already-used names
+                                string finalGroupName = Core.Utils.GridUtils.EnsureUniqueGroupName(baseGroupName, usedGroupNames);
+                                usedGroupNames.Add(finalGroupName);
+
                                 var beamGroup = new Core.Data.BeamGroup
                                 {
                                     AxisName = majorityAxisName,
@@ -1389,16 +1455,10 @@ namespace DTS_Engine.Commands
                                     Height = sortedGroup.Average(b => b.Height),
                                     EntityHandles = sortedGroup.Select(b => b.Handle).ToList(),
                                     Source = "Auto",
-                                    IsSingleBeam = sortedGroup.Count == 1, // Mark single-beam groups
-                                    // Store geometry center for NamingEngine sorting
+                                    IsSingleBeam = sortedGroup.Count == 1,
                                     GeometryCenterX = sortedGroup.Average(b => b.CenterX),
                                     GeometryCenterY = sortedGroup.Average(b => b.CenterY),
-                                    // Generate axis-based GroupName for display (Phase 3)
-                                    GroupName = Core.Utils.GridUtils.GenerateGroupDisplayName(
-                                        groupType,
-                                        isXDirection ? "X" : "Y",
-                                        majorityAxisName,
-                                        sortedGroup.Count)
+                                    GroupName = finalGroupName
                                 };
 
                                 allBeamGroups.Add(beamGroup);
@@ -1436,28 +1496,25 @@ namespace DTS_Engine.Commands
                                 VisualUtils.HighlightObjects(childObjIds, 3); // Green
                                 VisualUtils.DrawLinkLines(motherObjId, childObjIds, 3);
 
-                                // Display with axis info if available
-                                string axisInfo = string.IsNullOrEmpty(majorityAxisName) ? "" : $" [{majorityAxisName}]";
-                                WriteMessage($"  Nhóm {groupCount + 1}: {sortedGroup.Count} dầm ({groupType}{axisInfo} @Z={storyZ:F0})");
+                                // Display with proper grid-based name
+                                WriteMessage($"  Nhóm {groupCount + 1}: {sortedGroup.Count} dầm ({finalGroupName})");
                                 groupCount++;
                             }
                         }
                     }
 
-                    // 4. Auto Labeling với NamingEngine
+                    // Auto Labeling với NamingEngine
                     if (allBeamGroups.Count > 0)
                     {
                         var settings = DtsSettings.Instance;
                         Core.Algorithms.NamingEngine.AutoLabeling(allBeamGroups, settings);
                         WriteMessage($"  → Đã đặt tên cho {allBeamGroups.Count} nhóm với NamingEngine.");
 
-                        // 5. Persist group names to mother beam XData
+                        // Persist to XData + NOD
                         foreach (var group in allBeamGroups)
                         {
                             if (group.EntityHandles == null || group.EntityHandles.Count == 0) continue;
-                            if (string.IsNullOrEmpty(group.Name)) continue;
 
-                            // Get mother beam (first in EntityHandles)
                             string motherHandle = group.EntityHandles[0];
                             if (handleToObjectId.TryGetValue(motherHandle, out var motherObjId))
                             {
@@ -1465,16 +1522,14 @@ namespace DTS_Engine.Commands
                                 var beamData = XDataUtils.ReadElementData(motherObj) as BeamData;
                                 if (beamData != null)
                                 {
-                                    beamData.GroupLabel = group.Name;
+                                    beamData.SectionLabel = group.Name; // NamingEngine label for section grouping
                                     beamData.GroupType = group.GroupType;
-                                    // CRITICAL: Use UpdateElementData to MERGE, not WriteElementData which REPLACES all XData
-                                    // This preserves RebarData (TopArea, BotArea) from SAP import
+                                    beamData.GroupName = group.GroupName; // Display name for Viewer
                                     XDataUtils.UpdateElementData(motherObj, beamData, tr);
                                 }
                             }
 
-                            // === DUAL-WRITE: Sync to NOD Registry ===
-                            // This provides redundant storage for self-healing capabilities
+                            // Register in NOD (key = motherHandle, not GroupName!)
                             Core.Engines.RegistryEngine.RegisterBeamGroup(
                                 motherHandle: motherHandle,
                                 groupName: group.GroupName,

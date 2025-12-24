@@ -351,15 +351,16 @@ namespace DTS_Engine.Core.Algorithms
             double avgWidth = topologies.Average(t => t.Width);
             double girderThreshold = settings?.Naming?.GirderMinWidth ?? 300;
 
-            // Read GroupLabel/GroupType from mother beam XData (first topology)
+            // Read SectionLabel (NamingEngine) and GroupName (display) from mother beam XData
             var motherBeamData = first.ElementData as BeamData;
-            string groupLabel = motherBeamData?.GroupLabel;
+            string sectionLabel = motherBeamData?.SectionLabel;
             string groupTypeFromXData = motherBeamData?.GroupType;
             string axisName = motherBeamData?.AxisName;
-            string groupDisplayName = null; // Will be populated from NOD if available
+            // PRIORITY: Read GroupName (display name) from XData first
+            string groupDisplayName = motherBeamData?.GroupName;
 
             // === NOD FALLBACK: Try registry if XData is missing ===
-            if (string.IsNullOrEmpty(groupLabel))
+            if (string.IsNullOrEmpty(sectionLabel))
             {
                 try
                 {
@@ -368,7 +369,7 @@ namespace DTS_Engine.Core.Algorithms
                         var regInfo = Engines.RegistryEngine.LookupBeamGroup(first.Handle, tr);
                         if (regInfo != null)
                         {
-                            groupLabel = regInfo.Name;
+                            sectionLabel = regInfo.Name;
                             groupDisplayName = regInfo.GroupName;
                             if (string.IsNullOrEmpty(groupTypeFromXData))
                                 groupTypeFromXData = regInfo.GroupType;
@@ -394,7 +395,7 @@ namespace DTS_Engine.Core.Algorithms
                 GroupName = !string.IsNullOrEmpty(groupDisplayName)
                     ? groupDisplayName
                     : $"{groupType} [{axisName ?? first.Handle}] @Z={first.LevelZ:F0}",
-                Name = groupLabel, // Label from NamingEngine (like "1GHY5") for rebar grouping
+                Name = sectionLabel, // Label from NamingEngine (like "1GHY5") for rebar grouping
                 GroupType = groupType,
                 Direction = direction,
                 AxisName = axisName, // Also store axis name for reference

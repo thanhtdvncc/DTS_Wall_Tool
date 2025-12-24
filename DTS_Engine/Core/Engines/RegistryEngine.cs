@@ -1,4 +1,4 @@
-using Autodesk.AutoCAD.ApplicationServices;
+﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using System;
@@ -223,17 +223,19 @@ namespace DTS_Engine.Core.Engines
             List<string> childHandles,
             Transaction tr)
         {
-            if (string.IsNullOrEmpty(motherHandle)) return;
+            if (string.IsNullOrWhiteSpace(motherHandle)) return;
 
             var catDict = EnsureCategoryDictionary(CATEGORY_BEAM_GROUPS, tr);
 
-            // Use GroupName as key for easier debugging, fallback to motherHandle
-            string registryKey = !string.IsNullOrEmpty(groupName) ? groupName : motherHandle;
+            // CRITICAL:
+            // - NOD key must be stable and unique. Using display GroupName as key causes collisions and overwrites.
+            // - Use MotherHandle as the dictionary key.
+            string registryKey = motherHandle;
 
             // Build Xrecord data
             var rb = new ResultBuffer();
             rb.Add(new TypedValue((int)DxfCode.Text, SCHEMA_VERSION));       // 0: Version
-            rb.Add(new TypedValue((int)DxfCode.Text, groupName ?? ""));      // 1: GroupName
+            rb.Add(new TypedValue((int)DxfCode.Text, groupName ?? ""));      // 1: GroupName (display/debug)
             rb.Add(new TypedValue((int)DxfCode.Text, name ?? ""));           // 2: Name (NamingEngine)
             rb.Add(new TypedValue((int)DxfCode.Text, groupType ?? "Beam"));  // 3: GroupType
             rb.Add(new TypedValue((int)DxfCode.Text, direction ?? "X"));     // 4: Direction
@@ -244,9 +246,8 @@ namespace DTS_Engine.Core.Engines
             rb.Add(new TypedValue((int)DxfCode.Text, DateTime.Now.ToString("o"))); // 9: CreatedAt
             rb.Add(new TypedValue((int)DxfCode.Text, DateTime.Now.ToString("o"))); // 10: ModifiedAt
             rb.Add(new TypedValue((int)DxfCode.Int32, childHandles?.Count ?? 0));  // 11: ChildCount
-            rb.Add(new TypedValue((int)DxfCode.Text, motherHandle));         // 12: MotherHandle (for lookup)
+            rb.Add(new TypedValue((int)DxfCode.Text, motherHandle));         // 12: MotherHandle
 
-            // Add child handles
             if (childHandles != null)
             {
                 foreach (var child in childHandles)
@@ -255,19 +256,20 @@ namespace DTS_Engine.Core.Engines
                 }
             }
 
-            // Remove existing entry if present (check both old key and new key)
+            // Replace existing entry by motherHandle
             if (catDict.Contains(motherHandle))
             {
                 var oldRec = tr.GetObject(catDict.GetAt(motherHandle), OpenMode.ForWrite);
                 oldRec.Erase();
             }
-            if (registryKey != motherHandle && catDict.Contains(registryKey))
+
+            // Backward-compat: if legacy code wrote an entry keyed by GroupName, remove it to prevent stale duplicates.
+            if (!string.IsNullOrWhiteSpace(groupName) && catDict.Contains(groupName))
             {
-                var oldRec = tr.GetObject(catDict.GetAt(registryKey), OpenMode.ForWrite);
-                oldRec.Erase();
+                var legacyRec = tr.GetObject(catDict.GetAt(groupName), OpenMode.ForWrite);
+                legacyRec.Erase();
             }
 
-            // Create new entry with GroupName key
             var xRec = new Xrecord { Data = rb };
             catDict.SetAt(registryKey, xRec);
             tr.AddNewlyCreatedDBObject(xRec, true);
@@ -353,9 +355,11 @@ namespace DTS_Engine.Core.Engines
 
             try
             {
+                var storedMother = data.Length > 12 ? data[12].Value?.ToString() : null;
+
                 var info = new BeamGroupRegistryInfo
                 {
-                    MotherHandle = motherHandle,
+                    MotherHandle = !string.IsNullOrWhiteSpace(storedMother) ? storedMother : motherHandle,
                     GroupName = data[1].Value?.ToString() ?? "",
                     Name = data[2].Value?.ToString() ?? "",
                     GroupType = data[3].Value?.ToString() ?? "Beam",
@@ -375,7 +379,7 @@ namespace DTS_Engine.Core.Engines
 
                 // Parse child count and handles
                 int childCount = Convert.ToInt32(data[11].Value);
-                for (int i = 12; i < 12 + childCount && i < data.Length; i++)
+                for (int i = 13; i < 13 + childCount && i < data.Length; i++)
                 {
                     var childHandle = data[i].Value?.ToString();
                     if (!string.IsNullOrEmpty(childHandle))
@@ -473,16 +477,56 @@ namespace DTS_Engine.Core.Engines
         /// </summary>
         public static void UnregisterBeamGroup(string motherHandle, Transaction tr)
         {
+            if (string.IsNullOrWhiteSpace(motherHandle)) return;
+
             var catDict = GetCategoryDictionary(CATEGORY_BEAM_GROUPS, tr);
             if (catDict == null) return;
 
-            // Need write access to remove
             catDict = (DBDictionary)tr.GetObject(catDict.ObjectId, OpenMode.ForWrite);
 
+            // Remove the canonical entry keyed by mother handle
             if (catDict.Contains(motherHandle))
             {
-                var xRec = tr.GetObject(catDict.GetAt(motherHandle), OpenMode.ForWrite);
-                xRec.Erase();
+                var xRecObj = tr.GetObject(catDict.GetAt(motherHandle), OpenMode.ForWrite);
+                var xRec = xRecObj as Xrecord;
+                string legacyGroupName = null;
+
+                if (xRec?.Data != null)
+                {
+                    var arr = xRec.Data.AsArray();
+                    if (arr.Length > 1)
+                        legacyGroupName = arr[1].Value?.ToString();
+                }
+
+                xRecObj.Erase();
+
+                // Backward-compat: remove legacy entry keyed by GroupName if present
+                if (!string.IsNullOrWhiteSpace(legacyGroupName) && catDict.Contains(legacyGroupName))
+                {
+                    var legacy = tr.GetObject(catDict.GetAt(legacyGroupName), OpenMode.ForWrite);
+                    legacy.Erase();
+                }
+
+                return;
+            }
+
+            // If caller passed a legacy key (GroupName), try remove it too.
+            // Since the canonical key is motherHandle, we must search for an entry whose stored GroupName matches.
+            foreach (var entry in catDict)
+            {
+                var xRec = tr.GetObject(entry.Value, OpenMode.ForRead) as Xrecord;
+                if (xRec?.Data == null) continue;
+
+                var arr = xRec.Data.AsArray();
+                if (arr.Length <= 1) continue;
+
+                var storedGroupName = arr[1].Value?.ToString();
+                if (!string.IsNullOrWhiteSpace(storedGroupName) && string.Equals(storedGroupName, motherHandle, StringComparison.OrdinalIgnoreCase))
+                {
+                    var toErase = tr.GetObject(entry.Value, OpenMode.ForWrite);
+                    toErase.Erase();
+                    break;
+                }
             }
         }
 
@@ -533,25 +577,26 @@ namespace DTS_Engine.Core.Engines
         /// <returns>True if resurrect succeeded</returns>
         public static bool ResurrectGroup(string groupId, List<string> memberHandles, Transaction tr)
         {
-            if (string.IsNullOrEmpty(groupId) || memberHandles == null || memberHandles.Count == 0)
+            if (string.IsNullOrWhiteSpace(groupId) || memberHandles == null || memberHandles.Count == 0)
                 return false;
 
-            // Filter to valid handles only
             var validHandles = memberHandles.Where(h => IsValidHandle(h, tr)).ToList();
             if (validHandles.Count == 0) return false;
 
-            // CRITICAL: Sort by SpanIndex from XData to ensure correct order
             var sortedHandles = SortHandlesBySpanIndex(validHandles, tr);
+            if (sortedHandles.Count == 0) return false;
 
-            // First handle (lowest SpanIndex) becomes mother
             string motherHandle = sortedHandles[0];
             var childHandles = sortedHandles.Skip(1).ToList();
 
-            // Register to NOD
+            // IMPORTANT:
+            // `groupId` is an identity value from XData. It must NOT be confused with `GroupName` (display/debug).
+            // When resurrecting from XData, we only re-create membership. Display naming should be re-derived later
+            // (e.g., by BeamGroupDetector / grouping command) and then persisted via RegisterBeamGroup.
             RegisterBeamGroup(
                 motherHandle: motherHandle,
-                groupName: groupId,
-                name: "", // Will be set by NamingEngine later
+                groupName: "", // display name unknown here
+                name: "",      // NamingEngine label unknown here
                 groupType: "Beam",
                 direction: "",
                 axisName: "",

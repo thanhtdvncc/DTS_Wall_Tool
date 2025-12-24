@@ -1652,7 +1652,7 @@ namespace DTS_Engine.UI.Forms
                         // Use already-read beamData if available
                         if (beamData != null)
                         {
-                            groupName = beamData.GroupLabel ?? "";
+                            groupName = beamData.GroupName ?? beamData.SectionLabel ?? "";
                             if (beamData.Width.HasValue) width = beamData.Width.Value;
                             if (beamData.Height.HasValue) height = beamData.Height.Value;
                         }

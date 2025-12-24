@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -27,7 +27,7 @@ namespace DTS_Engine.Core.Utils
             List<SapUtils.GridLineRecord> grids, bool isPoint = false)
         {
             if (grids == null || grids.Count == 0)
-                return $"(~{minVal:0}..{maxVal:0})";
+                return $"~{minVal / 1000.0:F1}m";
 
             // Find nearest start grid
             var startGrid = grids.OrderBy(g => Math.Abs(g.Coordinate - minVal)).First();
@@ -47,7 +47,15 @@ namespace DTS_Engine.Core.Utils
                 return FormatGridWithOffset(startGrid.Name, startDiff);
 
             // Range format: "A-B" or "1-5"
-            return $"{FormatGridWithOffset(startGrid.Name, startDiff)}-{FormatGridWithOffset(endGrid.Name, endDiff)}";
+            string startPart = FormatGridWithOffset(startGrid.Name, startDiff);
+            string endPart = FormatGridWithOffset(endGrid.Name, endDiff);
+            
+            // Clean up: if both are simple names, just show range
+            if (!startPart.Contains("(") && !endPart.Contains("("))
+                return $"{startPart}-{endPart}";
+            
+            // Otherwise show full format
+            return $"{startPart}-{endPart}";
         }
 
         /// <summary>
@@ -55,7 +63,7 @@ namespace DTS_Engine.Core.Utils
         /// </summary>
         /// <param name="name">Grid name (e.g., "A", "1")</param>
         /// <param name="offsetMm">Offset from grid line in mm</param>
-        /// <returns>Formatted name like "A" or "A(+1.2m)"</returns>
+        /// <returns>Formatted name like "A" or "A(-1.2m)"</returns>
         public static string FormatGridWithOffset(string name, double offsetMm)
         {
             if (Math.Abs(offsetMm) < GRID_SNAP_TOLERANCE_MM) return name;
@@ -77,9 +85,141 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
+        /// Generate UNIQUE group display name using Grid System from SAP.
+        /// Format: "{Type} {PrimaryAxis} x {CrossAxisRange} @Z={LevelZ}"
+        /// 
+        /// Example outputs (like AuditEngine):
+        /// - "Girder D x 1-12 @Z=19500"        (Girder on axis D, spanning grids 1-12)
+        /// - "Girder D(-1.5m) x 2-11 @Z=19500" (Girder offset from D, spanning 2-11)
+        /// - "Beam 3 x A-E @Z=19500"           (Beam on axis 3, spanning A-E)
+        /// - "Beam x(A-C) @Z=19500"            (Off-axis beam spanning A-C)
+        /// 
+        /// CRITICAL: This ensures groups on same axis but different locations get UNIQUE names.
+        /// </summary>
+        /// <param name="groupType">Group type: "Girder" or "Beam"</param>
+        /// <param name="direction">Direction: "X" or "Y"</param>
+        /// <param name="axisName">Primary axis name (e.g., "E", "3") - may be empty for off-grid beams</param>
+        /// <param name="crossAxisMin">Minimum cross-axis coordinate (mm)</param>
+        /// <param name="crossAxisMax">Maximum cross-axis coordinate (mm)</param>
+        /// <param name="levelZ">Elevation in mm</param>
+        /// <param name="crossAxisGrids">Cross-axis grid lines for range naming (REQUIRED for proper naming)</param>
+        /// <param name="primaryAxisGrids">Primary axis grid lines (for offset calculation)</param>
+        /// <param name="primaryAxisCoord">Coordinate on primary axis (for offset calculation)</param>
+        /// <returns>Unique formatted group name</returns>
+        public static string GenerateUniqueGroupName(
+            string groupType,
+            string direction,
+            string axisName,
+            double crossAxisMin,
+            double crossAxisMax,
+            double levelZ,
+            List<SapUtils.GridLineRecord> crossAxisGrids,
+            List<SapUtils.GridLineRecord> primaryAxisGrids = null,
+            double primaryAxisCoord = 0)
+        {
+            string prefix = groupType ?? "Beam";
+
+            // === BUILD CROSS-AXIS RANGE ===
+            string crossRange = FindAxisRange(crossAxisMin, crossAxisMax, crossAxisGrids);
+            
+            // Clean the range for display
+            if (crossRange.Contains("-"))
+            {
+                // Already a range like "1-12" or "A-E"
+            }
+            else if (!crossRange.Contains("("))
+            {
+                // Single grid like "3" - still show as is
+            }
+
+            // === BUILD PRIMARY AXIS WITH OFFSET ===
+            string axisDisplay;
+            if (!string.IsNullOrEmpty(axisName))
+            {
+                // Check if we need to show offset from named axis
+                if (primaryAxisGrids != null && primaryAxisGrids.Count > 0)
+                {
+                    var matchedGrid = primaryAxisGrids.FirstOrDefault(g => 
+                        g.Name.Equals(axisName, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (matchedGrid != null)
+                    {
+                        double offset = primaryAxisCoord - matchedGrid.Coordinate;
+                        axisDisplay = FormatGridWithOffset(axisName, offset);
+                    }
+                    else
+                    {
+                        axisDisplay = axisName;
+                    }
+                }
+                else
+                {
+                    axisDisplay = axisName;
+                }
+            }
+            else
+            {
+                // No axis name - this is an off-grid beam
+                // Find nearest grid on primary axis
+                if (primaryAxisGrids != null && primaryAxisGrids.Count > 0)
+                {
+                    var nearest = primaryAxisGrids.OrderBy(g => Math.Abs(g.Coordinate - primaryAxisCoord)).First();
+                    double offset = primaryAxisCoord - nearest.Coordinate;
+                    axisDisplay = FormatGridWithOffset(nearest.Name, offset);
+                }
+                else
+                {
+                    // Fallback: use coordinate
+                    axisDisplay = $"~{primaryAxisCoord / 1000.0:F1}m";
+                }
+            }
+
+            // === BUILD FINAL NAME ===
+            // Format: "{Type} {PrimaryAxis} x {CrossRange} @Z={Level}"
+            string name;
+            if (!string.IsNullOrEmpty(axisDisplay) && axisDisplay != "?")
+            {
+                name = $"{prefix} {axisDisplay} x {crossRange} @Z={levelZ:F0}";
+            }
+            else
+            {
+                // Fallback for completely off-grid
+                name = $"{prefix} x({crossRange}) @Z={levelZ:F0}";
+            }
+
+            return name;
+        }
+
+        /// <summary>
+        /// Ensure GroupName is unique within a collection by appending counter if needed.
+        /// Called after initial name generation to handle edge cases where geometry ranges overlap.
+        /// </summary>
+        /// <param name="baseName">Initial generated name</param>
+        /// <param name="existingNames">Set of already-used names</param>
+        /// <returns>Unique name (baseName or baseName #2, #3, etc.)</returns>
+        public static string EnsureUniqueGroupName(string baseName, HashSet<string> existingNames)
+        {
+            if (existingNames == null || !existingNames.Contains(baseName))
+                return baseName;
+
+            // Append counter
+            int counter = 2;
+            string candidate;
+            do
+            {
+                candidate = $"{baseName} #{counter}";
+                counter++;
+            } while (existingNames.Contains(candidate));
+
+            return candidate;
+        }
+
+        /// <summary>
         /// Generate axis-based group display name.
         /// Format: "{Type}{Direction}-{AxisName} ({spanCount} spans)"
         /// Example: "GX-A (3 spans)", "BY-3 (2 spans)"
+        /// 
+        /// NOTE: This is the LEGACY format - use GenerateUniqueGroupName for new code.
         /// </summary>
         /// <param name="groupType">Group type: "Girder" or "Beam"</param>
         /// <param name="direction">Direction: "X" or "Y"</param>
