@@ -551,10 +551,23 @@ namespace DTS_Engine.Commands
                     {
                         // Apply best solution
                         var bestSolution = proposals.FirstOrDefault(p => p.IsValid);
-                        if (bestSolution == null && proposals.Count > 0)
+
+                        // FIX: Skip if no valid solution or if first solution is ERROR
+                        if (bestSolution == null)
                         {
-                            bestSolution = proposals.OrderByDescending(p => p.TotalScore).First();
-                            WriteMessage($"  ⚠️ {group.GroupName}: Không có phương án Valid, dùng fallback: {bestSolution.OptionName}");
+                            var firstSolution = proposals.FirstOrDefault();
+                            if (firstSolution != null && firstSolution.OptionName == "ERROR")
+                            {
+                                // This is an ERROR solution - likely no SAP data
+                                WriteMessage($"  ❌ {group.GroupName}: {firstSolution.ValidationMessage ?? "Thiếu dữ liệu SAP"}. Bỏ qua.");
+                                continue; // Skip this group entirely
+                            }
+                            // No valid solutions but not an ERROR - use fallback
+                            bestSolution = firstSolution;
+                            if (bestSolution != null)
+                            {
+                                WriteMessage($"  ⚠️ {group.GroupName}: Không có phương án Valid, dùng fallback: {bestSolution.OptionName}");
+                            }
                         }
 
                         if (bestSolution != null)
@@ -1431,6 +1444,10 @@ namespace DTS_Engine.Commands
                     span.Stirrup = stirrupStrings;
                 }
 
+                // FIX: Populate TopRebarInternal/BotRebarInternal for viewer display
+                // These are what the viewer's TopRebar/BotRebar properties read from
+                PopulateRebarInternalArrays(span, topStrings, botStrings);
+
                 // V5: Restore SelectedDesign from first span (group-level data)
                 if (i == 0 && rawData.TryGetValue("SelectedDesignJson", out var designJson) && designJson != null)
                 {
@@ -1527,6 +1544,42 @@ namespace DTS_Engine.Commands
                         span.IsManualModified = true;
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// FIX: Populate TopRebarInternal/BotRebarInternal from string arrays.
+        /// Viewer reads TopRebar property which returns TopRebarInternal.
+        /// </summary>
+        private void PopulateRebarInternalArrays(SpanData span, string[] topStrings, string[] botStrings)
+        {
+            if (span == null) return;
+
+            // Initialize if null
+            if (span.TopRebarInternal == null) span.TopRebarInternal = new string[3, 6];
+            if (span.BotRebarInternal == null) span.BotRebarInternal = new string[3, 6];
+
+            // Map 3-element array [Left, Mid, Right] to 6-position array [0,1,2,3,4,5]
+            // Positions: 0,1 = Left; 2,3 = Mid; 4,5 = Right
+            if (topStrings != null && topStrings.Length >= 3)
+            {
+                // Layer 0 (primary layer - backbone + addon combined)
+                span.TopRebarInternal[0, 0] = topStrings[0]; // Left
+                span.TopRebarInternal[0, 1] = topStrings[0];
+                span.TopRebarInternal[0, 2] = topStrings[1]; // Mid
+                span.TopRebarInternal[0, 3] = topStrings[1];
+                span.TopRebarInternal[0, 4] = topStrings[2]; // Right
+                span.TopRebarInternal[0, 5] = topStrings[2];
+            }
+
+            if (botStrings != null && botStrings.Length >= 3)
+            {
+                span.BotRebarInternal[0, 0] = botStrings[0];
+                span.BotRebarInternal[0, 1] = botStrings[0];
+                span.BotRebarInternal[0, 2] = botStrings[1];
+                span.BotRebarInternal[0, 3] = botStrings[1];
+                span.BotRebarInternal[0, 4] = botStrings[2];
+                span.BotRebarInternal[0, 5] = botStrings[2];
             }
         }
 

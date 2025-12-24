@@ -1467,7 +1467,9 @@ namespace DTS_Engine.Commands
                                 {
                                     beamData.GroupLabel = group.Name;
                                     beamData.GroupType = group.GroupType;
-                                    XDataUtils.WriteElementData(motherObj, beamData, tr);
+                                    // CRITICAL: Use UpdateElementData to MERGE, not WriteElementData which REPLACES all XData
+                                    // This preserves RebarData (TopArea, BotArea) from SAP import
+                                    XDataUtils.UpdateElementData(motherObj, beamData, tr);
                                 }
                             }
 

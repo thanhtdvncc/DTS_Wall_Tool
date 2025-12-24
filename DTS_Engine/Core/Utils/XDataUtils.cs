@@ -591,8 +591,9 @@ namespace DTS_Engine.Core.Utils
                 result = LinkRegistrationResult.Primary;
             }
 
-            // Lưu Con
-            WriteElementData(childObj, childData, tr);
+            // Lưu Con (CRITICAL: Use UpdateElementData to MERGE, not WriteElementData which REPLACES all XData)
+            // This preserves existing RebarData (TopArea, BotArea) which would be lost with WriteElementData
+            UpdateElementData(childObj, childData, tr);
 
             // Cập nhật Cha (thêm con vào danh sách)
             AddChildToParentList(parentObj, childHandle, tr);
@@ -643,8 +644,8 @@ namespace DTS_Engine.Core.Utils
 
             if (changed)
             {
-                // Lưu Con
-                WriteElementData(childObj, childData, tr);
+                // Lưu Con (CRITICAL: Use UpdateElementData to preserve RebarData)
+                UpdateElementData(childObj, childData, tr);
 
                 // Xóa Con khỏi danh sách của Cha (Target)
                 RemoveChildFromParentList(targetParentHandle, childHandle, tr);
@@ -682,7 +683,8 @@ namespace DTS_Engine.Core.Utils
                 data.ReferenceHandles.Clear();
             }
 
-            WriteElementData(childObj, data, tr);
+            // CRITICAL: Use UpdateElementData to preserve RebarData
+            UpdateElementData(childObj, data, tr);
         }
 
         /// <summary>

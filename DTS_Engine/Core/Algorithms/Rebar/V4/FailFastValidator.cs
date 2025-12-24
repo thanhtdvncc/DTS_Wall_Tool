@@ -196,6 +196,16 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     warnings.Add($"Span {i}: As_max = {maxArea:F1} cm² - giá trị rất lớn, kiểm tra đơn vị");
             }
 
+            // BUG FIX: Fail if ALL spans have no SAP area data
+            bool anySpanHasData = results.Any(r => r != null &&
+                ((r.TopArea != null && r.TopArea.Length > 0 && r.TopArea.Any(v => v > 0)) ||
+                 (r.BotArea != null && r.BotArea.Length > 0 && r.BotArea.Any(v => v > 0))));
+
+            if (!anySpanHasData)
+            {
+                return ValidationResult.Failure("Không có dữ liệu diện tích thép yêu cầu (As_req). Chưa link kết quả SAP2000?");
+            }
+
             return ValidationResult.Success(warnings);
         }
 
