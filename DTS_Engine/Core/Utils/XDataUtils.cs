@@ -323,7 +323,8 @@ namespace DTS_Engine.Core.Utils
 
         /// <summary>
         /// XData-first: cập nhật kết quả bố trí thép vào XData của phần tử, nhưng KHÔNG ghi đè các key khác (đặc biệt xType=BEAM).
-        /// Lưu các field của BeamResultData: TopRebarString/BotRebarString/StirrupString/WebBarString + TopAreaProv/BotAreaProv.
+        /// Lưu các field: TopRebarString/BotRebarString/StirrupString/WebBarString.
+        /// NOTE: TopAreaProv/BotAreaProv đã được xóa - tính từ RebarString khi cần.
         /// Đồng thời giữ tương thích ngược bằng cách update các key legacy (TopRebar/BotRebar/Stirrup/SideBar).
         /// V5: Thêm SelectedDesignJson để persist phương án đã chốt.
         /// </summary>
@@ -352,7 +353,7 @@ namespace DTS_Engine.Core.Utils
             {
                 top = Normalize3(topRebarString);
                 dict["TopRebarString"] = top;
-                dict["TopAreaProv"] = top.Select(RebarCalculator.ParseRebarArea).ToArray();
+                // REMOVED: TopAreaProv - calculate from RebarString when needed
                 dict[KEY_TOP_REBAR] = top[1] ?? "";
             }
 
@@ -360,7 +361,7 @@ namespace DTS_Engine.Core.Utils
             {
                 bot = Normalize3(botRebarString);
                 dict["BotRebarString"] = bot;
-                dict["BotAreaProv"] = bot.Select(RebarCalculator.ParseRebarArea).ToArray();
+                // REMOVED: BotAreaProv - calculate from RebarString when needed
                 dict[KEY_BOT_REBAR] = bot[1] ?? "";
             }
 

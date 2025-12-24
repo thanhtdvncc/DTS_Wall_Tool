@@ -192,6 +192,10 @@ namespace DTS_Engine.UI.Forms
                         // Extract columns from dts_point layer 
                         var allColumns = ExtractColumnsFromLayer("dts_point");
 
+                        // FIX: Pre-load rebar data from XData so viewer shows calculated data immediately
+                        // This is crucial to display rebar that was calculated previously (stored in XData)
+                        LoadRebarDataFromXDataForGroups(_groups);
+
                         var data = new
                         {
                             mode = viewMode,
@@ -722,6 +726,107 @@ namespace DTS_Engine.UI.Forms
         private double GetSpanX(SpanData span)
         {
             return span?.Segments?.FirstOrDefault()?.StartPoint?[0] ?? 0;
+        }
+
+        /// <summary>
+        /// Pre-load rebar data from XData into Span objects so viewer displays calculated data immediately.
+        /// This reads TopRebarString/BotRebarString from XData and populates Span.TopL0/BotL0 arrays.
+        /// </summary>
+        private void LoadRebarDataFromXDataForGroups(List<BeamGroup> groups)
+        {
+            if (groups == null || groups.Count == 0) return;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            var db = doc?.Database;
+            if (db == null) return;
+
+            try
+            {
+                using (doc.LockDocument())
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    foreach (var group in groups)
+                    {
+                        if (group?.Spans == null) continue;
+
+                        for (int spanIdx = 0; spanIdx < group.Spans.Count; spanIdx++)
+                        {
+                            var span = group.Spans[spanIdx];
+                            if (span == null) continue;
+
+                            // Get handle from segment
+                            var seg = span.Segments?.FirstOrDefault();
+                            string handle = seg?.EntityHandle;
+
+                            // Fallback to EntityHandles list if segment has no handle
+                            if (string.IsNullOrWhiteSpace(handle) && group.EntityHandles != null && spanIdx < group.EntityHandles.Count)
+                            {
+                                handle = group.EntityHandles[spanIdx];
+                            }
+
+                            if (string.IsNullOrWhiteSpace(handle)) continue;
+
+                            try
+                            {
+                                var objId = AcadUtils.GetObjectIdFromHandle(handle);
+                                if (objId.IsNull) continue;
+
+                                var obj = tr.GetObject(objId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForRead);
+                                if (obj == null) continue;
+
+                                // Read rebar data from XData
+                                var rebarData = XDataUtils.ReadRebarData(obj);
+                                if (rebarData == null) continue;
+
+                                // Check if data needs reversing (R->L geometry)
+                                bool isReversed = false;
+                                if (seg?.StartPoint != null && seg?.EndPoint != null)
+                                {
+                                    if (seg.StartPoint[0] > seg.EndPoint[0] + 1.0)
+                                        isReversed = true;
+                                }
+                                if (isReversed) ReverseBeamResultData(rebarData);
+
+                                // Apply rebar strings to Span for viewer display
+                                // XData format: [L1, Mid, L2] maps to SpanData positions [0, 2, 4] (GốiT, Giữa, GốiP)
+                                if (rebarData.TopRebarString != null && rebarData.TopRebarString.Length >= 3)
+                                {
+                                    // Layer 0 = backbone, positions 0,2,4 = L1,Mid,L2
+                                    span.TopRebarInternal[0, 0] = rebarData.TopRebarString[0]; // L1
+                                    span.TopRebarInternal[0, 2] = rebarData.TopRebarString[1]; // Mid
+                                    span.TopRebarInternal[0, 4] = rebarData.TopRebarString[2]; // L2
+                                }
+                                if (rebarData.BotRebarString != null && rebarData.BotRebarString.Length >= 3)
+                                {
+                                    span.BotRebarInternal[0, 0] = rebarData.BotRebarString[0]; // L1
+                                    span.BotRebarInternal[0, 2] = rebarData.BotRebarString[1]; // Mid
+                                    span.BotRebarInternal[0, 4] = rebarData.BotRebarString[2]; // L2
+                                }
+                                // Map TopArea/BotArea to As_Top/As_Bot (6-position array)  
+                                // XData [0,1,2] = [L1, Mid, L2] → [0, 2, 4] positions
+                                if (rebarData.TopArea != null && rebarData.TopArea.Length >= 3)
+                                {
+                                    span.As_Top[0] = rebarData.TopArea[0]; // L1
+                                    span.As_Top[2] = rebarData.TopArea[1]; // Mid
+                                    span.As_Top[4] = rebarData.TopArea[2]; // L2
+                                }
+                                if (rebarData.BotArea != null && rebarData.BotArea.Length >= 3)
+                                {
+                                    span.As_Bot[0] = rebarData.BotArea[0]; // L1
+                                    span.As_Bot[2] = rebarData.BotArea[1]; // Mid
+                                    span.As_Bot[4] = rebarData.BotArea[2]; // L2
+                                }
+                            }
+                            catch { /* Skip errors for individual spans */ }
+                        }
+                    }
+                    tr.Commit();
+                }
+            }
+            catch (Exception ex)
+            {
+                DTS_Engine.Core.Algorithms.Rebar.Utils.RebarLogger.Log($"[LoadRebarDataFromXData] Error: {ex.Message}");
+            }
         }
 
         private static List<BeamResultData> ExtractSpanResultsForGroup(Autodesk.AutoCAD.DatabaseServices.Transaction tr, BeamGroup group)

@@ -163,8 +163,7 @@ namespace DTS_Engine.Core.Data
             // Longitudinal Solution
             dict["TopRebarString"] = TopRebarString;
             dict["BotRebarString"] = BotRebarString;
-            dict["TopAreaProv"] = RoundArray(TopAreaProv);
-            dict["BotAreaProv"] = RoundArray(BotAreaProv);
+            // REMOVED: TopAreaProv/BotAreaProv - can be calculated from RebarString using ParseRebarArea
 
             // Stirrup & Web Solution
             dict["StirrupString"] = StirrupString;
@@ -352,8 +351,7 @@ namespace DTS_Engine.Core.Data
             WriteBaseProperties(dict);
             dict["TopRebarString"] = TopRebarString;
             dict["BotRebarString"] = BotRebarString;
-            dict["TopAreaProv"] = TopAreaProv;
-            dict["BotAreaProv"] = BotAreaProv;
+            // REMOVED: TopAreaProv/BotAreaProv - calculated from RebarString when needed
             return dict;
         }
 

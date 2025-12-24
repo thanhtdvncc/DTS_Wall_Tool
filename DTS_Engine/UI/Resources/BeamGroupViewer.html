@@ -139,25 +139,13 @@
                         </div>
                     </div>
                 </label>
-                <!-- V5.0: Group Toolbar (Detach/Ungroup/Regroup) -->
-                <div class="w-px h-4 bg-slate-600"></div>
-                <div class="flex items-center gap-1">
-                    <span class="text-xs text-slate-500">Group:</span>
-                    <button onclick="sendDetachSelected()" title="Tách dầm đang chọn khỏi group"
-                        class="px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white rounded text-xs">
-                        <i class="fa-solid fa-scissors"></i>
-                    </button>
-                    <button onclick="sendUngroupCurrent()" title="Xóa group hiện tại (tất cả thành dầm đơn)"
-                        class="px-2 py-1 bg-red-600 hover:bg-red-500 text-white rounded text-xs">
-                        <i class="fa-solid fa-unlink"></i>
-                    </button>
-                    <button onclick="sendRegroupSelected()" title="Gom các dầm đang chọn thành group mới"
-                        class="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs">
-                        <i class="fa-solid fa-link"></i>
-                    </button>
-                </div>
+                <!-- FIX 5: Label Toggle Button -->
+                <!-- Only copyFormat and Reset buttons in header now - Group controls moved to Plan toolbar -->
                 <button class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs"
-                    onclick="copyFormat()"><i class="fa-solid fa-paintbrush"></i></button>
+                    onclick="copyFormat()" title="Copy Format"><i class="fa-solid fa-paintbrush"></i></button>
+                <button class="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs"
+                    onclick="resetCanvasView()" title="Reset View / Zoom to fit"><i
+                        class="fa-solid fa-arrows-to-dot"></i></button>
             </div>
         </div>
     </header>
@@ -184,12 +172,37 @@
                 <select id="storySelect" onchange="loadStory(this.value)"
                     class="bg-slate-800 border border-slate-600 text-white px-2 py-1 rounded text-xs"></select>
             </div>
-            <!-- Zoom indicator -->
+            <!-- Zoom indicator - positioned above table panel -->
             <div id="zoomIndicator"
-                class="absolute bottom-2 right-2 bg-slate-800/70 text-white text-[10px] px-2 py-0.5 rounded">100%</div>
-            <!-- Help overlay -->
-            <div class="absolute bottom-2 left-2 text-[9px] text-slate-400 bg-white/70 px-1 rounded">Drag: Box Zoom |
-                Alt+Drag: Pan | Wheel: Zoom | DblClick: Reset</div>
+                class="absolute right-2 bg-slate-800/70 text-white text-[10px] px-2 py-0.5 rounded z-20"
+                style="bottom: 320px;">100%</div>
+            <!-- Help overlay - positioned above table panel -->
+            <div id="helpOverlay" class="absolute left-2 text-[9px] text-slate-400 bg-white/70 px-1 rounded z-20"
+                style="bottom: 320px;">Click: Select | Box: Zoom | Alt+Drag: Pan | Wheel: Zoom | Tab: Next beam</div>
+
+            <!-- Plan View Floating Toolbar (Group operations) - Clean transparent design -->
+            <div id="planToolbar" class="hidden absolute top-24 left-2 z-20 flex flex-col gap-1">
+                <!-- Detach -->
+                <button onclick="sendDetachSelected()" title="Tách dầm (Detach)"
+                    class="w-8 h-8 bg-slate-600/80 hover:bg-slate-500 text-white text-sm rounded flex items-center justify-center">
+                    <i class="fa-solid fa-scissors"></i>
+                </button>
+                <!-- Ungroup -->
+                <button onclick="sendUngroup()" title="Xóa group (Ungroup)"
+                    class="w-8 h-8 bg-slate-600/80 hover:bg-slate-500 text-white text-sm rounded flex items-center justify-center">
+                    <i class="fa-solid fa-unlink"></i>
+                </button>
+                <!-- Regroup -->
+                <button onclick="sendRegroupSelected()" title="Gom group mới (Regroup)"
+                    class="w-8 h-8 bg-slate-600/80 hover:bg-slate-500 text-white text-sm rounded flex items-center justify-center">
+                    <i class="fa-solid fa-object-group"></i>
+                </button>
+                <!-- Labels Toggle -->
+                <button id="btnToggleLabelsFloat" onclick="toggleGroupLabels()" title="Bật/tắt nhãn (Labels)"
+                    class="w-8 h-8 bg-slate-600/80 hover:bg-blue-500 text-white text-sm rounded flex items-center justify-center">
+                    <i class="fa-solid fa-tag"></i>
+                </button>
+            </div>
         </div>
 
         <!-- METRICS BAR - Overlay at top -->
@@ -601,6 +614,12 @@
         let boxZoomEndX = 0;
         let boxZoomEndY = 0;
         let tablePanelCollapsed = false;
+        // FIX 5: Toggle group name labels on plan view
+        let showGroupLabels = true;
+        // FIX 3: Track selected beam (single vs group mode)
+        let selectedBeamHandle = null;  // null = full group selected, string = single beam selected
+        let singleBeamMode = false;  // Tab toggles this
+        let selectedBeamIndex = -1;   // -1 = all beams in group, >=0 = specific beam index
 
         function maybeRenderTable() {
             // Avoid heavy table re-render during canvas-first workflow when panel is collapsed.
@@ -634,6 +653,9 @@
                 // Panel just expanded: refresh table to reflect any canvas edits made while collapsed.
                 renderTable();
             }
+
+            // Update overlay positions based on new table height
+            updateOverlayPositions();
         }
 
         function setCanvasMode(mode) {
@@ -644,6 +666,7 @@
             const btnLong = document.getElementById('modeLong');
             const btnShear = document.getElementById('modeShear');
             const storyContainer = document.getElementById('storyDropdownContainer');
+            const planToolbar = document.getElementById('planToolbar');
 
             btnPlan.classList.toggle('bg-blue-600', mode === 'plan');
             btnPlan.classList.toggle('bg-slate-600', mode !== 'plan');
@@ -654,13 +677,16 @@
             btnShear.classList.toggle('bg-blue-600', mode === 'shear');
             btnShear.classList.toggle('bg-slate-600', mode !== 'shear');
 
-            // Show/hide Story dropdown for Plan mode
+            // Show/hide Story dropdown and Plan Toolbar for Plan mode
             if (mode === 'plan') {
                 storyContainer.classList.remove('hidden');
+                planToolbar?.classList.remove('hidden');
+                selectedBeamIndex = -1; // Reset beam cycling
                 populateStoryDropdown();
                 renderPlanView();
             } else {
                 storyContainer.classList.add('hidden');
+                planToolbar?.classList.add('hidden');
                 // FIX: Reset zoom/pan and auto-center when switching modes
                 canvasZoom = 1.0;
                 canvasPanX = 0;
@@ -889,12 +915,28 @@
             ctx.setLineDash([]);
 
             // Draw beams
-            beamsOnStory.forEach(b => {
-                // FIX: Use EntityHandles membership instead of GroupName string matching
-                // This prevents highlighting ALL beams with same label
-                const isSelected = currentGroup?.EntityHandles?.includes(b.Handle) || false;
-                ctx.strokeStyle = isSelected ? '#3b82f6' : '#475569';
-                ctx.lineWidth = isSelected ? 4 : 2;
+            beamsOnStory.forEach((b, idx) => {
+                // FIX: Use EntityHandles membership for group highlighting
+                // Also support Tab cycling with selectedBeamIndex
+                const handles = currentGroup?.EntityHandles || [];
+                const isInGroup = handles.includes(b.Handle);
+
+                // Highlight logic: 
+                // - selectedBeamIndex == -1: highlight all beams in group
+                // - selectedBeamIndex >= 0: highlight only that specific beam
+                let isHighlighted = false;
+                if (isInGroup) {
+                    if (selectedBeamIndex === -1) {
+                        isHighlighted = true;  // All group beams
+                    } else {
+                        // Check if this beam matches selectedBeamIndex
+                        const beamIndexInGroup = handles.indexOf(b.Handle);
+                        isHighlighted = (beamIndexInGroup === selectedBeamIndex);
+                    }
+                }
+
+                ctx.strokeStyle = isHighlighted ? '#3b82f6' : (isInGroup ? '#93c5fd' : '#475569');
+                ctx.lineWidth = isHighlighted ? 4 : (isInGroup ? 3 : 2);
                 ctx.beginPath();
                 ctx.moveTo(tx(b.StartX), ty(b.StartY));
                 ctx.lineTo(tx(b.EndX), ty(b.EndY));
@@ -1012,6 +1054,63 @@
             ctx.font = 'bold 11px sans-serif';
             ctx.textAlign = 'left';
             ctx.fillText(`Plan View - Z=${z} | ${beamsOnStory.length} beams | ${gridsOnStory.length} grids | ${columnsOnStory.length} columns`, 10, 20);
+
+            // FIX 5: Draw group name labels at group center (like Sample/index.html)
+            if (showGroupLabels && data.groups) {
+                const groupsOnStory = data.groups.filter(g => Math.abs((g.LevelZ || 0) - z) < Z_TOLERANCE);
+
+                ctx.save();
+                ctx.font = 'bold 10px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                groupsOnStory.forEach(g => {
+                    // Try to get center from Spans (more reliable)
+                    let cx = 0, cy = 0, count = 0;
+
+                    if (g.Spans && g.Spans.length > 0) {
+                        // Calculate center from Spans' endpoints
+                        g.Spans.forEach(sp => {
+                            if (sp.Segments && sp.Segments.length > 0) {
+                                sp.Segments.forEach(seg => {
+                                    cx += (seg.StartX + seg.EndX) / 2;
+                                    cy += (seg.StartY + seg.EndY) / 2;
+                                    count++;
+                                });
+                            }
+                        });
+                    }
+
+                    // Fallback: use EntityHandles to find beams
+                    if (count === 0 && g.EntityHandles && g.EntityHandles.length > 0) {
+                        const groupBeams = beamsOnStory.filter(b => g.EntityHandles.includes(b.Handle));
+                        groupBeams.forEach(b => {
+                            cx += (b.StartX + b.EndX) / 2;
+                            cy += (b.StartY + b.EndY) / 2;
+                            count++;
+                        });
+                    }
+
+                    if (count === 0) return; // No data to calculate center
+
+                    cx /= count;
+                    cy /= count;
+                    const screenX = tx(cx), screenY = ty(cy);
+
+                    // Draw label background
+                    const label = g.GroupName || 'Group';
+                    const isSelected = currentGroup === g || (currentGroup?.GroupName === g.GroupName);
+
+                    ctx.fillStyle = isSelected ? 'rgba(59, 130, 246, 0.9)' : 'rgba(30, 41, 59, 0.8)';
+                    const textWidth = ctx.measureText(label).width;
+                    ctx.fillRect(screenX - textWidth / 2 - 4, screenY - 7, textWidth + 8, 14);
+
+                    // Draw label text
+                    ctx.fillStyle = 'white';
+                    ctx.fillText(label, screenX, screenY);
+                });
+                ctx.restore();
+            }
         }
 
         // Mode-aware render wrapper - use this instead of renderCanvas() for interactive actions
@@ -1020,6 +1119,25 @@
                 renderPlanView();
             } else {
                 renderCanvas();
+            }
+
+            // FIX 2: Draw box zoom selection rectangle AFTER content
+            if (boxZoomActive) {
+                const canvas = document.getElementById('beamCanvas');
+                const ctx = canvas.getContext('2d');
+                const x1 = Math.min(boxZoomStartX, boxZoomEndX);
+                const y1 = Math.min(boxZoomStartY, boxZoomEndY);
+                const w = Math.abs(boxZoomEndX - boxZoomStartX);
+                const h = Math.abs(boxZoomEndY - boxZoomStartY);
+
+                ctx.save();
+                ctx.strokeStyle = '#3b82f6';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 3]);
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
+                ctx.fillRect(x1, y1, w, h);
+                ctx.strokeRect(x1, y1, w, h);
+                ctx.restore();
             }
         }
 
@@ -1346,6 +1464,26 @@
 
                     canvasDragging = false;
                     canvas.style.cursor = 'default';
+
+                    // FIX 3: Click detection for beam selection (only if no drag/zoom happened)
+                    if (canvasMode === 'plan' && !e.ctrlKey && !e.altKey) {
+                        const rect = canvas.getBoundingClientRect();
+                        const clickX = e.clientX - rect.left;
+                        const clickY = e.clientY - rect.top;
+
+                        // Find clicked beam
+                        const clickedBeam = findBeamAtPoint(clickX, clickY);
+                        if (clickedBeam) {
+                            // Find group containing this beam
+                            const groupIdx = findGroupByBeamHandle(clickedBeam.Handle);
+                            if (groupIdx >= 0 && groupIdx !== currentGroupIndex) {
+                                loadGroup(groupIdx);
+                                showToast(`Đã chọn: ${data.groups[groupIdx].GroupName || 'Group ' + (groupIdx + 1)}`);
+                            }
+                            // Show properties panel
+                            showBeamProperties(clickedBeam);
+                        }
+                    }
                 });
 
                 canvas.addEventListener('mouseleave', () => {
@@ -1372,7 +1510,7 @@
                     render();
                 }, { passive: false });
 
-                // Double click: label edit (priority) or reset view
+                // Double click: label edit ONLY (removed reset view - use button instead)
                 canvas.addEventListener('dblclick', (e) => {
                     const rect = canvas.getBoundingClientRect();
                     const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
@@ -1384,12 +1522,7 @@
                             return;
                         }
                     }
-
-                    canvasZoom = 1.0;
-                    canvasPanX = 0;
-                    canvasPanY = 0;
-                    render();
-                    centerCanvas();
+                    // NO automatic reset - user must click Reset View button
                 });
 
                 console.log('Canvas interaction system initialized');
@@ -1465,14 +1598,30 @@
             const z = Beam.State.currentStoryZ;
             const Z_TOL = 500;
 
-            data.groups.forEach((g, i) => {
+            // FIX 1: Sort groups - Girder first, then Beam, alphabetically within each type
+            const groupsWithIndex = data.groups.map((g, i) => ({ ...g, originalIndex: i }));
+            const filteredGroups = groupsWithIndex.filter(g => {
                 const groupZ = g.LevelZ || 0;
-                // Only show groups that match current story
-                if (z != null && Math.abs(groupZ - z) >= Z_TOL) return;
+                return z == null || Math.abs(groupZ - z) < Z_TOL;
+            });
 
+            // Sort: Girder first, then Beam, then alphabetically by GroupName
+            filteredGroups.sort((a, b) => {
+                const typeA = (a.GroupType || 'Beam').toLowerCase();
+                const typeB = (b.GroupType || 'Beam').toLowerCase();
+                // Girder before Beam
+                if (typeA.includes('girder') && !typeB.includes('girder')) return -1;
+                if (!typeA.includes('girder') && typeB.includes('girder')) return 1;
+                // Same type: sort alphabetically by GroupName
+                const nameA = (a.GroupName || '').toLowerCase();
+                const nameB = (b.GroupName || '').toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+
+            filteredGroups.forEach((g) => {
                 const opt = document.createElement('option');
-                opt.value = i;  // Original index in data.groups
-                opt.textContent = `${g.GroupName || 'Group ' + (i + 1)} (${g.Spans?.length || 0} nhịp)`;
+                opt.value = g.originalIndex;  // Original index in data.groups
+                opt.textContent = `${g.GroupName || 'Group ' + (g.originalIndex + 1)} (${g.Spans?.length || 0} nhịp)`;
                 sel.appendChild(opt);
             });
 
@@ -2856,6 +3005,142 @@
         function closePropertiesPanel() {
             document.getElementById('propertiesPanel')?.classList.add('hidden');
         }
+
+        // FIX 3: Helper to find beam at screen coordinates
+        function findBeamAtPoint(screenX, screenY) {
+            if (!data.allBeams) return null;
+            const z = Beam.State.currentStoryZ;
+            const Z_TOL = 500;
+            const beamsOnStory = data.allBeams.filter(b => Math.abs((b.LevelZ || 0) - z) < Z_TOL);
+
+            // Get transform parameters from renderPlanView logic
+            const canvas = document.getElementById('beamCanvas');
+            const allX = beamsOnStory.flatMap(b => [b.StartX, b.EndX]);
+            const allY = beamsOnStory.flatMap(b => [b.StartY, b.EndY]);
+            if (allX.length === 0) return null;
+
+            const minX = Math.min(...allX) - 2000;
+            const maxX = Math.max(...allX) + 2000;
+            const minY = Math.min(...allY) - 2000;
+            const maxY = Math.max(...allY) + 2000;
+
+            const scaleX = (canvas.width - 40) / (maxX - minX);
+            const scaleY = (canvas.height - 40) / (maxY - minY);
+            const baseScale = Math.min(scaleX, scaleY) * 0.85;
+            const baseOffsetX = 20 - minX * baseScale;
+            const baseOffsetY = 20 - minY * baseScale;
+
+            const tx = x => (x * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
+            const ty = y => (canvas.height - (y * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
+
+            // Hit test
+            const HIT_TOLERANCE = 8; // pixels
+            for (const beam of beamsOnStory) {
+                const x1 = tx(beam.StartX), y1 = ty(beam.StartY);
+                const x2 = tx(beam.EndX), y2 = ty(beam.EndY);
+
+                // Distance from point to line segment
+                const dist = pointToLineDistance(screenX, screenY, x1, y1, x2, y2);
+                if (dist < HIT_TOLERANCE) return beam;
+            }
+            return null;
+        }
+
+        function pointToLineDistance(px, py, x1, y1, x2, y2) {
+            const A = px - x1, B = py - y1, C = x2 - x1, D = y2 - y1;
+            const dot = A * C + B * D;
+            const lenSq = C * C + D * D;
+            let param = lenSq !== 0 ? dot / lenSq : -1;
+            param = Math.max(0, Math.min(1, param));
+            const xx = x1 + param * C, yy = y1 + param * D;
+            return Math.hypot(px - xx, py - yy);
+        }
+
+        // FIX 3: Find group containing beam by handle
+        function findGroupByBeamHandle(handle) {
+            if (!data.groups || !handle) return -1;
+            for (let i = 0; i < data.groups.length; i++) {
+                if (data.groups[i].EntityHandles?.includes(handle)) return i;
+            }
+            return -1;
+        }
+
+        // FIX 4: Show properties for clicked beam
+        function showBeamProperties(beam) {
+            const panel = document.getElementById('propertiesPanel');
+            if (!panel || !beam) return;
+
+            document.getElementById('propHandle').value = beam.Handle || '-';
+            document.getElementById('propSpanId').value = beam.SpanIndex != null ? `S${beam.SpanIndex + 1}` : '-';
+            document.getElementById('propWidth').value = beam.Width ? `${beam.Width}mm` : '-';
+            document.getElementById('propHeight').value = beam.Height ? `${beam.Height}mm` : '-';
+            const len = Math.hypot(beam.EndX - beam.StartX, beam.EndY - beam.StartY);
+            document.getElementById('propLength').value = len > 0 ? `${(len / 1000).toFixed(2)}m` : '-';
+
+            panel.classList.remove('hidden');
+        }
+
+        // FIX 5: Toggle group name labels on plan view
+        function toggleGroupLabels() {
+            showGroupLabels = !showGroupLabels;
+            const btn = document.getElementById('btnToggleLabels');
+            if (btn) {
+                btn.classList.toggle('bg-blue-600', showGroupLabels);
+                btn.classList.toggle('bg-slate-600', !showGroupLabels);
+            }
+            render();
+            showToast(showGroupLabels ? 'Labels: ON' : 'Labels: OFF');
+        }
+
+        // Reset canvas view to fit content and center on grid
+        function resetCanvasView() {
+            canvasZoom = 1.0;
+            canvasPanX = 0;
+            canvasPanY = 0;
+            render();
+            centerCanvas();
+            showToast('View reset');
+        }
+
+        // Update overlay positions based on table panel state
+        function updateOverlayPositions() {
+            const tablePanel = document.getElementById('tablePanel');
+            const zoomIndicator = document.getElementById('zoomIndicator');
+            const helpOverlay = document.getElementById('helpOverlay');
+
+            // Get actual table panel height
+            const tablePanelHeight = tablePanelCollapsed ? 40 : 300;
+            const bottomOffset = tablePanelHeight + 10;  // Extra margin
+
+            if (zoomIndicator) zoomIndicator.style.bottom = `${bottomOffset}px`;
+            if (helpOverlay) helpOverlay.style.bottom = `${bottomOffset}px`;
+        }
+
+        // FIX 3: Tab key to cycle through beams in current group
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab' && canvasMode === 'plan') {
+                e.preventDefault();
+
+                // Get current group's beams
+                const handles = currentGroup?.EntityHandles || [];
+                if (handles.length === 0) return;
+
+                // Cycle: -1 (all) -> 0 -> 1 -> ... -> last -> -1 (all)
+                selectedBeamIndex = selectedBeamIndex + 1;
+                if (selectedBeamIndex >= handles.length) {
+                    selectedBeamIndex = -1;  // Back to all
+                }
+
+                // Update message
+                if (selectedBeamIndex === -1) {
+                    showToast(`Chế độ: Cả nhóm (${handles.length} dầm)`);
+                } else {
+                    showToast(`Dầm ${selectedBeamIndex + 1}/${handles.length}`);
+                }
+
+                render();
+            }
+        });
 
         function onPropOptionChange(value) {
             const idx = parseInt(value, 10);

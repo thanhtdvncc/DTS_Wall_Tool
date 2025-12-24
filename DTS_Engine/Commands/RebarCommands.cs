@@ -194,27 +194,45 @@ namespace DTS_Engine.Commands
                             {
                                 // === NEW: Sync Highlight - Compare Areq_new vs Aprov_old ===
                                 var existingData = XDataUtils.ReadRebarData(obj);
-                                if (existingData != null && existingData.TopAreaProv != null)
+                                if (existingData != null)
                                 {
-                                    // Check if existing Aprov is insufficient for new Areq
-                                    bool isInsufficient = false;
-                                    for (int i = 0; i < 3; i++)
-                                    {
-                                        double areqTop = designData.TopArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25);
-                                        double areqBot = designData.BotArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_BotBar ?? 0.25);
+                                    // Calculate AreaProv from RebarString if not in XData (new format)
+                                    var topAreaProv = existingData.TopAreaProv;
+                                    var botAreaProv = existingData.BotAreaProv;
 
-                                        if (existingData.TopAreaProv[i] < areqTop * 0.99 ||
-                                            existingData.BotAreaProv[i] < areqBot * 0.99)
-                                        {
-                                            isInsufficient = true;
-                                            break;
-                                        }
+                                    // Fallback: calculate from RebarString if TopAreaProv is null/empty
+                                    if ((topAreaProv == null || topAreaProv.All(x => x == 0)) && existingData.TopRebarString != null)
+                                    {
+                                        topAreaProv = existingData.TopRebarString.Select(DTS_Engine.Core.Algorithms.RebarCalculator.ParseRebarArea).ToArray();
+                                    }
+                                    if ((botAreaProv == null || botAreaProv.All(x => x == 0)) && existingData.BotRebarString != null)
+                                    {
+                                        botAreaProv = existingData.BotRebarString.Select(DTS_Engine.Core.Algorithms.RebarCalculator.ParseRebarArea).ToArray();
                                     }
 
-                                    if (isInsufficient)
+                                    if (topAreaProv != null && topAreaProv.Length >= 3 &&
+                                        botAreaProv != null && botAreaProv.Length >= 3)
                                     {
-                                        insufficientBeamIds.Add(cadId);
-                                        insufficientCount++;
+                                        // Check if existing Aprov is insufficient for new Areq
+                                        bool isInsufficient = false;
+                                        for (int i = 0; i < 3; i++)
+                                        {
+                                            double areqTop = designData.TopArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25);
+                                            double areqBot = designData.BotArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_BotBar ?? 0.25);
+
+                                            if (topAreaProv[i] < areqTop * 0.99 ||
+                                                botAreaProv[i] < areqBot * 0.99)
+                                            {
+                                                isInsufficient = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if (isInsufficient)
+                                        {
+                                            insufficientBeamIds.Add(cadId);
+                                            insufficientCount++;
+                                        }
                                     }
                                 }
                                 // === END Sync Highlight ===
