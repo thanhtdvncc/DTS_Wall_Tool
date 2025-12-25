@@ -92,36 +92,11 @@ namespace DTS_Engine.Core.Algorithms
 
                     // Update signature (Tiết diện + Thép)
                     group.UpdateSignature();
-                    string sig = group.Signature ?? $"RAW_{group.Width}x{group.Height}";
+                    string sig = group.Signature ?? "";
 
-                    // === FIX LOGIC XÁC ĐỊNH GIRDER/BEAM ===
-
-                    // 1. Lấy giới hạn từ Settings (Thay vì hardcode 300)
-                    double girderLimit = settings.Naming?.GirderMinWidth ?? 300.0;
-
-                    // 2. Check loại được chỉ định cứng từ XData (Map vào GroupType)
-                    string gType = group.GroupType ?? "";
-                    bool isExplicitGirder = gType.Equals("Girder", StringComparison.OrdinalIgnoreCase);
-                    bool isExplicitBeam = gType.Equals("Beam", StringComparison.OrdinalIgnoreCase);
-
-                    bool isGirder;
-
-                    if (isExplicitGirder)
-                    {
-                        isGirder = true; // User/XData bảo là Girder -> Là Girder
-                    }
-                    else if (isExplicitBeam)
-                    {
-                        isGirder = false; // User/XData bảo là Beam -> Là Beam (Bất chấp bề rộng)
-                    }
-                    else
-                    {
-                        // 3. Nếu Auto (không có chỉ định) -> Check theo Section (Width)
-                        isGirder = group.Width >= girderLimit;
-                    }
-
-                    // Cập nhật lại GroupType chuẩn để dùng sau này
-                    group.GroupType = isGirder ? "Girder" : "Beam";
+                    // Xác định loại (Girder/Beam)
+                    bool isGirder = (group.GroupType ?? "").Equals("Girder", StringComparison.OrdinalIgnoreCase)
+                                    || group.Width >= 300;
 
                     string currentPrefix = isGirder ? girderPrefix : beamPrefix;
 
