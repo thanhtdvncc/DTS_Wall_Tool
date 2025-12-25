@@ -396,10 +396,12 @@
             class="absolute left-0 bottom-0 bg-white border-t border-slate-300 shadow-lg z-20 transition-transform duration-300 flex flex-col"
             style="right: 320px; height: 40vh;">
 
-            <!-- Resize Handle (drag to resize panel height) -->
+            <!-- Resize Handle (drag to resize panel height) - larger hitbox for easy clicking -->
             <div id="detailPanelResizer"
-                class="absolute top-0 left-0 right-0 h-1.5 bg-slate-300 hover:bg-blue-400 cursor-ns-resize z-30"
-                style="touch-action: none;" title="Kéo để thay đổi kích thước"></div>
+                class="absolute top-0 left-0 right-0 h-2 -mt-1 bg-transparent hover:bg-blue-400/20 cursor-ns-resize z-50"
+                style="touch-action: none;" title="Kéo để thay đổi kích thước">
+                <div class="w-full h-1 bg-slate-300 pointer-events-none mt-1"></div>
+            </div>
 
             <!-- Simple title bar with toggle -->
             <div class="flex-none flex items-center gap-2 px-3 py-1 bg-slate-100 border-b border-slate-200">
@@ -1000,40 +1002,61 @@
             const panel = document.getElementById('detailPanel');
             if (!resizer || !panel) return;
 
-            // Load saved height from localStorage
-            const savedHeight = localStorage.getItem('detailPanelHeight');
-            if (savedHeight) {
-                panel.style.height = savedHeight + 'px';
-            }
+            // FIX: Bọc localStorage trong try-catch để tránh lỗi WebView chặn truy cập gây chết hàm
+            try {
+                const savedHeight = localStorage.getItem('detailPanelHeight');
+                if (savedHeight) {
+                    panel.style.height = savedHeight + 'px';
+                }
+            } catch (e) { console.warn('Cannot access localStorage', e); }
 
-            // Simple mousedown on resizer to start
-            resizer.onmousedown = function (e) {
+            // Handler xử lý di chuột (Move)
+            const onMouseMove = function (e) {
+                if (!detailPanelResizing) return;
+                const delta = detailPanelStartY - e.clientY;
+
+                // Tính toán chiều cao mới
+                let newHeight = detailPanelStartHeight + delta;
+
+                // Giới hạn chiều cao (Min 150px, Max 80% màn hình)
+                newHeight = Math.max(DETAIL_PANEL_MIN_HEIGHT, Math.min(DETAIL_PANEL_MAX_HEIGHT, newHeight));
+
+                panel.style.height = newHeight + 'px';
+
+                // Resize canvas bên trong ngay lập tức
+                resizeDetailCanvas();
+            };
+
+            // Handler xử lý nhả chuột (Up)
+            const onMouseUp = function () {
+                if (detailPanelResizing) {
+                    detailPanelResizing = false;
+                    document.body.classList.remove('resizing');
+
+                    try {
+                        localStorage.setItem('detailPanelHeight', panel.offsetHeight);
+                    } catch (e) { }
+
+                    // FIX: Dùng removeEventListener thay vì gán null
+                    window.removeEventListener('mousemove', onMouseMove);
+                    window.removeEventListener('mouseup', onMouseUp);
+                }
+            };
+
+            // Bắt sự kiện MouseDown vào thanh resizer
+            resizer.addEventListener('mousedown', function (e) {
                 e.preventDefault();
+                e.stopPropagation(); // Ngăn sự kiện lan xuống các element bên dưới
+
                 detailPanelResizing = true;
                 detailPanelStartY = e.clientY;
                 detailPanelStartHeight = panel.offsetHeight;
                 document.body.classList.add('resizing');
 
-                // Attach window-level handlers
-                window.onmousemove = function (e) {
-                    if (!detailPanelResizing) return;
-                    const delta = detailPanelStartY - e.clientY;
-                    let newHeight = detailPanelStartHeight + delta;
-                    newHeight = Math.max(DETAIL_PANEL_MIN_HEIGHT, Math.min(DETAIL_PANEL_MAX_HEIGHT, newHeight));
-                    panel.style.height = newHeight + 'px';
-                    resizeDetailCanvas();
-                };
-
-                window.onmouseup = function () {
-                    if (detailPanelResizing) {
-                        detailPanelResizing = false;
-                        document.body.classList.remove('resizing');
-                        localStorage.setItem('detailPanelHeight', panel.offsetHeight);
-                        window.onmousemove = null;
-                        window.onmouseup = null;
-                    }
-                };
-            };
+                // FIX: Dùng addEventListener để không xung đột với các thư viện khác
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            });
         }
 
         // NOTE: renderPlanView() is defined later (line 1212) and renders the full plan view
@@ -1903,6 +1926,10 @@
         }
 
         function init() {
+            // FIX: Gọi hàm khởi tạo resize ngay đầu tiên, bất chấp data có lỗi hay không
+            // Vì Panel UI luôn tồn tại trong DOM
+            initDetailPanelResize();
+
             // Fix: Reset story state on load to ensure stale state doesn't persist
             Beam.State.currentStoryZ = null;
 
@@ -2433,9 +2460,7 @@
             if (data.groups && data.groups.length > 0) {
                 loadGroup(0);
             }
-
-            // Initialize detail panel resize functionality
-            initDetailPanelResize();
+            // NOTE: initDetailPanelResize() is now called at the beginning of init()
         }
 
         function populateGroupSelect() {
