@@ -181,7 +181,10 @@ namespace DTS_Engine.UI.Forms
                                             Height = group.Height,
                                             LevelZ = group.LevelZ,
                                             GroupName = displayName,  // For dropdown display
-                                            GroupId = groupId         // For unique matching
+                                            GroupId = groupId,        // For unique matching
+                                            // FIX: Add SectionLabel for JS Label Mode 2
+                                            SectionLabel = group.Name ?? "",  // group.Name = xSectionLabel from XData
+                                            xSectionLabel = group.Name ?? ""  // Duplicate for direct XData field access
                                         });
                                     }
                                 }
@@ -363,6 +366,42 @@ namespace DTS_Engine.UI.Forms
                         this.BeginInvoke(new Action(() =>
                         {
                             this.Opacity = Math.Max(0.1, Math.Min(1.0, opacity));
+                        }));
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            // Handle CMD| message to execute AutoCAD commands from JS
+            if (message.StartsWith("CMD|"))
+            {
+                try
+                {
+                    string cmdName = message.Substring(4).Trim();
+                    if (!string.IsNullOrEmpty(cmdName))
+                    {
+                        // Execute AutoCAD command on main thread
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            try
+                            {
+                                // Get active document and execute command
+                                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                                if (doc != null)
+                                {
+                                    // Send command to CommandLine
+                                    doc.SendStringToExecute($"(C:{cmdName})\n", true, false, false);
+
+                                    // Notify JS that command was sent
+                                    _webView.CoreWebView2.PostWebMessageAsString($"CMD_SENT|{cmdName}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[CMD] Error executing {cmdName}: {ex.Message}");
+                                _webView.CoreWebView2.PostWebMessageAsString($"CMD_ERROR|{cmdName}|{ex.Message}");
+                            }
                         }));
                     }
                 }
@@ -1909,7 +1948,10 @@ namespace DTS_Engine.UI.Forms
                             Height = height,
                             LevelZ = z,
                             GroupName = groupName,
-                            GroupId = "" // Not in selected group
+                            GroupId = "", // Not in selected group
+                            // FIX: Add SectionLabel for neighbor beams too
+                            SectionLabel = beamData?.SectionLabel ?? "",
+                            xSectionLabel = beamData?.SectionLabel ?? ""
                         });
                     }
                     tr.Commit();
