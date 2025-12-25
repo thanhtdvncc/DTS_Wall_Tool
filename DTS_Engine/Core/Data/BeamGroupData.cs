@@ -507,20 +507,28 @@ namespace DTS_Engine.Core.Data
         public void UpdateSignature()
         {
             var design = this.SelectedDesign ?? (this.BackboneOptions.Count > 0 ? this.BackboneOptions[0] : null);
+
+            // Format Material
+            string material = this.ConcreteGrade ?? "CONC";
+
+            // FIX: Thay tiền tố "B_" bằng "SEC_" để tránh nhầm lẫn B/G
+            // Việc phân biệt B/G sẽ do NamingEngine lo thông qua biến GroupType
+            string prefix = "SEC";
+
             if (design == null)
             {
-                this.Signature = $"B_{Width}x{Height}_NoDesign";
-                return;
+                // Chưa có thép: Signature = SEC_WxH_Mat
+                this.Signature = $"{prefix}_{Width:F0}x{Height:F0}_{material}";
             }
+            else
+            {
+                // Đã có thép: Signature = SEC_WxH_Mat_TopRebar_BotRebar
+                // Đảm bảo Rebar string đã được sort để 2D20+1D18 giống 1D18+2D20
+                string topInfo = $"{design.BackboneCount_Top}D{design.BackboneDiameter_Top}";
+                string botInfo = $"{design.BackboneCount_Bot}D{design.BackboneDiameter_Bot}";
 
-            // Lấy thông tin thép từ design (BackboneCount + Diameter)
-            // Format: nDd (VD: 2D20, 3D25)
-            string topInfo = $"{design.BackboneCount_Top}D{design.BackboneDiameter}";
-            string botInfo = $"{design.BackboneCount_Bot}D{design.BackboneDiameter}";
-            string material = "B25"; // TODO: Get from settings if needed
-
-            // Signature = TYPE_WxH_MAT_TOP_BOT
-            this.Signature = $"B_{Width}x{Height}_{material}_T({topInfo})_B({botInfo})";
+                this.Signature = $"{prefix}_{Width:F0}x{Height:F0}_{material}_T({topInfo})_B({botInfo})";
+            }
         }
 
         /// <summary>
