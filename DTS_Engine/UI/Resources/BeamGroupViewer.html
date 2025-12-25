@@ -785,13 +785,29 @@
         function highlightSpan(index) {
             if (highlightedSpanIndex === index) return;
             highlightedSpanIndex = index;
+
+            // Update table row highlighting
+            document.querySelectorAll('.span-row').forEach((tr, i) => {
+                tr.classList.toggle('highlighted', parseInt(tr.dataset.spanIndex) === index);
+            });
+
             renderPlanView();  // Main canvas - always plan view
             renderDetailCanvas();  // Detail canvas - current detail mode
+
+            // AUTO HIGHLIGHT IN CAD: send handles to C#
+            const span = currentGroup?.Spans?.[index];
+            if (span?.Segments?.length > 0) {
+                const handles = span.Segments.map(s => s.EntityHandle).filter(h => h);
+                if (handles.length > 0) {
+                    window.chrome.webview.postMessage('HIGHLIGHT|' + JSON.stringify(handles));
+                }
+            }
         }
 
         function clearHighlight() {
             if (highlightedSpanIndex === -1) return;
             highlightedSpanIndex = -1;
+            document.querySelectorAll('.span-row').forEach(tr => tr.classList.remove('highlighted'));
             renderPlanView();  // Main canvas - always plan view
             renderDetailCanvas();  // Detail canvas - current detail mode
         }
@@ -1030,38 +1046,39 @@
         }
 
         // Info label for As_prv/As_req (read-only with border, deficit highlight)
+        // Updated style to match Editable Label (Bold, Radius 3, Fill)
         function drawInfoLabelDetail(ctx, text, x, y, color, isDeficit) {
             if (!text) return;
 
-            ctx.font = '9px sans-serif';
+            // FIX: Bold font, Radius 3
+            ctx.font = 'bold 10px sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
-            const width = ctx.measureText(text).width + 8;
-            const height = 14;
+            const width = ctx.measureText(text).width + 10;
+            const height = 16;
             const rx = x - width / 2;
             const ry = y - height / 2;
+            const radius = 3;
 
-            // Draw rounded rectangle background for ALL As labels
+            // Draw rounded rectangle background
             ctx.beginPath();
-            ctx.roundRect(rx, ry, width, height, 2);
+            ctx.roundRect(rx, ry, width, height, radius);
 
             if (isDeficit) {
-                // Deficit: red background + border
-                ctx.fillStyle = '#fee2e2';
+                ctx.fillStyle = '#fee2e2'; // Light red fill
                 ctx.fill();
-                ctx.strokeStyle = '#ef4444';
+                ctx.strokeStyle = '#ef4444'; // Red border
                 ctx.lineWidth = 1.5;
                 ctx.stroke();
-                ctx.fillStyle = '#dc2626';  // Red text
+                ctx.fillStyle = '#dc2626'; // Red text
             } else {
-                // Normal: white background + colored border
                 ctx.fillStyle = '#fff';
                 ctx.fill();
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1;
                 ctx.stroke();
-                ctx.fillStyle = color;  // Colored text
+                ctx.fillStyle = color;
             }
 
             ctx.fillText(text, x, y);
@@ -1349,16 +1366,24 @@
                 const isInGroup = handles.includes(b.Handle);
 
                 // Highlight logic: 
-                // - selectedBeamIndex == -1: highlight all beams in group
-                // - selectedBeamIndex >= 0: highlight only that specific beam
+                // - highlightedSpanIndex >= 0: highlight beam at that index (from sidebar/detail click)
+                // - selectedBeamIndex >= 0: highlight beam at that index (from Tab cycling)
+                // - Both == -1: highlight all beams in group
                 let isHighlighted = false;
                 if (isInGroup) {
-                    if (selectedBeamIndex === -1) {
-                        isHighlighted = true;  // All group beams
-                    } else {
-                        // Check if this beam matches selectedBeamIndex
-                        const beamIndexInGroup = handles.indexOf(b.Handle);
-                        isHighlighted = (beamIndexInGroup === selectedBeamIndex);
+                    const beamIndexInGroup = handles.indexOf(b.Handle);
+
+                    // Check if this beam matches highlightedSpanIndex (sidebar/detail selection)
+                    if (highlightedSpanIndex >= 0 && beamIndexInGroup === highlightedSpanIndex) {
+                        isHighlighted = true;
+                    }
+                    // Check if this beam matches selectedBeamIndex (Tab cycling)
+                    else if (selectedBeamIndex >= 0 && beamIndexInGroup === selectedBeamIndex) {
+                        isHighlighted = true;
+                    }
+                    // If neither is set, highlight all beams in group
+                    else if (highlightedSpanIndex === -1 && selectedBeamIndex === -1) {
+                        isHighlighted = true;
                     }
                 }
 
@@ -1540,13 +1565,11 @@
             }
         }
 
-        // Mode-aware render wrapper - use this instead of renderCanvas() for interactive actions
+        // Mode-aware render wrapper - ALWAYS use renderPlanView for main canvas
+        // Main canvas should NEVER show span view, only plan view with grids, beams, columns
         function render() {
-            if (canvasMode === 'plan') {
-                renderPlanView();
-            } else {
-                renderCanvas();
-            }
+            // ALWAYS render plan view for main canvas - no mode check needed
+            renderPlanView();
 
             // FIX 2: Draw box zoom selection rectangle AFTER content
             if (boxZoomActive) {
@@ -1678,7 +1701,9 @@
                 }
 
                 // Click: label edit (priority) or span select/copy-format
+                // FIX: Only accept left-click (button 0)
                 canvas.addEventListener('click', (e) => {
+                    if (e.button !== 0) return; // Ignore middle/right click
                     const rect = canvas.getBoundingClientRect();
                     const x = (e.clientX - rect.left - canvasPanX) / canvasZoom;
                     const y = (e.clientY - rect.top - canvasPanY) / canvasZoom;
@@ -1784,17 +1809,20 @@
                             canvas.style.cursor = 'default';
                         }
                         let found = -1;
-                        for (let i = 0; i < spanBounds.length; i++) {
-                            const b = spanBounds[i];
-                            if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
-                                found = b.index;
-                                break;
+                        // FIX: Only update highlight if no mouse button is pressed (pure hover)
+                        if (e.buttons === 0) {
+                            for (let i = 0; i < spanBounds.length; i++) {
+                                const b = spanBounds[i];
+                                if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
+                                    found = b.index;
+                                    break;
+                                }
                             }
-                        }
-                        if (found !== highlightedSpanIndex) {
-                            highlightedSpanIndex = found;
-                            render();
-                            renderTable();
+                            if (found !== highlightedSpanIndex) {
+                                highlightedSpanIndex = found;
+                                render();
+                                renderTable();
+                            }
                         }
                     }
                 });
@@ -2014,13 +2042,22 @@
                     detailCanvas.style.cursor = 'default';
                 });
 
-                // Click: select span on detail canvas
+                // Click: FIRST check label bounds for editing, THEN span bounds for selection
                 detailCanvas.addEventListener('click', (e) => {
                     const rect = detailCanvas.getBoundingClientRect();
                     const x = (e.clientX - rect.left - detailPanX) / detailZoom;
                     const y = (e.clientY - rect.top - detailPanY) / detailZoom;
 
-                    // Check span bounds
+                    // PRIORITY 1: Check label bounds for editing (single click)
+                    for (let i = 0; i < detailRebarLabelBounds.length; i++) {
+                        const lb = detailRebarLabelBounds[i];
+                        if (x >= lb.x && x <= lb.x + lb.width && y >= lb.y && y <= lb.y + lb.height) {
+                            startInlineLabelEdit(lb);
+                            return;
+                        }
+                    }
+
+                    // PRIORITY 2: Check span bounds for selection
                     for (let i = 0; i < detailSpanBounds.length; i++) {
                         const b = detailSpanBounds[i];
                         if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
@@ -2740,7 +2777,13 @@
         }
 
         // ============ CANVAS RENDERING (RELATIVE LENGTHS) ============
+        // FIX: Redirect Legacy Render to Plan View & Detail View
+        // This prevents Main Canvas from accidentally showing Span View
         function renderCanvas() {
+            renderPlanView();
+            renderDetailCanvas();
+            return;
+
             const canvas = document.getElementById('beamCanvas');
             const ctx = canvas.getContext('2d');
 
@@ -3073,11 +3116,21 @@
                     // Mouse events for sync
                     tr.addEventListener('mouseenter', () => highlightSpan(spanIdx));
                     tr.addEventListener('mouseleave', clearHighlight);
+                    // FIX: Click to select span persistently (update highlight on plan view)
+                    tr.addEventListener('click', () => {
+                        highlightSpan(spanIdx);
+                        renderPlanView(); // Ensure plan view shows highlight
+                    });
 
                     // First row shows span info with rowspan, other rows only show layer data
                     if (isFirstRow) {
                         tr.innerHTML = `
-                            <td class="p-1 font-medium" rowspan="${maxLayers}">${span.SpanId}</td>
+                            <td class="p-1 font-medium" rowspan="${maxLayers}">
+                                <input type="text" value="${span.SpanId || ''}" 
+                                    onclick="event.stopPropagation()"
+                                    onchange="updateSpanName(${spanIdx}, this.value)"
+                                    class="w-full text-center bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 outline-none font-medium">
+                            </td>
                             <td class="p-1 text-center" rowspan="${maxLayers}">
                                 <input type="checkbox" ${span.IsActive !== false ? 'checked' : ''} 
                                     onchange="toggleSpanActive(${spanIdx}, this.checked)" class="w-3 h-3">
@@ -3213,6 +3266,15 @@
             renderTable();
         }
 
+        // Update span name from table input
+        function updateSpanName(index, newName) {
+            if (!currentGroup?.Spans?.[index]) return;
+            currentGroup.Spans[index].SpanId = newName;
+            // Re-render canvases to show new name
+            renderPlanView();
+            renderDetailCanvas();
+        }
+
         function updateRebar(spanIndex, type, pos, value) {
             const span = currentGroup.Spans[spanIndex];
             const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
@@ -3297,28 +3359,8 @@
         }
 
         // ============ HIGHLIGHT & SYNC ============
-        function highlightSpan(index) {
-            highlightedSpanIndex = index;
-            document.querySelectorAll('.span-row').forEach((tr, i) => {
-                tr.classList.toggle('highlighted', i === index);
-            });
-            renderCanvas();
-
-            // AUTO HIGHLIGHT IN CAD: send handles to C#
-            const span = currentGroup?.Spans?.[index];
-            if (span?.Segments?.length > 0) {
-                const handles = span.Segments.map(s => s.EntityHandle).filter(h => h);
-                if (handles.length > 0) {
-                    window.chrome.webview.postMessage('HIGHLIGHT|' + JSON.stringify(handles));
-                }
-            }
-        }
-
-        function clearHighlight() {
-            highlightedSpanIndex = -1;
-            document.querySelectorAll('.span-row').forEach(tr => tr.classList.remove('highlighted'));
-            renderCanvas();
-        }
+        // NOTE: highlightSpan and clearHighlight are defined earlier (line ~785)
+        // to ensure proper rendering order with renderPlanView/renderDetailCanvas
 
         // ============ V5.0 GROUP OPERATIONS ============
         // Send DETACH message to C# for selected/highlighted span
