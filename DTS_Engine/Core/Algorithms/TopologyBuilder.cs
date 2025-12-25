@@ -594,13 +594,21 @@ namespace DTS_Engine.Core.Algorithms
             span.Segments = new List<PhysicalSegment>();
             foreach (var topo in topologies)
             {
+                // Read xSectionLabel from BeamData for viewer display
+                string sectionLabel = null;
+                if (topo.ElementData is BeamData beamData)
+                {
+                    sectionLabel = beamData.SectionLabel;
+                }
+
                 span.Segments.Add(new PhysicalSegment
                 {
                     EntityHandle = topo.Handle,
                     SapFrameName = topo.SapElementName,
                     Length = topo.Length / 1000.0,
                     StartPoint = new double[] { topo.StartPoint.X, topo.StartPoint.Y },
-                    EndPoint = new double[] { topo.EndPoint.X, topo.EndPoint.Y }
+                    EndPoint = new double[] { topo.EndPoint.X, topo.EndPoint.Y },
+                    xSectionLabel = sectionLabel
                 });
             }
 

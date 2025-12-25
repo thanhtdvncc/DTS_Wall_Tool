@@ -88,11 +88,37 @@ namespace DTS_Engine.Core.Data
         public string AxisName { get; set; }
 
         /// <summary>
+        /// Điểm bắt đầu dầm [X, Y, Z] (mm) - dùng để tính Direction và Sort.
+        /// </summary>
+        public double[] StartPoint { get; set; }
+
+        /// <summary>
+        /// Điểm kết thúc dầm [X, Y, Z] (mm) - dùng để tính Direction và Sort.
+        /// </summary>
+        public double[] EndPoint { get; set; }
+
+        /// <summary>
+        /// Tọa độ X trung tâm dầm (mm) - dùng cho SortBeams.
+        /// </summary>
+        public double CenterX { get; set; }
+
+        /// <summary>
+        /// Tọa độ Y trung tâm dầm (mm) - dùng cho SortBeams.
+        /// </summary>
+        public double CenterY { get; set; }
+
+        /// <summary>
         /// Nhãn tiết diện từ NamingEngine (VD: "0GX1", "0BY3").
         /// Dùng để nhóm các dầm cùng tiết diện/thép (Rebar Section Grouping).
         /// KHÔNG PHẢI tên hiển thị group - đó là GroupName.
         /// </summary>
         public string SectionLabel { get; set; }
+
+        /// <summary>
+        /// Khóa tên SectionLabel - không cho NamingEngine.AutoLabelBeams() thay đổi.
+        /// Khi locked, tên này được bảo lưu và các dầm khác sẽ skip số đã chiếm.
+        /// </summary>
+        public bool SectionLabelLocked { get; set; } = false;
 
         /// <summary>
         /// Loại nhóm: "Girder" hoặc "Beam".
@@ -105,6 +131,16 @@ namespace DTS_Engine.Core.Data
         /// Được sinh từ Grid System và lưu vào XData để Viewer hiển thị thống nhất.
         /// </summary>
         public string GroupName { get; set; }
+
+        /// <summary>
+        /// Tên tầng (story name) để group by story trong NamingEngine.
+        /// </summary>
+        public string StoryName { get; set; }
+
+        /// <summary>
+        /// Chuỗi OptUser từ XData (VD: "T:3D25;B:3D25;S:;W:") - dùng cho Signature.
+        /// </summary>
+        public string OptUser { get; set; }
 
         #endregion
 
@@ -207,6 +243,7 @@ namespace DTS_Engine.Core.Data
             dict["xSupport_J"] = SupportJ;
             if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
             if (!string.IsNullOrEmpty(SectionLabel)) dict["xSectionLabel"] = SectionLabel;
+            if (SectionLabelLocked) dict["xSectionLabelLocked"] = "1";
             if (!string.IsNullOrEmpty(GroupType)) dict["xGroupType"] = GroupType;
             if (!string.IsNullOrEmpty(GroupName)) dict["xGroupName"] = GroupName;
             // NOTE: xBeamType không còn được ghi vào XData - GroupType được xác định bởi BeamGroupDetector
@@ -251,6 +288,7 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xSupport_J", out var sj)) SupportJ = System.Convert.ToInt32(sj);
             if (dict.TryGetValue("xOnAxis", out var oa)) AxisName = oa?.ToString();
             if (dict.TryGetValue("xSectionLabel", out var sl)) SectionLabel = sl?.ToString();
+            if (dict.TryGetValue("xSectionLabelLocked", out var sll)) SectionLabelLocked = sll?.ToString() == "1";
             // NOTE: xGroupLabel fallback đã xóa - dùng xSectionLabel duy nhất
             if (dict.TryGetValue("xGroupType", out var gt)) GroupType = gt?.ToString();
             if (dict.TryGetValue("xGroupName", out var gn)) GroupName = gn?.ToString();

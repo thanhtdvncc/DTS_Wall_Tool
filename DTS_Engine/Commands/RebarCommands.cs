@@ -1648,133 +1648,210 @@ namespace DTS_Engine.Commands
         {
             ExecuteSafe(() =>
             {
-                WriteMessage("\n=== ĐẶT TÊN DẦM THEO BỐ TRÍ THÉP ===");
-                WriteMessage("Lệnh này đặt lại tên dầm (xSectionLabel) dựa trên section + thép đã bố trí.");
+                WriteMessage("\n=== ĐẶT TÊN SECTION DẦM ===");
+                WriteMessage("Lệnh này đặt tên cho từng dầm dựa trên tiết diện + thép.");
 
-                var allGroups = new List<BeamGroup>();
+                var allBeams = new List<BeamData>();
+                var handleToBeam = new Dictionary<string, BeamData>(); // Track handles
 
                 UsingTransaction(tr =>
                 {
-                    // 1. Quét NOD để lấy groups
-                    var registryGroups = Core.Engines.RegistryEngine.GetAllBeamGroups(tr);
+                    var db = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database;
+                    var ed = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Editor;
 
-                    if (registryGroups.Count == 0)
+                    // Yêu cầu user chọn entities
+                    WriteMessage("Chọn các dầm cần đặt tên (hoặc Enter để chọn tất cả):");
+                    var selectionResult = ed.GetSelection();
+
+                    ObjectId[] selectedIds;
+
+                    if (selectionResult.Status == Autodesk.AutoCAD.EditorInput.PromptStatus.OK)
                     {
-                        WriteMessage("Không tìm thấy nhóm dầm nào trong Registry.");
-                        WriteMessage("Chạy DTS_REBAR_GROUP_AUTO để gom nhóm trước.");
+                        // User chọn entities
+                        selectedIds = selectionResult.Value.GetObjectIds();
+                        WriteMessage($"Đã chọn {selectedIds.Length} entities.");
+                    }
+                    else
+                    {
+                        // Enter - quét tất cả entities có XData DTS_APP
+                        WriteMessage("Quét tất cả entities có DTS_APP XData...");
+                        var bt = (BlockTable)tr.GetObject(db.BlockTableId, OpenMode.ForRead);
+                        var btr = (BlockTableRecord)tr.GetObject(bt[BlockTableRecord.ModelSpace], OpenMode.ForRead);
+
+                        var tempList = new List<ObjectId>();
+                        foreach (ObjectId id in btr)
+                        {
+                            var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                            if (ent == null) continue;
+
+                            // Kiểm tra XData DTS_APP
+                            var xdata = ent.GetXDataForApplication("DTS_APP");
+                            if (xdata != null)
+                                tempList.Add(id);
+                        }
+                        selectedIds = tempList.ToArray();
+                        WriteMessage($"Tìm thấy {selectedIds.Length} entities có DTS_APP.");
+                    }
+
+                    if (selectedIds.Length == 0)
+                    {
+                        WriteMessage("Không có entities nào để xử lý.");
                         return;
                     }
 
-                    WriteMessage($"Tìm thấy {registryGroups.Count} nhóm dầm.");
-
-                    // 2. Convert và load thêm thông tin từ XData
-                    foreach (var regInfo in registryGroups)
+                    // Xử lý từng entity đã chọn
+                    int scannedCount = 0;
+                    foreach (var id in selectedIds)
                     {
-                        var grp = new BeamGroup
+                        var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                        if (ent == null) continue;
+
+                        scannedCount++;
+
+                        // Kiểm tra XData DTS_APP
+                        var xdata = ent.GetXDataForApplication("DTS_APP");
+                        if (xdata == null) continue;
+
+                        // Đọc XData
+                        var beamData = XDataUtils.ReadElementData(ent) as BeamData;
+                        if (beamData == null) continue;
+
+                        // 3. Đọc OptUser từ XData (dùng cho Signature)
+                        var optUserDict = XDataUtils.ReadOptUser(ent);
+                        if (optUserDict != null && optUserDict.TopL0 != null)
                         {
-                            GroupName = regInfo.GroupName,
-                            Name = regInfo.Name,
-                            GroupType = regInfo.GroupType,
-                            Direction = regInfo.Direction,
-                            AxisName = regInfo.AxisName,
-                            LevelZ = regInfo.LevelZ,
-                            Width = regInfo.Width,
-                            Height = regInfo.Height,
-                            EntityHandles = regInfo.GetAllMembers()
-                        };
+                            // Format OptUser string (Skin không có trong RebarOptionData)
+                            beamData.OptUser = $"T:{optUserDict.TopL0};B:{optUserDict.BotL0};S:{optUserDict.Stirrup};W:";
+                        }
 
-                        if (grp.EntityHandles == null || grp.EntityHandles.Count == 0) continue;
+                        // 4. Đọc geometry từ Entity (cho Direction và Sort)
+                        if (ent is Autodesk.AutoCAD.DatabaseServices.Line line)
+                        {
+                            beamData.StartPoint = new[] { line.StartPoint.X, line.StartPoint.Y, line.StartPoint.Z };
+                            beamData.EndPoint = new[] { line.EndPoint.X, line.EndPoint.Y, line.EndPoint.Z };
+                            beamData.CenterX = (line.StartPoint.X + line.EndPoint.X) / 2.0;
+                            beamData.CenterY = (line.StartPoint.Y + line.EndPoint.Y) / 2.0;
+                        }
+                        else if (ent is Autodesk.AutoCAD.DatabaseServices.Polyline pline && pline.NumberOfVertices >= 2)
+                        {
+                            var pt0 = pline.GetPoint3dAt(0);
+                            var pt1 = pline.GetPoint3dAt(pline.NumberOfVertices - 1);
+                            beamData.StartPoint = new[] { pt0.X, pt0.Y, pt0.Z };
+                            beamData.EndPoint = new[] { pt1.X, pt1.Y, pt1.Z };
+                            beamData.CenterX = (pt0.X + pt1.X) / 2.0;
+                            beamData.CenterY = (pt0.Y + pt1.Y) / 2.0;
+                        }
 
-                        // Load first entity để update Signature
-                        var firstHandle = grp.EntityHandles[0];
-                        var objId = AcadUtils.GetObjectIdFromHandle(firstHandle);
+                        // 5. Validation: Phải có Support data
+                        // (Nếu không có, đây là dầm chưa phân tích topology)
+                        if (!beamData.BaseZ.HasValue)
+                        {
+                            WriteMessage($"⚠ Dầm {ent.Handle} thiếu BaseZ - skip.");
+                            continue;
+                        }
+
+                        // Track handle for later update
+                        string handle = ent.Handle.ToString();
+                        handleToBeam[handle] = beamData;
+                        allBeams.Add(beamData);
+                    }
+
+                    WriteMessage($"Đã quét {scannedCount} entities, tìm thấy {allBeams.Count} dầm hợp lệ.");
+
+                    if (allBeams.Count == 0)
+                    {
+                        WriteMessage("Không tìm thấy dầm nào để đặt tên.");
+                        return;
+                    }
+
+                    // 4. Validation: Kiểm tra StoryConfig
+                    var settings = DtsSettings.Instance;
+                    if (settings.StoryConfigs == null || settings.StoryConfigs.Count == 0)
+                    {
+                        WriteMessage("❌ LỖI: Chưa có cấu hình StoryNamingConfig trong DtsSettings.");
+                        WriteMessage("Vui lòng mở Rebar Config để thêm cấu hình tầng.");
+                        return;
+                    }
+
+                    // 5. Gọi NamingEngine.AutoLabelBeams()
+                    WriteMessage("Đang đặt tên cho các dầm...");
+                    Core.Algorithms.NamingEngine.AutoLabelBeams(allBeams, settings);
+
+                    // 6. Cập nhật xSectionLabel vào XData
+                    int updatedCount = 0;
+                    int lockedCount = 0;
+
+                    foreach (var kvp in handleToBeam)
+                    {
+                        var handle = kvp.Key;
+                        var beam = kvp.Value;
+                        if (string.IsNullOrEmpty(beam.SectionLabel)) continue;
+
+                        var objId = AcadUtils.GetObjectIdFromHandle(handle);
                         if (objId.IsNull) continue;
 
-                        var obj = tr.GetObject(objId, OpenMode.ForRead);
-                        var beamData = XDataUtils.ReadElementData(obj) as BeamData;
+                        var obj = tr.GetObject(objId, OpenMode.ForWrite);
+                        XDataUtils.UpdateElementData(obj, beam, tr);
 
-                        if (beamData != null)
-                        {
-                            grp.Width = beamData.Width.GetValueOrDefault(grp.Width);
-                            grp.Height = (beamData.Depth ?? beamData.Height).GetValueOrDefault(grp.Height);
-                            grp.LevelZ = beamData.BaseZ.GetValueOrDefault(grp.LevelZ);
-                        }
-
-                        // Update Signature từ OptUser (thép đã bố trí)
-                        var optUser = XDataUtils.ReadOptUser(obj);
-                        if (optUser.TopL0 != null || optUser.BotL0 != null)
-                        {
-                            string sectionPart = $"{grp.Width}x{grp.Height}";
-                            string rebarPart = $"T:{optUser.TopL0}|B:{optUser.BotL0}";
-                            grp.Signature = $"{sectionPart}|{rebarPart}";
-                        }
-                        else
-                        {
-                            grp.UpdateSignature();
-                        }
-
-                        allGroups.Add(grp);
+                        updatedCount++;
+                        if (beam.SectionLabelLocked) lockedCount++;
                     }
 
-                    if (allGroups.Count == 0)
+                    WriteSuccess($"✅ Đã đặt tên cho {updatedCount} dầm ({lockedCount} locked).");
+
+                    // 7. Hiển thị settings trước
+                    WriteMessage("\n=== CẤU HÌNH ĐẶT TÊN ===");
+                    WriteMessage($"Sort Corner: {settings.Naming.SortCorner} (0=TL, 1=TR, 2=BL, 3=BR)");
+                    WriteMessage($"Sort Direction: {settings.Naming.SortDirection} (0=X first, 1=Y first)");
+                    WriteMessage($"Merge Same Section: {settings.Naming.MergeSameSection}");
+
+                    // 8. Hiển thị kết quả chi tiết theo tầng
+                    WriteMessage("\n=== KẾT QUẢ ĐẶT TÊN CHI TIẾT ===");
+                    var byStory = allBeams.GroupBy(b => b.StoryName ?? "Unknown").OrderBy(g => g.Key);
+
+                    foreach (var storyGroup in byStory)
                     {
-                        WriteMessage("Không có nhóm dầm nào có dữ liệu hợp lệ.");
-                        return;
-                    }
+                        WriteMessage($"\n{storyGroup.Key}:");
 
-                    // 3. Gọi NamingEngine để đặt lại tên
-                    var settings = DtsSettings.Instance;
-                    NamingEngine.AutoLabeling(allGroups, settings);
+                        // Group by SectionLabel để hiển thị từng nhóm
+                        var labelGroups = storyGroup.GroupBy(b => b.SectionLabel).OrderBy(g => g.Key);
 
-                    WriteMessage($"Đã đặt tên cho {allGroups.Count} nhóm dầm.");
-
-                    // 4. Cập nhật XData với tên mới
-                    int updatedCount = 0;
-                    foreach (var grp in allGroups)
-                    {
-                        if (string.IsNullOrEmpty(grp.Name)) continue;
-                        if (grp.EntityHandles == null || grp.EntityHandles.Count == 0) continue;
-
-                        // Update tất cả entities trong group với SectionLabel mới
-                        foreach (var handle in grp.EntityHandles)
+                        foreach (var labelGroup in labelGroups)
                         {
-                            var objId = AcadUtils.GetObjectIdFromHandle(handle);
-                            if (objId.IsNull) continue;
+                            var sectionLabel = labelGroup.Key;
+                            var beamsInGroup = labelGroup.ToList();
+                            var count = beamsInGroup.Count;
 
-                            var obj = tr.GetObject(objId, OpenMode.ForWrite);
-                            var beamData = XDataUtils.ReadElementData(obj) as BeamData;
-                            if (beamData != null)
+                            // Lấy signature từ beam đầu tiên
+                            var firstBeam = beamsInGroup.First();
+                            string signature = firstBeam.OptUser ?? "N/A";
+                            if (firstBeam.Width.HasValue && firstBeam.Depth.HasValue)
                             {
-                                beamData.SectionLabel = grp.Name;
-                                beamData.GroupType = grp.GroupType;
-                                XDataUtils.UpdateElementData(obj, beamData, tr);
-                                updatedCount++;
+                                signature = $"{(int)firstBeam.Width.Value}x{(int)firstBeam.Depth.Value}|{signature}";
+                            }
+
+                            // Check lock status
+                            int lockedInGroup = beamsInGroup.Count(b => b.SectionLabelLocked);
+                            int unlockedInGroup = count - lockedInGroup;
+
+                            if (lockedInGroup > 0 && unlockedInGroup > 0)
+                            {
+                                // Mixed locked/unlocked
+                                WriteMessage($"  {sectionLabel}: {lockedInGroup} dầm - {signature} - LOCKED");
+                                WriteMessage($"    => Tìm thấy {unlockedInGroup} dầm cùng thông số, đã gộp với {sectionLabel}");
+                            }
+                            else if (lockedInGroup > 0)
+                            {
+                                // All locked
+                                WriteMessage($"  {sectionLabel}: {count} dầm - {signature} - LOCKED - Skipped");
+                                WriteMessage($"    => Tên đã được khóa, không thay đổi");
+                            }
+                            else
+                            {
+                                // All unlocked
+                                WriteMessage($"  {sectionLabel}: {count} dầm - {signature} - Unlocked");
                             }
                         }
-
-                        // Update Registry với tên mới
-                        var motherHandle = grp.EntityHandles[0];
-                        Core.Engines.RegistryEngine.RegisterBeamGroup(
-                            motherHandle: motherHandle,
-                            groupName: grp.GroupName,
-                            name: grp.Name,
-                            groupType: grp.GroupType,
-                            direction: grp.Direction,
-                            axisName: grp.AxisName,
-                            levelZ: grp.LevelZ,
-                            width: grp.Width,
-                            height: grp.Height,
-                            childHandles: grp.EntityHandles.Skip(1).ToList(),
-                            tr: tr);
-                    }
-
-                    WriteSuccess($"✅ Đã cập nhật tên cho {updatedCount} dầm trong {allGroups.Count} nhóm.");
-
-                    // 5. Hiển thị kết quả
-                    WriteMessage("\n--- KẾT QUẢ ĐẶT TÊN ---");
-                    foreach (var grp in allGroups.OrderBy(g => g.Name))
-                    {
-                        WriteMessage($"  {grp.Name}: {grp.EntityHandles.Count} dầm ({grp.GroupType})");
                     }
                 });
             });

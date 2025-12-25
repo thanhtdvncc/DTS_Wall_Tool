@@ -182,9 +182,10 @@ namespace DTS_Engine.UI.Forms
                                             LevelZ = group.LevelZ,
                                             GroupName = displayName,  // For dropdown display
                                             GroupId = groupId,        // For unique matching
-                                            // FIX: Add SectionLabel for JS Label Mode 2
-                                            SectionLabel = group.Name ?? "",  // group.Name = xSectionLabel from XData
-                                            xSectionLabel = group.Name ?? ""  // Duplicate for direct XData field access
+                                            // FIX: Use segment's xSectionLabel from XData (per-beam label)
+                                            // NOT group.Name which is shared for all beams in group
+                                            SectionLabel = seg.xSectionLabel ?? group.Name ?? "",
+                                            xSectionLabel = seg.xSectionLabel ?? group.Name ?? ""
                                         });
                                     }
                                 }

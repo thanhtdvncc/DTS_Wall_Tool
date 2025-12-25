@@ -218,5 +218,232 @@ namespace DTS_Engine.Core.Algorithms
             }
             return count > 0 ? sum / count : group.GeometryCenterX;
         }
+
+        /// <summary>
+        /// Auto-labeling cho từng dầm riêng lẻ (không phải Group).
+        /// Hỗ trợ name locking - các dầm đã khóa sẽ giữ nguyên tên và reserve số.
+        /// </summary>
+        public static void AutoLabelBeams(List<BeamData> beams, DtsSettings settings)
+        {
+            if (beams == null || beams.Count == 0) return;
+            if (settings == null) settings = DtsSettings.Instance;
+
+            // 0. Gán Story cho từng dầm
+            foreach (var beam in beams)
+            {
+                if (beam.BaseZ == null) continue;
+                var storyConfig = settings.GetStoryConfig(beam.BaseZ.Value);
+                if (storyConfig != null)
+                {
+                    beam.StoryName = storyConfig.StoryName;
+                }
+            }
+
+            // 1. Group by Story
+            var storyBuckets = beams
+                .Where(b => !string.IsNullOrEmpty(b.StoryName))
+                .GroupBy(b => b.StoryName)
+                .OrderBy(g => GetElevation(g.Key, settings))
+                .ToList();
+
+            foreach (var bucket in storyBuckets)
+            {
+                string storyName = bucket.Key;
+                var storyConfig = settings.StoryConfigs?.FirstOrDefault(s => s.StoryName == storyName);
+                if (storyConfig == null) continue;
+
+                string storyIndexStr = storyConfig.StartIndex.ToString();
+                string suffix = storyConfig.Suffix ?? "";
+                string girderPrefix = storyConfig.GirderPrefix ?? "G";
+                string beamPrefix = storyConfig.BeamPrefix ?? "B";
+
+                // === PHASE 1: Collect locked names ===
+                var lockedMap = new Dictionary<string, string>(); // Signature -> Name
+                var reservedNumbers = new Dictionary<string, HashSet<int>>(); // CounterKey -> Numbers
+
+                foreach (var beam in bucket.Where(b => b.SectionLabelLocked))
+                {
+                    if (string.IsNullOrEmpty(beam.SectionLabel)) continue;
+
+                    // Tính Signature và Type
+                    string sig = GetBeamSignature(beam);
+                    bool isGirder = (beam.SupportI == 1 && beam.SupportJ == 1);
+                    string prefix = isGirder ? girderPrefix : beamPrefix;
+                    string direction = GetDirection(beam);
+                    string key = $"{sig}_{prefix}_{direction}";
+
+                    // Lưu locked name
+                    if (!lockedMap.ContainsKey(key))
+                        lockedMap[key] = beam.SectionLabel;
+
+                    // Extract số từ tên và reserve
+                    int number = ExtractNumber(beam.SectionLabel);
+                    if (number > 0)
+                    {
+                        string counterKey = $"{prefix}_{direction}";
+                        if (!reservedNumbers.ContainsKey(counterKey))
+                            reservedNumbers[counterKey] = new HashSet<int>();
+                        reservedNumbers[counterKey].Add(number);
+                    }
+                }
+
+                // === PHASE 2: Sort và gán tên cho unlocked beams ===
+                var unlockedBeams = bucket.Where(b => !b.SectionLabelLocked).ToList();
+                unlockedBeams = SortBeams(unlockedBeams, settings.Naming.SortCorner, settings.Naming.SortDirection);
+
+                var counters = new Dictionary<string, int>();
+                var assignedNames = new Dictionary<string, string>(); // Key -> Name (để reuse)
+
+                foreach (var beam in unlockedBeams)
+                {
+                    // Validation: Phải có Support data
+                    // (sẽ báo lỗi ở RebarCommands, ở đây skip)
+                    if (!beam.BaseZ.HasValue) continue;
+
+                    // Xác định Type và Direction
+                    bool isGirder = (beam.SupportI == 1 && beam.SupportJ == 1);
+                    string prefix = isGirder ? girderPrefix : beamPrefix;
+                    string direction = GetDirection(beam);
+                    string counterKey = $"{prefix}_{direction}";
+
+                    // Tính Signature
+                    string sig = GetBeamSignature(beam);
+                    string key = $"{sig}_{prefix}_{direction}";
+
+                    // Nếu có locked name cho key này -> reuse
+                    if (lockedMap.TryGetValue(key, out string lockedName))
+                    {
+                        beam.SectionLabel = lockedName;
+                        continue;
+                    }
+
+                    // Nếu đã có tên cho key này (từ beam trước) -> reuse
+                    if (assignedNames.TryGetValue(key, out string existingName))
+                    {
+                        beam.SectionLabel = existingName;
+                        continue;
+                    }
+
+                    // Tạo tên mới
+                    if (!counters.ContainsKey(counterKey))
+                        counters[counterKey] = 1;
+
+                    int number = GetNextAvailableNumber(counterKey, counters, reservedNumbers);
+                    string newName = $"{storyIndexStr}{prefix}{direction}{number}{suffix}";
+
+                    beam.SectionLabel = newName;
+                    assignedNames[key] = newName;
+                    counters[counterKey] = number + 1;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Tính Signature từ Width x Height + OptUser + Support Type.
+        /// CRITICAL: Bao gồm Support để tránh gộp nhầm Girder/Beam!
+        /// </summary>
+        private static string GetBeamSignature(BeamData beam)
+        {
+            double w = beam.Width ?? 0;
+            double h = beam.Depth ?? 0;
+            // OptUser lưu trong XData, cần đọc từ dict (sẽ được populate bởi RebarCommands)
+            // Tạm thời dùng placeholder nếu chưa có
+            string optUser = beam.OptUser ?? "";
+
+            // CRITICAL FIX: Thêm Support type vào signature
+            // Girder (I=1,J=1) khác hoàn toàn với Beam (I=0 hoặc J=0)
+            string supportType = (beam.SupportI == 1 && beam.SupportJ == 1) ? "G" : "B";
+
+            return $"{(int)w}x{(int)h}|{optUser}|{supportType}";
+        }
+
+        /// <summary>
+        /// Xác định Direction (X/Y) từ góc dầm.
+        /// </summary>
+        private static string GetDirection(BeamData beam)
+        {
+            // Nếu không có geometry data → fallback "X"
+            if (beam.StartPoint == null || beam.EndPoint == null ||
+                beam.StartPoint.Length < 2 || beam.EndPoint.Length < 2)
+                return "X";
+
+            // Tính delta X và delta Y
+            double dx = Math.Abs(beam.EndPoint[0] - beam.StartPoint[0]);
+            double dy = Math.Abs(beam.EndPoint[1] - beam.StartPoint[1]);
+
+            // Dầm nào dài hơn theo X → Direction = X
+            // Dầm nào dài hơn theo Y → Direction = Y
+            return (dx >= dy) ? "X" : "Y";
+        }
+
+        /// <summary>
+        /// Extract số từ SectionLabel (VD: "2GY3" -> 3).
+        /// </summary>
+        private static int ExtractNumber(string sectionLabel)
+        {
+            if (string.IsNullOrEmpty(sectionLabel)) return 0;
+
+            // Tìm vị trí số cuối cùng
+            int i = sectionLabel.Length - 1;
+            while (i >= 0 && char.IsDigit(sectionLabel[i]))
+                i--;
+
+            if (i == sectionLabel.Length - 1) return 0; // Không có số
+
+            string numStr = sectionLabel.Substring(i + 1);
+            if (int.TryParse(numStr, out int num))
+                return num;
+
+            return 0;
+        }
+
+        /// <summary>
+        /// Lấy số tiếp theo available (skip reserved numbers).
+        /// </summary>
+        private static int GetNextAvailableNumber(string counterKey, Dictionary<string, int> counters, Dictionary<string, HashSet<int>> reserved)
+        {
+            int current = counters.ContainsKey(counterKey) ? counters[counterKey] : 1;
+
+            if (!reserved.ContainsKey(counterKey))
+                return current;
+
+            var reservedSet = reserved[counterKey];
+            while (reservedSet.Contains(current))
+                current++;
+
+            return current;
+        }
+
+        /// <summary>
+        /// Sort beams theo SortCorner và SortDirection.
+        /// </summary>
+        private static List<BeamData> SortBeams(List<BeamData> beams, int sortCorner, int sortDirection)
+        {
+            // SortCorner: 0=TL, 1=TR, 2=BL, 3=BR
+            // SortDirection: 0=X first (horizontal), 1=Y first (vertical)
+
+            IOrderedEnumerable<BeamData> sorted;
+
+            switch (sortCorner)
+            {
+                case 0: // Top-Left: Y desc, X asc
+                    sorted = beams.OrderByDescending(b => b.CenterY).ThenBy(b => b.CenterX);
+                    break;
+                case 1: // Top-Right: Y desc, X desc
+                    sorted = beams.OrderByDescending(b => b.CenterY).ThenByDescending(b => b.CenterX);
+                    break;
+                case 2: // Bottom-Left: Y asc, X asc
+                    sorted = beams.OrderBy(b => b.CenterY).ThenBy(b => b.CenterX);
+                    break;
+                case 3: // Bottom-Right: Y asc, X desc
+                    sorted = beams.OrderBy(b => b.CenterY).ThenByDescending(b => b.CenterX);
+                    break;
+                default: // Fallback to TL
+                    sorted = beams.OrderByDescending(b => b.CenterY).ThenBy(b => b.CenterX);
+                    break;
+            }
+
+            return sorted.ToList();
+        }
     }
 }

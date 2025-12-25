@@ -39,6 +39,11 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public double[] EndPoint { get; set; } = new double[2];
 
+        /// <summary>
+        /// Tên section label từ XData (VD: "1GX2", "2BY5") - hiển thị trên viewer
+        /// </summary>
+        public string xSectionLabel { get; set; }
+
         // Thép bố trí (project từ parent SpanData)
         public string TopRebar { get; set; }
         public string BotRebar { get; set; }

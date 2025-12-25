@@ -417,6 +417,7 @@ namespace DTS_Engine.Core.Algorithms
                         Length = seg.Length / 1000.0,
                         StartPoint = new[] { seg.StartX, seg.StartY },
                         EndPoint = new[] { seg.EndX, seg.EndY }
+                        // xSectionLabel will be populated from viewer refresh via TopologyBuilder
                     });
                 }
 
