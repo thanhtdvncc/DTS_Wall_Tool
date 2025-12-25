@@ -83,6 +83,17 @@
             border-color: #3b82f6;
             box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
         }
+
+        /* Prevent text selection and ensure cursor during resize */
+        body.resizing {
+            cursor: ns-resize !important;
+            user-select: none !important;
+            -webkit-user-select: none !important;
+        }
+
+        body.resizing * {
+            cursor: ns-resize !important;
+        }
     </style>
 </head>
 
@@ -209,14 +220,13 @@
         <!-- FLOATING TOGGLE BUTTONS - Visible when sidebars are collapsed -->
         <!-- Right Sidebar Toggle (when collapsed) -->
         <button id="rightSidebarFloatBtn" onclick="toggleRightSidebar()" title="Mở Metrics & Table"
-            class="hidden absolute right-0 top-1/2 -translate-y-1/2 w-6 h-16 bg-slate-700 hover:bg-slate-600 text-white rounded-l z-30 flex items-center justify-center">
+            class="hidden absolute right-0 top-16 w-6 h-16 bg-slate-700 hover:bg-slate-600 text-white rounded-l z-30 flex items-center justify-center">
             <i class="fa-solid fa-chevron-left text-xs"></i>
         </button>
 
         <!-- Detail Panel Toggle (when collapsed) -->
         <button id="detailPanelFloatBtn" onclick="toggleDetailPanel()" title="Mở Detail Panel"
-            class="hidden absolute bottom-0 left-1/2 -translate-x-1/2 w-16 h-6 bg-slate-700 hover:bg-slate-600 text-white rounded-t z-30 flex items-center justify-center"
-            style="margin-bottom: 0;">
+            class="hidden absolute bottom-0 left-4 w-16 h-6 bg-slate-700 hover:bg-slate-600 text-white rounded-t z-30 flex items-center justify-center">
             <i class="fa-solid fa-chevron-up text-xs"></i>
         </button>
 
@@ -381,10 +391,15 @@
             </div>
         </div>
 
-        <!-- BOTTOM DETAIL PANEL - Collapsible overlay (40% viewport height) -->
+        <!-- BOTTOM DETAIL PANEL - Collapsible overlay (resizable) -->
         <div id="detailPanel"
             class="absolute left-0 bottom-0 bg-white border-t border-slate-300 shadow-lg z-20 transition-transform duration-300 flex flex-col"
             style="right: 320px; height: 40vh;">
+
+            <!-- Resize Handle (drag to resize panel height) -->
+            <div id="detailPanelResizer"
+                class="absolute top-0 left-0 right-0 h-1.5 bg-slate-300 hover:bg-blue-400 cursor-ns-resize z-30"
+                style="touch-action: none;" title="Kéo để thay đổi kích thước"></div>
 
             <!-- Simple title bar with toggle -->
             <div class="flex-none flex items-center gap-2 px-3 py-1 bg-slate-100 border-b border-slate-200">
@@ -971,6 +986,54 @@
                 // Re-render detail canvas when panel is expanded
                 resizeDetailCanvas();
             }
+        }
+
+        // ============ DETAIL PANEL RESIZE ============
+        let detailPanelResizing = false;
+        let detailPanelStartY = 0;
+        let detailPanelStartHeight = 0;
+        const DETAIL_PANEL_MIN_HEIGHT = 150;
+        const DETAIL_PANEL_MAX_HEIGHT = window.innerHeight * 0.8;
+
+        function initDetailPanelResize() {
+            const resizer = document.getElementById('detailPanelResizer');
+            const panel = document.getElementById('detailPanel');
+            if (!resizer || !panel) return;
+
+            // Load saved height from localStorage
+            const savedHeight = localStorage.getItem('detailPanelHeight');
+            if (savedHeight) {
+                panel.style.height = savedHeight + 'px';
+            }
+
+            // Simple mousedown on resizer to start
+            resizer.onmousedown = function (e) {
+                e.preventDefault();
+                detailPanelResizing = true;
+                detailPanelStartY = e.clientY;
+                detailPanelStartHeight = panel.offsetHeight;
+                document.body.classList.add('resizing');
+
+                // Attach window-level handlers
+                window.onmousemove = function (e) {
+                    if (!detailPanelResizing) return;
+                    const delta = detailPanelStartY - e.clientY;
+                    let newHeight = detailPanelStartHeight + delta;
+                    newHeight = Math.max(DETAIL_PANEL_MIN_HEIGHT, Math.min(DETAIL_PANEL_MAX_HEIGHT, newHeight));
+                    panel.style.height = newHeight + 'px';
+                    resizeDetailCanvas();
+                };
+
+                window.onmouseup = function () {
+                    if (detailPanelResizing) {
+                        detailPanelResizing = false;
+                        document.body.classList.remove('resizing');
+                        localStorage.setItem('detailPanelHeight', panel.offsetHeight);
+                        window.onmousemove = null;
+                        window.onmouseup = null;
+                    }
+                };
+            };
         }
 
         // NOTE: renderPlanView() is defined later (line 1212) and renders the full plan view
@@ -2370,6 +2433,9 @@
             if (data.groups && data.groups.length > 0) {
                 loadGroup(0);
             }
+
+            // Initialize detail panel resize functionality
+            initDetailPanelResize();
         }
 
         function populateGroupSelect() {
