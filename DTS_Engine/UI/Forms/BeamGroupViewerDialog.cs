@@ -355,6 +355,59 @@ namespace DTS_Engine.UI.Forms
                 return;
             }
 
+            // Handle UPDATE_SECTION_LABEL message from JS to update xSectionLabel/xSectionLabelLocked in XData
+            if (message.StartsWith("UPDATE_SECTION_LABEL|"))
+            {
+                try
+                {
+                    var parts = message.Substring(21).Split('|');
+                    if (parts.Length >= 3)
+                    {
+                        string handle = parts[0];
+                        string newLabel = parts[1];
+                        bool locked = parts[2] == "1";
+
+                        this.BeginInvoke(new Action(() =>
+                        {
+                            try
+                            {
+                                var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+                                if (doc == null) return;
+
+                                using (doc.LockDocument())
+                                using (var tr = doc.Database.TransactionManager.StartTransaction())
+                                {
+                                    var objId = Core.Utils.AcadUtils.GetObjectIdFromHandle(handle);
+                                    if (!objId.IsNull)
+                                    {
+                                        var obj = tr.GetObject(objId, OpenMode.ForWrite);
+                                        if (obj != null)
+                                        {
+                                            // Update xSectionLabel and xSectionLabelLocked in XData using MergeRawData
+                                            var updates = new Dictionary<string, object>
+                                            {
+                                                { "xSectionLabel", newLabel },
+                                                { "xSectionLabelLocked", locked ? "1" : "0" }
+                                            };
+                                            XDataUtils.MergeRawData(obj, tr, updates);
+                                            tr.Commit();
+
+                                            System.Diagnostics.Debug.WriteLine($"[UPDATE_SECTION_LABEL] Handle={handle}, Label={newLabel}, Locked={locked}");
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[UPDATE_SECTION_LABEL] Error: {ex.Message}");
+                            }
+                        }));
+                    }
+                }
+                catch { }
+                return;
+            }
+
             // Handle SET_OPACITY message for transparency when highlight mode is ON
             if (message.StartsWith("SET_OPACITY|"))
             {

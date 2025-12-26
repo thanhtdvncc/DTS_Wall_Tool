@@ -612,6 +612,18 @@ namespace DTS_Engine.Core.Algorithms
                 });
             }
 
+            // Sync xSectionLabel from first segment to SpanData for viewer table display
+            if (span.Segments.Count > 0 && span.Segments[0].xSectionLabel != null)
+            {
+                span.xSectionLabel = span.Segments[0].xSectionLabel;
+            }
+            // Also sync xSectionLabelLocked from first topology's BeamData
+            var firstBeamData = topologies[0].ElementData as BeamData;
+            if (firstBeamData != null)
+            {
+                span.xSectionLabelLocked = firstBeamData.SectionLabelLocked;
+            }
+
             // Populate As_Top/As_Bot từ XData của beam đầu tiên
             var firstTopo = topologies[0];
             if (firstTopo.RebarData != null)

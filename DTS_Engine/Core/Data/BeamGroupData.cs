@@ -128,6 +128,18 @@ namespace DTS_Engine.Core.Data
         public int SpanIndex { get; set; }
 
         /// <summary>
+        /// Section label from XData (xSectionLabel) for viewer display.
+        /// Read from first segment in Span if available.
+        /// </summary>
+        public string xSectionLabel { get; set; }
+
+        /// <summary>
+        /// True if section label is locked (xSectionLabelLocked = "1").
+        /// When user edits in viewer, this should be set to true.
+        /// </summary>
+        public bool xSectionLabelLocked { get; set; }
+
+        /// <summary>
         /// Chiều dài tim-tim gối (m)
         /// </summary>
         public double Length { get; set; }

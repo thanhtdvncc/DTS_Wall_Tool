@@ -656,6 +656,9 @@
         let highlightedSpanIndex = -1;
         let spanBounds = [];
         let rebarLabelBounds = [];
+        let detailSpanBounds = [];
+        let detailRebarLabelBounds = [];
+        let sectionLabelBounds = [];
         let labelHits = []; // For detailed label hit testing
         let isPanDragging = false; // Track if we actually dragged during a click
         let mouseDownButton = -1; // Specific button that started the click
@@ -833,6 +836,8 @@
             } else if (label.type === 'WebBar') {
                 const idx = Number.isFinite(label.pos) ? label.pos : 0;
                 labelEditorEl.value = (span?.WebBar?.[idx] || '').toString();
+            } else if (label.type === 'SectionLabel') {
+                labelEditorEl.value = (span?.xSectionLabel || '').toString();
             } else {
                 const layer = Number.isFinite(label.layer) ? label.layer : 0;
                 const pos = Number.isFinite(label.pos) ? label.pos : 2;
@@ -858,6 +863,11 @@
             if (activeLabelEdit.type === 'WebBar') {
                 const idx = Number.isFinite(activeLabelEdit.pos) ? activeLabelEdit.pos : 0;
                 updateWebBar(activeLabelEdit.spanIndex, idx, nextVal);
+                hideInlineLabelEditor();
+                return;
+            }
+            if (activeLabelEdit.type === 'SectionLabel') {
+                updateSectionLabel(activeLabelEdit.spanIndex, nextVal);
                 hideInlineLabelEditor();
                 return;
             }
@@ -1173,9 +1183,7 @@
             renderDetailCanvas();
         }
 
-        // Bounds for detail canvas click detection
-        let detailSpanBounds = [];
-        let detailRebarLabelBounds = [];
+
 
         function renderDetailCanvas() {
             const canvas = document.getElementById('detailCanvas');
@@ -1197,6 +1205,7 @@
             // Reset bounds
             detailSpanBounds = [];
             detailRebarLabelBounds = [];
+            sectionLabelBounds = [];
 
             // Route to existing render functions based on mode
             // We reuse the existing renderCanvas logic but target detailCanvas
@@ -1265,11 +1274,36 @@
                     drawShearLabels(ctx, x, w, beamY, span, i);
                 }
 
-                // Span label (center of beam) - EXACTLY like original renderCanvas
+                // Span label (center of beam) - Format: "S1 | 2GY2 🔒" or "S1 | 🔓"
+                // NGHIÊM CẤM FALLBACK - section label != group name
+                const sectionLabel = span.xSectionLabel || ''; // Empty if not set, NO FALLBACK
+                const isLocked = span.xSectionLabelLocked === true;
+                const lockIcon = isLocked ? ' 🔒' : ' 🔓'; // Always show icon at END
+                const fullLabel = `${span.SpanId} | ${sectionLabel}${lockIcon}`;
+
                 ctx.fillStyle = '#1e293b';
                 ctx.font = 'bold 11px sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(span.SpanId, x + w / 2, beamY + BEAM_HEIGHT / 2 + 4);
+                ctx.textBaseline = 'middle';
+                const labelY = beamY + BEAM_HEIGHT / 2 + 4;
+                ctx.fillText(fullLabel, x + w / 2, labelY);
+
+                // Register bounds for section label editing (click on label text, not icon)
+                const fullWidth = ctx.measureText(fullLabel).width;
+                const prefixWidth = ctx.measureText(span.SpanId + ' | ').width;
+                const labelTextWidth = ctx.measureText(sectionLabel).width;
+                const separatorX = x + w / 2 - fullWidth / 2 + prefixWidth;
+
+                sectionLabelBounds.push({
+                    x: separatorX,
+                    y: labelY - 8,
+                    width: labelTextWidth > 0 ? labelTextWidth : 40, // Min width for empty label
+                    height: 16,
+                    spanIndex: i,
+                    label: sectionLabel,
+                    isLocked: isLocked,
+                    lockIconWidth: 0 // Icon is now part of the fullLabel, not a separate clickable element for editing the text
+                });
 
                 // Dimension + Section label (1 dòng below beam)
                 ctx.fillStyle = '#475569';
@@ -2422,6 +2456,27 @@
                     const x = (e.clientX - rect.left - detailPanX) / detailZoom;
                     const y = (e.clientY - rect.top - detailPanY) / detailZoom;
 
+                    // PRIORITY 0: Check section label bounds (xSectionLabel)
+                    for (let i = 0; i < sectionLabelBounds.length; i++) {
+                        const sl = sectionLabelBounds[i];
+                        // Expand clickable area to include icon (icon is after the text)
+                        const iconWidth = 20; // Approximate width of lock/unlock icon
+                        const totalWidth = sl.width + iconWidth;
+
+                        if (x >= sl.x && x <= sl.x + totalWidth && y >= sl.y && y <= sl.y + sl.height) {
+                            const clickXInLabel = x - sl.x;
+                            // Icon is at END - check if clicked in last 20px for lock toggle
+                            if (clickXInLabel > sl.width) {
+                                // Clicked on lock icon area - toggle lock state
+                                toggleSectionLock(sl.spanIndex, e);
+                            } else {
+                                // Clicked on section label text - edit label
+                                editSectionLabel(sl.spanIndex, sl.label, e, sl);
+                            }
+                            return;
+                        }
+                    }
+
                     // PRIORITY 1: Check label bounds for editing (single click)
                     for (let i = 0; i < detailRebarLabelBounds.length; i++) {
                         const lb = detailRebarLabelBounds[i];
@@ -2728,6 +2783,8 @@
             ctx.fillText(t, centerX, centerY);
             ctx.restore();
         }
+
+
 
         // ===== UNIFIED ROUNDING: <1 → 4 decimals, ≥1 → 2 decimals =====
         function formatRebarValue(n) {
@@ -3386,12 +3443,30 @@
 
                     // First row shows span info with rowspan, other rows only show layer data
                     if (isFirstRow) {
+                        // Format: "SpanId | xSectionLabel" with editable section label
+                        const sectionLabel = span.xSectionLabel || '-';
+                        const isLocked = span.xSectionLabelLocked === true;
+
                         tr.innerHTML = `
                             <td class="p-1 font-medium" rowspan="${maxLayers}">
-                                <input type="text" value="${span.SpanId || ''}" 
-                                    onclick="event.stopPropagation()"
-                                    onchange="updateSpanName(${spanIdx}, this.value)"
-                                    class="w-full text-center bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 outline-none font-medium">
+                                <div class="flex items-center gap-1 justify-center">
+                                    <input type="text" value="${span.SpanId || ''}" 
+                                        onclick="event.stopPropagation()"
+                                        onchange="updateSpanName(${spanIdx}, this.value)"
+                                        class="w-8 text-center bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 outline-none font-medium text-slate-600">
+                                    <span class="text-slate-400">|</span>
+                                    ${isLocked ? `<span class="cursor-pointer hover:opacity-70" 
+                                          onclick="toggleSectionLock(${spanIdx}, event)"
+                                          title="Click để mở khóa">🔒</span>` : ''}
+                                    <span class="cursor-pointer hover:bg-blue-100 px-1 rounded font-bold ${isLocked ? 'text-amber-600' : 'text-blue-600'}" 
+                                          ondblclick="editSectionLabel(${spanIdx}, '${sectionLabel.replace(/'/g, "\\'")}', event)"
+                                          title="${isLocked ? 'Đã khóa - Double-click để sửa' : 'Double-click để sửa Section Label'}">
+                                        ${sectionLabel}
+                                    </span>
+                                    ${!isLocked && sectionLabel !== '-' ? `<span class="cursor-pointer text-slate-400 hover:text-amber-600 text-xs" 
+                                          onclick="toggleSectionLock(${spanIdx}, event)"
+                                          title="Click để khóa">🔓</span>` : ''}
+                                </div>
                             </td>
                             <td class="p-1 text-center" rowspan="${maxLayers}">
                                 <input type="checkbox" ${span.IsActive !== false ? 'checked' : ''} 
@@ -3523,9 +3598,66 @@
             autoLockOnEdit();
         }
 
-        function selectAllSpans() {
-            currentGroup.Spans.forEach(s => s.IsActive = true);
-            renderTable();
+        // Update section label (xSectionLabel) and auto-lock + send to C#
+        function updateSectionLabel(spanIndex, newLabel) {
+            const span = currentGroup?.Spans?.[spanIndex];
+            if (!span) return;
+
+            const trimmed = newLabel.trim();
+            span.xSectionLabel = trimmed || '-';
+            span.xSectionLabelLocked = trimmed.length > 0; // Auto-lock if non-empty
+
+            // Get first segment handle for XData update
+            const handle = span.Segments?.[0]?.EntityHandle;
+            if (handle) {
+                const locked = span.xSectionLabelLocked ? '1' : '0';
+                window.chrome.webview?.postMessage(`UPDATE_SECTION_LABEL|${handle}|${trimmed}|${locked}`);
+            }
+
+            // Re-render to show updated label
+            renderDetailCanvas();
+        }
+
+        // Edit Section Label (xSectionLabel) via inline editor
+        // NO PROMPT - use inline editor like rebar labels
+        function editSectionLabel(spanIndex, currentLabel, event, bounds) {
+            event?.stopPropagation();
+
+            const span = currentGroup?.Spans?.[spanIndex];
+            if (!span) return;
+
+            // Trigger inline editor for section label with actual bounds
+            startInlineLabelEdit({
+                type: 'SectionLabel',
+                spanIndex: spanIndex,
+                x: bounds?.x || 0,
+                y: bounds?.y || 0,
+                width: bounds?.width || 100,
+                height: bounds?.height || 16
+            });
+        }
+
+        // Toggle section label lock state (click on lock/unlock icon)
+        function toggleSectionLock(spanIndex, event) {
+            event?.stopPropagation();
+
+            const span = currentGroup?.Spans?.[spanIndex];
+            if (!span) return;
+
+            // Toggle lock state
+            const wasLocked = span.xSectionLabelLocked === true;
+            span.xSectionLabelLocked = !wasLocked;
+
+            // Get first segment handle for XData update
+            const handle = span.Segments?.[0]?.EntityHandle;
+            if (handle) {
+                const label = span.xSectionLabel || '';
+                const locked = span.xSectionLabelLocked ? '1' : '0';
+                window.chrome.webview?.postMessage(`UPDATE_SECTION_LABEL|${handle}|${label}|${locked}`);
+            }
+
+            // Re-render to update icon
+            renderDetailCanvas();
         }
 
         function selectNoneSpans() {
