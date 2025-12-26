@@ -3598,24 +3598,55 @@
             autoLockOnEdit();
         }
 
+        // [FIX AUDIT] Helper function to enforce Single Source of Truth
+        // Syncs span data from currentGroup (Detail View) to allBeams (Plan View)
+        function syncSpanToPlanData(span) {
+            if (!span || !span.Segments || !data.allBeams) return;
+
+            const spanHandles = span.Segments.map(s => s.EntityHandle);
+
+            // Find matching beams in the Plan View data source and update them
+            data.allBeams.forEach(b => {
+                if (spanHandles.includes(b.Handle)) {
+                    // Sync properties ensuring Plan View reflects Sidebar changes immediately
+                    b.xSectionLabel = span.xSectionLabel;
+                    b.SectionLabel = span.xSectionLabel; // Legacy fallback
+                    b.xSectionLabelLocked = span.xSectionLabelLocked;
+                }
+            });
+        }
+
+        // [FIX AUDIT] Completely rewritten to sync all UI components and XData
         // Update section label (xSectionLabel) and auto-lock + send to C#
         function updateSectionLabel(spanIndex, newLabel) {
             const span = currentGroup?.Spans?.[spanIndex];
             if (!span) return;
 
             const trimmed = newLabel.trim();
-            span.xSectionLabel = trimmed || '-';
-            span.xSectionLabelLocked = trimmed.length > 0; // Auto-lock if non-empty
 
-            // Get first segment handle for XData update
+            // 1. Update Data Model (Detail View Source)
+            span.xSectionLabel = trimmed || '';
+            // Logic: If user types something, auto-lock. If empty, unlock
+            span.xSectionLabelLocked = trimmed.length > 0;
+
+            // 2. [CRITICAL] Sync to Plan View Data Source
+            syncSpanToPlanData(span);
+
+            // 3. Send to C# to write XData immediately
             const handle = span.Segments?.[0]?.EntityHandle;
             if (handle) {
                 const locked = span.xSectionLabelLocked ? '1' : '0';
                 window.chrome.webview?.postMessage(`UPDATE_SECTION_LABEL|${handle}|${trimmed}|${locked}`);
             }
 
-            // Re-render to show updated label
-            renderDetailCanvas();
+            // 4. Force Re-render ALL Views to reflect changes
+            renderDetailCanvas(); // Update Detail Panel
+            renderPlanView();     // Update Plan View (Canvas)
+
+            // Update Table if visible
+            if (!tablePanelCollapsed) {
+                renderTable();
+            }
         }
 
         // Edit Section Label (xSectionLabel) via inline editor
@@ -3637,6 +3668,7 @@
             });
         }
 
+        // [FIX AUDIT] Rewritten to ensure Toggle updates visuals everywhere
         // Toggle section label lock state (click on lock/unlock icon)
         function toggleSectionLock(spanIndex, event) {
             event?.stopPropagation();
@@ -3644,11 +3676,14 @@
             const span = currentGroup?.Spans?.[spanIndex];
             if (!span) return;
 
-            // Toggle lock state
+            // 1. Update Data Model
             const wasLocked = span.xSectionLabelLocked === true;
             span.xSectionLabelLocked = !wasLocked;
 
-            // Get first segment handle for XData update
+            // 2. [CRITICAL] Sync to Plan View Data Source
+            syncSpanToPlanData(span);
+
+            // 3. Send to C#
             const handle = span.Segments?.[0]?.EntityHandle;
             if (handle) {
                 const label = span.xSectionLabel || '';
@@ -3656,8 +3691,10 @@
                 window.chrome.webview?.postMessage(`UPDATE_SECTION_LABEL|${handle}|${label}|${locked}`);
             }
 
-            // Re-render to update icon
+            // 4. Force Re-render ALL Views
             renderDetailCanvas();
+            renderPlanView();
+            if (!tablePanelCollapsed) renderTable();
         }
 
         function selectNoneSpans() {
