@@ -3004,14 +3004,36 @@
                 // Initialize arrays - MUST be 6 elements to match C# [3,6] structure
                 if (!span.TopRebar) span.TopRebar = [[], []];
                 if (!span.BotRebar) span.BotRebar = [[], []];
+                if (!span.TopRebar) span.TopRebar = [];
+                if (!span.BotRebar) span.BotRebar = [];
 
                 // Layer 0: Backbone (positions 0,2,4 = Left,Mid,Right)
                 span.TopRebar[0] = [opt.TopL0 || '', '', opt.TopL0 || '', '', opt.TopL0 || '', ''];
                 span.BotRebar[0] = [opt.BotL0 || '', '', opt.BotL0 || '', '', opt.BotL0 || '', ''];
 
-                // Layer 1: Addons (Properly map 3 zones L, M, R to positions 0, 2, 4)
-                span.TopRebar[1] = [opt.TopAddL || '', '', opt.TopAddM || '', '', opt.TopAddR || '', ''];
-                span.BotRebar[1] = [opt.BotAddL || '', '', opt.BotAddM || '', '', opt.BotAddR || '', ''];
+                // Clear addon layers (1-7)
+                for (let l = 1; l < 8; l++) {
+                    span.TopRebar[l] = ['', '', '', '', '', ''];
+                    span.BotRebar[l] = ['', '', '', '', '', ''];
+                }
+
+                // Apply Addons from XData (TopAddons is [[L,M,R], ...])
+                if (opt.TopAddons && opt.TopAddons.length > 0) {
+                    for (let l = 0; l < opt.TopAddons.length; l++) {
+                        let layerIdx = l + 1;
+                        if (layerIdx >= 8) break;
+                        let layerData = opt.TopAddons[l];
+                        span.TopRebar[layerIdx] = [layerData[0] || '', '', layerData[1] || '', '', layerData[2] || '', ''];
+                    }
+                }
+                if (opt.BotAddons && opt.BotAddons.length > 0) {
+                    for (let l = 0; l < opt.BotAddons.length; l++) {
+                        let layerIdx = l + 1;
+                        if (layerIdx >= 8) break;
+                        let layerData = opt.BotAddons[l];
+                        span.BotRebar[layerIdx] = [layerData[0] || '', '', layerData[1] || '', '', layerData[2] || '', ''];
+                    }
+                }
             });
         }
 

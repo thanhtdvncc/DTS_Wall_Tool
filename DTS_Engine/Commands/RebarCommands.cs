@@ -913,18 +913,32 @@ namespace DTS_Engine.Commands
                             var optUser = new XDataUtils.RebarOptionData
                             {
                                 TopL0 = span.TopRebarInternal[0, idxM] ?? "", // Backbone (typically same across all)
-                                TopAddL = span.TopRebarInternal[1, idxL] ?? "",
-                                TopAddM = span.TopRebarInternal[1, idxM] ?? "",
-                                TopAddR = span.TopRebarInternal[1, idxR] ?? "",
-
                                 BotL0 = span.BotRebarInternal[0, idxM] ?? "",
-                                BotAddL = span.BotRebarInternal[1, idxL] ?? "",
-                                BotAddM = span.BotRebarInternal[1, idxM] ?? "",
-                                BotAddR = span.BotRebarInternal[1, idxR] ?? "",
-
                                 Stirrup = span.Stirrup != null && span.Stirrup.Length > idxM ? span.Stirrup[idxM] : "",
                                 Web = span.WebBar != null && span.WebBar.Length > idxM ? span.WebBar[idxM] : ""
                             };
+
+                            // Addons (Layers 1 to 7)
+                            for (int l = 1; l < 8; l++)
+                            {
+                                string tL = span.TopRebarInternal[l, idxL] ?? "";
+                                string tM = span.TopRebarInternal[l, idxM] ?? "";
+                                string tR = span.TopRebarInternal[l, idxR] ?? "";
+
+                                if (!string.IsNullOrEmpty(tL) || !string.IsNullOrEmpty(tM) || !string.IsNullOrEmpty(tR))
+                                {
+                                    optUser.TopAddons.Add(new string[] { tL, tM, tR });
+                                }
+
+                                string bL = span.BotRebarInternal[l, idxL] ?? "";
+                                string bM = span.BotRebarInternal[l, idxM] ?? "";
+                                string bR = span.BotRebarInternal[l, idxR] ?? "";
+
+                                if (!string.IsNullOrEmpty(bL) || !string.IsNullOrEmpty(bM) || !string.IsNullOrEmpty(bR))
+                                {
+                                    optUser.BotAddons.Add(new string[] { bL, bM, bR });
+                                }
+                            }
 
                             XDataUtils.WriteOptUser(obj, optUser, tr);
                             XDataUtils.WriteIsLocked(obj, group.IsLocked, tr);

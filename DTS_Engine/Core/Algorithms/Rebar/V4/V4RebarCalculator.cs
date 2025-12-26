@@ -398,51 +398,74 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         /// </summary>
         private static void BuildLegacyRebarArrays(SpanData span, ContinuousBeamSolution solution)
         {
-            // Initialize arrays if null
-            if (span.TopRebarInternal == null) span.TopRebarInternal = new string[3, 6];
-            if (span.BotRebarInternal == null) span.BotRebarInternal = new string[3, 6];
+            // Initialize arrays (now 8 layers)
+            if (span.TopRebarInternal == null) span.TopRebarInternal = new string[8, 6];
+            if (span.BotRebarInternal == null) span.BotRebarInternal = new string[8, 6];
 
-            // Layer 0: Backbone ONLY (not combined with addon)
+            // Clear all layers first
+            for (int l = 0; l < 8; l++)
+                for (int p = 0; p < 6; p++)
+                {
+                    span.TopRebarInternal[l, p] = "";
+                    span.BotRebarInternal[l, p] = "";
+                }
+
+            // Layer 0: Backbone ONLY (runs through all zones)
             string topBackboneStr = span.TopBackbone?.DisplayString ?? $"{solution.BackboneCount_Top}D{solution.BackboneDiameter}";
             string botBackboneStr = span.BotBackbone?.DisplayString ?? $"{solution.BackboneCount_Bot}D{solution.BackboneDiameter}";
 
-            // Apply backbone to ALL zones in layer 0 (backbone runs through)
-            span.TopRebarInternal[0, 0] = topBackboneStr;
-            span.TopRebarInternal[0, 1] = topBackboneStr;
-            span.TopRebarInternal[0, 2] = topBackboneStr;
-            span.TopRebarInternal[0, 3] = topBackboneStr;
-            span.TopRebarInternal[0, 4] = topBackboneStr;
-            span.TopRebarInternal[0, 5] = topBackboneStr;
-
-            span.BotRebarInternal[0, 0] = botBackboneStr;
-            span.BotRebarInternal[0, 1] = botBackboneStr;
-            span.BotRebarInternal[0, 2] = botBackboneStr;
-            span.BotRebarInternal[0, 3] = botBackboneStr;
-            span.BotRebarInternal[0, 4] = botBackboneStr;
-            span.BotRebarInternal[0, 5] = botBackboneStr;
-
-            // Layer 1: Addons at specific zones (Left=0, Mid=2, Right=4)
-            // Addons are zone-specific - only where extra reinforcement is needed
-            span.TopRebarInternal[1, 0] = span.TopAddLeft?.DisplayString ?? "";
-            span.TopRebarInternal[1, 1] = span.TopAddLeft?.DisplayString ?? "";  // Extend to adjacent position
-            span.TopRebarInternal[1, 2] = span.TopAddMid?.DisplayString ?? "";
-            span.TopRebarInternal[1, 3] = span.TopAddMid?.DisplayString ?? "";   // Extend to adjacent position
-            span.TopRebarInternal[1, 4] = span.TopAddRight?.DisplayString ?? "";
-            span.TopRebarInternal[1, 5] = span.TopAddRight?.DisplayString ?? ""; // Extend to adjacent position
-
-            span.BotRebarInternal[1, 0] = span.BotAddLeft?.DisplayString ?? "";
-            span.BotRebarInternal[1, 1] = span.BotAddLeft?.DisplayString ?? "";
-            span.BotRebarInternal[1, 2] = span.BotAddMid?.DisplayString ?? "";
-            span.BotRebarInternal[1, 3] = span.BotAddMid?.DisplayString ?? "";
-            span.BotRebarInternal[1, 4] = span.BotAddRight?.DisplayString ?? "";
-            span.BotRebarInternal[1, 5] = span.BotAddRight?.DisplayString ?? "";
-
-            // Layer 2: Clear (reserved for future use or additional layers)
-            for (int pos = 0; pos < 6; pos++)
+            for (int p = 0; p < 6; p++)
             {
-                span.TopRebarInternal[2, pos] = "";
-                span.BotRebarInternal[2, pos] = "";
+                span.TopRebarInternal[0, p] = topBackboneStr;
+                span.BotRebarInternal[0, p] = botBackboneStr;
             }
+
+            // Layers 1+: Addons at specific zones (Left=0,1, Mid=2,3, Right=4,5)
+            // Function to fill layers for a specific zone
+            void FillZone(string position, string zone, RebarInfo info)
+            {
+                if (info == null || info.Count <= 0) return;
+
+                // Determine indices for this zone
+                int idx1 = 0, idx2 = 1;
+                if (zone == "Mid") { idx1 = 2; idx2 = 3; }
+                else if (zone == "Right") { idx1 = 4; idx2 = 5; }
+
+                var targetArray = position == "Top" ? span.TopRebarInternal : span.BotRebarInternal;
+
+                // Handle layer breakdown
+                if (info.LayerCounts != null && info.LayerCounts.Count > 0)
+                {
+                    for (int l = 0; l < info.LayerCounts.Count; l++)
+                    {
+                        int layerIdx = l + 1; // Addon starts from layer 1
+                        if (layerIdx >= 8) break; // Hard limit
+
+                        int countInLayer = info.LayerCounts[l];
+                        if (countInLayer > 0)
+                        {
+                            string s = $"{countInLayer}D{info.Diameter}";
+                            targetArray[layerIdx, idx1] = s;
+                            targetArray[layerIdx, idx2] = s;
+                        }
+                    }
+                }
+                else
+                {
+                    // Fallback: all in layer 1
+                    string s = info.DisplayString;
+                    targetArray[1, idx1] = s;
+                    targetArray[1, idx2] = s;
+                }
+            }
+
+            FillZone("Top", "Left", span.TopAddLeft);
+            FillZone("Top", "Mid", span.TopAddMid);
+            FillZone("Top", "Right", span.TopAddRight);
+
+            FillZone("Bot", "Left", span.BotAddLeft);
+            FillZone("Bot", "Mid", span.BotAddMid);
+            FillZone("Bot", "Right", span.BotAddRight);
         }
 
         /// <summary>

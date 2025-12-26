@@ -1115,14 +1115,32 @@ namespace DTS_Engine.Core.Utils
         public class RebarOptionData
         {
             public string TopL0 { get; set; } = "";  // Top backbone (e.g., "2D22")
-            public string TopAddL { get; set; } = ""; // Top Addon Left
-            public string TopAddM { get; set; } = ""; // Top Addon Mid
-            public string TopAddR { get; set; } = ""; // Top Addon Right
+            public List<string[]> TopAddons { get; set; } = new List<string[]>(); // [[L,M,R], [L,M,R], ...]
 
             public string BotL0 { get; set; } = "";  // Bot backbone
-            public string BotAddL { get; set; } = "";
-            public string BotAddM { get; set; } = "";
-            public string BotAddR { get; set; } = "";
+            public List<string[]> BotAddons { get; set; } = new List<string[]>();
+
+            // Proxy properties for Layer 1 (backward compatibility)
+            [Newtonsoft.Json.JsonIgnore]
+            public string TopAddL { get => GetAddon(TopAddons, 0); set => SetAddon(TopAddons, 0, value); }
+            [Newtonsoft.Json.JsonIgnore]
+            public string TopAddM { get => GetAddon(TopAddons, 1); set => SetAddon(TopAddons, 1, value); }
+            [Newtonsoft.Json.JsonIgnore]
+            public string TopAddR { get => GetAddon(TopAddons, 2); set => SetAddon(TopAddons, 2, value); }
+
+            [Newtonsoft.Json.JsonIgnore]
+            public string BotAddL { get => GetAddon(BotAddons, 0); set => SetAddon(BotAddons, 0, value); }
+            [Newtonsoft.Json.JsonIgnore]
+            public string BotAddM { get => GetAddon(BotAddons, 1); set => SetAddon(BotAddons, 1, value); }
+            [Newtonsoft.Json.JsonIgnore]
+            public string BotAddR { get => GetAddon(BotAddons, 2); set => SetAddon(BotAddons, 2, value); }
+
+            private string GetAddon(List<string[]> addons, int pos) => (addons.Count > 0 && addons[0].Length > pos) ? addons[0][pos] : "";
+            private void SetAddon(List<string[]> addons, int pos, string val)
+            {
+                if (addons.Count == 0) addons.Add(new string[] { "", "", "" });
+                if (addons[0].Length > pos) addons[0][pos] = val;
+            }
 
             public string Stirrup { get; set; } = ""; // Stirrup (e.g., "2-d10a150")
             public string Web { get; set; } = "";     // Web bar (e.g., "2D12")
@@ -1139,7 +1157,25 @@ namespace DTS_Engine.Core.Utils
             /// </summary>
             public string ToOptString()
             {
-                return $"T:{TopL0}|{TopAddL}|{TopAddM}|{TopAddR};B:{BotL0}|{BotAddL}|{BotAddM}|{BotAddR};S:{Stirrup ?? ""};W:{Web ?? ""}";
+                var sbT = new System.Text.StringBuilder();
+                sbT.Append(TopL0);
+                foreach (var layer in TopAddons)
+                {
+                    sbT.Append("|").Append(layer[0]);
+                    sbT.Append("|").Append(layer[1]);
+                    sbT.Append("|").Append(layer[2]);
+                }
+
+                var sbB = new System.Text.StringBuilder();
+                sbB.Append(BotL0);
+                foreach (var layer in BotAddons)
+                {
+                    sbB.Append("|").Append(layer[0]);
+                    sbB.Append("|").Append(layer[1]);
+                    sbB.Append("|").Append(layer[2]);
+                }
+
+                return $"T:{sbT};B:{sbB};S:{Stirrup ?? ""};W:{Web ?? ""}";
             }
 
             /// <summary>
@@ -1158,17 +1194,19 @@ namespace DTS_Engine.Core.Utils
                     {
                         var layers = part.Substring(2).Split('|');
                         result.TopL0 = layers.Length > 0 ? layers[0] : "";
-                        result.TopAddL = layers.Length > 1 ? layers[1] : "";
-                        result.TopAddM = layers.Length > 2 ? layers[2] : "";
-                        result.TopAddR = layers.Length > 3 ? layers[3] : "";
+                        for (int i = 1; i + 2 < layers.Length; i += 3)
+                        {
+                            result.TopAddons.Add(new string[] { layers[i], layers[i + 1], layers[i + 2] });
+                        }
                     }
                     else if (part.StartsWith("B:"))
                     {
                         var layers = part.Substring(2).Split('|');
                         result.BotL0 = layers.Length > 0 ? layers[0] : "";
-                        result.BotAddL = layers.Length > 1 ? layers[1] : "";
-                        result.BotAddM = layers.Length > 2 ? layers[2] : "";
-                        result.BotAddR = layers.Length > 3 ? layers[3] : "";
+                        for (int i = 1; i + 2 < layers.Length; i += 3)
+                        {
+                            result.BotAddons.Add(new string[] { layers[i], layers[i + 1], layers[i + 2] });
+                        }
                     }
                     else if (part.StartsWith("S:"))
                     {

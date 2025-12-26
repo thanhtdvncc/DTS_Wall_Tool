@@ -195,9 +195,9 @@ namespace DTS_Engine.Core.Data
         // [layer, position] - layer: 0-2, position: 0-5
         // Internal storage as 2D array (C# friendly)
         [JsonIgnore]
-        public string[,] TopRebarInternal { get; set; } = new string[3, 6];
+        public string[,] TopRebarInternal { get; set; } = new string[8, 6];
         [JsonIgnore]
-        public string[,] BotRebarInternal { get; set; } = new string[3, 6];
+        public string[,] BotRebarInternal { get; set; } = new string[8, 6];
 
         // JSON-friendly jagged array for JavaScript consumption
         // JS can access as TopRebar[layer][position]
@@ -205,8 +205,8 @@ namespace DTS_Engine.Core.Data
         {
             get
             {
-                var result = new string[3][];
-                for (int i = 0; i < 3; i++)
+                var result = new string[8][];
+                for (int i = 0; i < 8; i++)
                 {
                     result[i] = new string[6];
                     for (int j = 0; j < 6; j++)
@@ -217,7 +217,7 @@ namespace DTS_Engine.Core.Data
             set
             {
                 if (value == null) return;
-                for (int i = 0; i < Math.Min(3, value.Length); i++)
+                for (int i = 0; i < Math.Min(8, value.Length); i++)
                 {
                     if (value[i] == null) continue;
                     for (int j = 0; j < Math.Min(6, value[i].Length); j++)
@@ -230,8 +230,8 @@ namespace DTS_Engine.Core.Data
         {
             get
             {
-                var result = new string[3][];
-                for (int i = 0; i < 3; i++)
+                var result = new string[8][];
+                for (int i = 0; i < 8; i++)
                 {
                     result[i] = new string[6];
                     for (int j = 0; j < 6; j++)
@@ -242,7 +242,7 @@ namespace DTS_Engine.Core.Data
             set
             {
                 if (value == null) return;
-                for (int i = 0; i < Math.Min(3, value.Length); i++)
+                for (int i = 0; i < Math.Min(8, value.Length); i++)
                 {
                     if (value[i] == null) continue;
                     for (int j = 0; j < Math.Min(6, value[i].Length); j++)
@@ -337,7 +337,12 @@ namespace DTS_Engine.Core.Data
         public int Diameter { get; set; }
         public List<int> LayerCounts { get; set; } // Chi tiết theo lớp nếu có
 
-        public string DisplayString => Count > 0 ? $"{Count}D{Diameter}" : "";
+        private string _displayString;
+        public string DisplayString
+        {
+            get => !string.IsNullOrEmpty(_displayString) ? _displayString : (Count > 0 ? $"{Count}D{Diameter}" : "");
+            set => _displayString = value;
+        }
     }
 
     // ===== NHÓM DẦM LIÊN TỤC =====

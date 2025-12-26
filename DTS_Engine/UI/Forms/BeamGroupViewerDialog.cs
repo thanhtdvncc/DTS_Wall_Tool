@@ -936,18 +936,18 @@ namespace DTS_Engine.UI.Forms
 
                                     string topL0 = $"{sol.BackboneCount_Top}D{sol.BackboneDiameter}";
                                     string botL0 = $"{sol.BackboneCount_Bot}D{sol.BackboneDiameter}";
-                                    entityOptions.Add(new XDataUtils.RebarOptionData
+                                    var optData = new XDataUtils.RebarOptionData
                                     {
                                         TopL0 = topL0,
-                                        TopAddL = GetAddonForZone(sol, spanId, "Top", "Left"),
-                                        TopAddM = GetAddonForZone(sol, spanId, "Top", "Mid"),
-                                        TopAddR = GetAddonForZone(sol, spanId, "Top", "Right"),
-                                        BotL0 = botL0,
-                                        BotAddL = GetAddonForZone(sol, spanId, "Bot", "Left"),
-                                        BotAddM = GetAddonForZone(sol, spanId, "Bot", "Mid"),
-                                        BotAddR = GetAddonForZone(sol, spanId, "Bot", "Right")
-                                    });
+                                        BotL0 = botL0
+                                    };
+
+                                    PopulateAddonsForOption(optData, sol, spanId, "Top");
+                                    PopulateAddonsForOption(optData, sol, spanId, "Bot");
+
+                                    entityOptions.Add(optData);
                                 }
+
                                 group.Spans[i].Options = entityOptions;
 
                                 // 5. Build OptUser for the entity (use first proposal as default)
@@ -973,6 +973,7 @@ namespace DTS_Engine.UI.Forms
                         DTS_Engine.Core.Algorithms.Rebar.Utils.RebarLogger.Log($"[FIX 1.2] Failed to persist: {persistEx.Message}");
                     }
                 }
+
                 // ===== END FIX 1.2 =====
 
                 // NOTE: ApplySolutionToGroup is already called INSIDE V4RebarCalculator.Calculate()
@@ -1155,18 +1156,33 @@ namespace DTS_Engine.UI.Forms
 
                                 if (defaultOpt != null && !string.IsNullOrEmpty(defaultOpt.TopL0))
                                 {
-                                    // Layer 0: Backbone (positions 0, 2, 4 = Left, Mid, Right)
-                                    span.TopRebarInternal[0, 0] = span.TopRebarInternal[0, 2] = span.TopRebarInternal[0, 4] = defaultOpt.TopL0;
-                                    span.BotRebarInternal[0, 0] = span.BotRebarInternal[0, 2] = span.BotRebarInternal[0, 4] = defaultOpt.BotL0;
+                                    // Layer 0: Backbone (positions 0-5)
+                                    for (int p = 0; p < 6; p++)
+                                    {
+                                        span.TopRebarInternal[0, p] = defaultOpt.TopL0;
+                                        span.BotRebarInternal[0, p] = defaultOpt.BotL0;
+                                    }
 
-                                    // Layer 1: Addons (Properly map 3 zones)
-                                    span.TopRebarInternal[1, 0] = defaultOpt.TopAddL;
-                                    span.TopRebarInternal[1, 2] = defaultOpt.TopAddM;
-                                    span.TopRebarInternal[1, 4] = defaultOpt.TopAddR;
+                                    // Layers 1+: Addons
+                                    for (int l = 0; l < defaultOpt.TopAddons.Count; l++)
+                                    {
+                                        int layerIdx = l + 1;
+                                        if (layerIdx >= 8) break;
 
-                                    span.BotRebarInternal[1, 0] = defaultOpt.BotAddL;
-                                    span.BotRebarInternal[1, 2] = defaultOpt.BotAddM;
-                                    span.BotRebarInternal[1, 4] = defaultOpt.BotAddR;
+                                        span.TopRebarInternal[layerIdx, 0] = span.TopRebarInternal[layerIdx, 1] = defaultOpt.TopAddons[l][0];
+                                        span.TopRebarInternal[layerIdx, 2] = span.TopRebarInternal[layerIdx, 3] = defaultOpt.TopAddons[l][1];
+                                        span.TopRebarInternal[layerIdx, 4] = span.TopRebarInternal[layerIdx, 5] = defaultOpt.TopAddons[l][2];
+                                    }
+
+                                    for (int l = 0; l < defaultOpt.BotAddons.Count; l++)
+                                    {
+                                        int layerIdx = l + 1;
+                                        if (layerIdx >= 8) break;
+
+                                        span.BotRebarInternal[layerIdx, 0] = span.BotRebarInternal[layerIdx, 1] = defaultOpt.BotAddons[l][0];
+                                        span.BotRebarInternal[layerIdx, 2] = span.BotRebarInternal[layerIdx, 3] = defaultOpt.BotAddons[l][1];
+                                        span.BotRebarInternal[layerIdx, 4] = span.BotRebarInternal[layerIdx, 5] = defaultOpt.BotAddons[l][2];
+                                    }
                                 }
 
                                 // Read IsLocked
@@ -2196,7 +2212,7 @@ namespace DTS_Engine.UI.Forms
                             LevelZ = z,
                             GroupName = groupName,
                             GroupId = "", // Not in selected group
-                            // FIX: Add SectionLabel for neighbor beams too
+                                          // FIX: Add SectionLabel for neighbor beams too
                             SectionLabel = beamData?.SectionLabel ?? "",
                             xSectionLabel = beamData?.SectionLabel ?? ""
                         });
@@ -2212,16 +2228,38 @@ namespace DTS_Engine.UI.Forms
             return neighbors;
         }
 
-        /// <summary>
-        /// [V6.0] Helper to get addon string for a specific span, side and zone.
-        /// </summary>
-        private string GetAddonForZone(ContinuousBeamSolution sol, string spanId, string side, string zone)
+        private void PopulateAddonsForOption(XDataUtils.RebarOptionData opt, ContinuousBeamSolution sol, string spanId, string side)
         {
-            if (sol?.Reinforcements != null && sol.Reinforcements.TryGetValue($"{spanId}_{side}_{zone}", out var rs) && rs != null && rs.Count > 0)
+            if (sol?.Reinforcements == null) return;
+
+            var targetList = side == "Top" ? opt.TopAddons : opt.BotAddons;
+
+            // Collect reinforcements for all three zones
+            sol.Reinforcements.TryGetValue($"{spanId}_{side}_Left", out var rL);
+            sol.Reinforcements.TryGetValue($"{spanId}_{side}_Mid", out var rM);
+            sol.Reinforcements.TryGetValue($"{spanId}_{side}_Right", out var rR);
+
+            // Determine max layers across zones
+            int maxLayers = 0;
+            if (rL?.LayerBreakdown != null) maxLayers = Math.Max(maxLayers, rL.LayerBreakdown.Count);
+            if (rM?.LayerBreakdown != null) maxLayers = Math.Max(maxLayers, rM.LayerBreakdown.Count);
+            if (rR?.LayerBreakdown != null) maxLayers = Math.Max(maxLayers, rR.LayerBreakdown.Count);
+
+            // If no layers but count > 0, assume 1 layer (legacy)
+            if (maxLayers == 0)
             {
-                return $"{rs.Count}D{rs.Diameter}";
+                if ((rL?.Count ?? 0) > 0 || (rM?.Count ?? 0) > 0 || (rR?.Count ?? 0) > 0)
+                    maxLayers = 1;
             }
-            return "";
+
+            for (int l = 0; l < maxLayers; l++)
+            {
+                string sL = (rL?.LayerBreakdown != null && rL.LayerBreakdown.Count > l) ? $"{rL.LayerBreakdown[l]}D{rL.Diameter}" : (l == 0 && (rL?.Count ?? 0) > 0 ? rL.DisplayString : "");
+                string sM = (rM?.LayerBreakdown != null && rM.LayerBreakdown.Count > l) ? $"{rM.LayerBreakdown[l]}D{rM.Diameter}" : (l == 0 && (rM?.Count ?? 0) > 0 ? rM.DisplayString : "");
+                string sR = (rR?.LayerBreakdown != null && rR.LayerBreakdown.Count > l) ? $"{rR.LayerBreakdown[l]}D{rR.Diameter}" : (l == 0 && (rR?.Count ?? 0) > 0 ? rR.DisplayString : "");
+
+                targetList.Add(new string[] { sL, sM, sR });
+            }
         }
 
         private class DataWrapper
