@@ -40,17 +40,13 @@ namespace DTS_Engine.Commands
                 return;
             }
 
-            // 2. Select Frames on Screen FIRST (cho phép chọn trước khi hỏi chế độ)
+            // 2. Select Frames on Screen
             var ed = AcadUtils.Ed;
             WriteMessage("\nChọn các đường Dầm (Frame) để lấy nội lực: ");
             var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE");
             if (selectedIds.Count == 0) return;
 
-            // 3. Ask Display Mode AFTER selection
-            // 0 = Combined (Flex + Torsion) - Default
-            // 1 = Flex only (Thép dọc chịu uốn)
-            // 2 = Torsion only (Thép xoắn)
-            // 3 = Stirrup/Web (Thép đai/Sườn)
+            // 3. Ask Display Mode
             var pIntOpt = new PromptIntegerOptions("\nChọn chế độ hiển thị [0=Tổng hợp | 1=Thép dọc | 2=Thép xoắn | 3=Thép Đai/Sườn]: ");
             pIntOpt.AllowNone = true;
             pIntOpt.DefaultValue = 0;
@@ -59,317 +55,245 @@ namespace DTS_Engine.Commands
             pIntOpt.UpperLimit = 3;
 
             var pIntRes = ed.GetInteger(pIntOpt);
-            int displayMode = 0; // Default = Combined
+            int displayMode = 0;
             if (pIntRes.Status == PromptStatus.OK)
                 displayMode = pIntRes.Value;
             else if (pIntRes.Status != PromptStatus.None)
-                return; // User cancelled
+                return;
 
-            // 4. Clear old rebar labels on layer "dts_rebar_text"
-            WriteMessage("Đang xóa label cũ...");
-            // Clear existing labels for SELECTED beams only (refresh)
-            var selectedHandles = selectedIds.Select(id => id.Handle.ToString()).ToList();
-            ClearRebarLabels(selectedHandles);
-
-            // 5. Smart Mapping Strategy:
-            //    - Priority 1: XData-based (from DTS_PLOT_FROM_SAP / DTS_LINK)
-            //    - Priority 2: Coordinate matching (legacy/hand-drawn beams)
+            // 4. Mapping CAD -> SAP
             WriteMessage("Đang ánh xạ phần tử CAD → SAP ...");
-
-            var allSapFrames = SapUtils.GetAllFramesGeometry();
-
-            List<string> matchedNames = new List<string>();
-            Dictionary<ObjectId, string> cadToSap = new Dictionary<ObjectId, string>();
-            Dictionary<ObjectId, string> mappingSources = new Dictionary<ObjectId, string>();
+            var matchedNames = new List<string>();
+            var cadToSap = new Dictionary<ObjectId, string>();
 
             UsingTransaction(tr =>
             {
                 foreach (ObjectId id in selectedIds)
                 {
                     var obj = tr.GetObject(id, OpenMode.ForRead);
-                    var curve = obj as Curve;
-                    if (curve == null) continue;
-
+                    var raw = XDataUtils.GetRawData(obj);
                     string sapName = null;
-                    string mappingSource = "Coordinate";
+                    if (raw != null && raw.TryGetValue("xSapFrameName", out var sapObj)) sapName = sapObj?.ToString();
 
-                    // === INFO LOGGING ===
-                    // WriteMessage($"Processing Handle: {obj.Handle}...");
-
-                    // === PRIORITY 1: Try SapFrameName from XData (set by DTS_PLOT_FROM_SAP) ===
-                    var existingData = XDataUtils.ReadElementData(obj);
-
-                    if (existingData != null && existingData.HasSapFrame)
+                    if (string.IsNullOrEmpty(sapName))
                     {
-                        sapName = existingData.SapFrameName;
-                        mappingSource = "XData";
-                        // WriteMessage($" -> Match via SapFrameName: {sapName}");
-                    }
-                    // === PRIORITY 2: Raw XData key xSapFrameName (Single Source of Truth) ===
-                    else
-                    {
-                        var raw = XDataUtils.GetRawData(obj);
-                        if (raw != null && raw.TryGetValue("xSapFrameName", out var sapObj))
-                        {
-                            var sapFromRaw = sapObj?.ToString();
-                            if (!string.IsNullOrEmpty(sapFromRaw))
-                            {
-                                sapName = sapFromRaw;
-                                mappingSource = "XData";
-                            }
-                        }
+                        var existing = XDataUtils.ReadElementData(obj);
+                        if (existing != null && existing.HasSapFrame) sapName = existing.SapFrameName;
                     }
 
                     if (!string.IsNullOrEmpty(sapName))
                     {
                         matchedNames.Add(sapName);
                         cadToSap[id] = sapName;
-                        mappingSources[id] = mappingSource;
                     }
                 }
             });
 
             if (matchedNames.Count == 0)
             {
-                WriteError("Không tìm thấy dầm SAP nào khớp với lựa chọn trên CAD.");
+                WriteError("Không tìm thấy dầm SAP nào được ánh xạ. Hãy chạy DTS_LINK hoặc DTS_PLOT_FROM_SAP trước.");
                 return;
             }
 
-            WriteMessage($"Đã khớp {matchedNames.Count} dầm. Đang lấy kết quả thiết kế...");
-
-            // 6. Call Engine to get Results
+            // 5. Get Results
             var results = engine.GetBeamResults(matchedNames);
-
             if (results.Count == 0)
             {
-                WriteError("Không lấy được kết quả thiết kế. Kiểm tra xem đã chạy Design Concrete chưa.");
+                WriteError("Không lấy được kết quả từ SAP. Hãy đảm bảo đã chạy Design Concrete.");
                 return;
             }
 
-            // 7. Update XData and Plot Labels based on displayMode
+            // 6. Update Display
+            UpdateRebarDisplayLabels(selectedIds, displayMode, results);
+        }
+
+        /// <summary>
+        /// Hiển thị diện tích thép yêu cầu từ dữ liệu XData hiện có.
+        /// </summary>
+        [CommandMethod("DTS_REBAR_SHOW")]
+        public void DTS_REBAR_SHOW()
+        {
+            WriteMessage("=== REBAR: HIỂN THỊ DIỆN TÍCH THÉP YÊU CẦU ===");
+
+            var ed = AcadUtils.Ed;
+            WriteMessage("\nChọn dầm để hiển thị (hoặc Enter để chọn tất cả dầm có dữ liệu): ");
+            var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE", true);
+
+            // Nếu không chọn gì, tự động lấy tất cả dầm có dữ liệu DTS trong Current Space
+            if (selectedIds.Count == 0)
+            {
+                WriteMessage("Đang quét toàn bộ dầm có dữ liệu...");
+                UsingTransaction(tr =>
+                {
+                    var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForRead) as BlockTableRecord;
+                    foreach (ObjectId id in btr)
+                    {
+                        if (id.IsErased) continue;
+                        var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                        if (ent == null) continue;
+
+                        var rebarData = XDataUtils.ReadRebarData(ent);
+                        if (rebarData != null)
+                        {
+                            selectedIds.Add(id);
+                        }
+                    }
+                });
+            }
+
+            if (selectedIds.Count == 0)
+            {
+                WriteMessage("Không tìm thấy dầm nào có dữ liệu thiết kế.");
+                return;
+            }
+
+            // Ask Display Mode
+            var pIntOpt = new PromptIntegerOptions("\nChọn chế độ hiển thị [0=Tổng hợp | 1=Thép dọc | 2=Thép xoắn | 3=Thép Đai/Sườn]: ");
+            pIntOpt.AllowNone = true;
+            pIntOpt.DefaultValue = 0;
+            pIntOpt.AllowNegative = false;
+            pIntOpt.LowerLimit = 0;
+            pIntOpt.UpperLimit = 3;
+
+            var pIntRes = ed.GetInteger(pIntOpt);
+            int displayMode = 0;
+            if (pIntRes.Status == PromptStatus.OK)
+                displayMode = pIntRes.Value;
+            else if (pIntRes.Status != PromptStatus.None)
+                return;
+
+            UpdateRebarDisplayLabels(selectedIds, displayMode);
+        }
+
+        /// <summary>
+        /// Cập nhật hiển thị label thép cho danh sách ObjectId.
+        /// Nếu results != null, sẽ cập nhật XData trước khi hiển thị.
+        /// </summary>
+        private void UpdateRebarDisplayLabels(IEnumerable<ObjectId> ids, int displayMode, Dictionary<string, BeamResultData> results = null)
+        {
             int successCount = 0;
-            int insufficientCount = 0; // NEW: Track beams where Aprov < Areq
-            var insufficientBeamIds = new List<ObjectId>(); // NEW: For highlighting
+            int insufficientCount = 0;
+            var insufficientBeamIds = new List<ObjectId>();
             var dtsSettings = DtsSettings.Instance;
 
+            // 1. Clear old labels
+            var handles = ids.Select(id => id.Handle.ToString()).ToList();
+            ClearRebarLabels(handles);
+
+            // 2. Plot new labels
             UsingTransaction(tr =>
             {
                 var btr = tr.GetObject(AcadUtils.Db.CurrentSpaceId, OpenMode.ForWrite) as BlockTableRecord;
 
-                foreach (var kvp in cadToSap)
+                foreach (ObjectId cadId in ids)
                 {
-                    ObjectId cadId = kvp.Key;
-                    string sapName = kvp.Value;
-
-                    if (results.TryGetValue(sapName, out var designData))
+                    try
                     {
-                        try
+                        var obj = tr.GetObject(cadId, OpenMode.ForWrite);
+                        BeamResultData designData = null;
+
+                        // Case A: Đang Import (results != null) -> Cập nhật XData từ results
+                        if (results != null)
                         {
-                            designData.TorsionFactorUsed = dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25;
+                            // Tìm SAP Name để map
+                            string sapName = null;
+                            var raw = XDataUtils.GetRawData(obj);
+                            if (raw.TryGetValue("xSapFrameName", out var sapObj)) sapName = sapObj?.ToString();
 
-                            // Store SAP name for XData (xSapFrameName is the Single Source)
-                            designData.SapElementName = sapName;
-                            // NOTE: MappingSource đã loại bỏ
-
-                            // Validate ObjectId before accessing
-                            if (!cadId.IsValid || cadId.IsErased)
+                            if (string.IsNullOrEmpty(sapName))
                             {
-                                WriteMessage($" -> ObjectId không hợp lệ: {sapName}");
-                                continue;
+                                var existing = XDataUtils.ReadElementData(obj);
+                                if (existing != null && existing.HasSapFrame) sapName = existing.SapFrameName;
                             }
 
-                            // Step 1: Get object
-                            DBObject obj = null;
-                            try
+                            if (!string.IsNullOrEmpty(sapName) && results.TryGetValue(sapName, out var newData))
                             {
-                                obj = tr.GetObject(cadId, OpenMode.ForWrite);
-                            }
-                            catch (System.Exception ex1)
-                            {
-                                WriteMessage($" -> Lỗi GetObject {sapName}: {ex1.Message}");
-                                continue;
-                            }
+                                designData = newData;
+                                designData.TorsionFactorUsed = dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25;
+                                designData.SapElementName = sapName;
 
-                            try
-                            {
-                                // === NEW: Sync Highlight - Compare Areq_new vs Aprov_old ===
-                                var existingData = XDataUtils.ReadRebarData(obj);
-                                if (existingData != null)
-                                {
-                                    // Calculate AreaProv from RebarString if not in XData (new format)
-                                    var topAreaProv = existingData.TopAreaProv;
-                                    var botAreaProv = existingData.BotAreaProv;
-
-                                    // V6.0: TopAreaProv/BotAreaProv là nguồn dữ liệu duy nhất
-
-                                    if (topAreaProv != null && topAreaProv.Length >= 3 &&
-                                        botAreaProv != null && botAreaProv.Length >= 3)
-                                    {
-                                        // Check if existing Aprov is insufficient for new Areq
-                                        bool isInsufficient = false;
-                                        for (int i = 0; i < 3; i++)
-                                        {
-                                            double areqTop = designData.TopArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25);
-                                            double areqBot = designData.BotArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_BotBar ?? 0.25);
-
-                                            if (topAreaProv[i] < areqTop * 0.99 ||
-                                                botAreaProv[i] < areqBot * 0.99)
-                                            {
-                                                isInsufficient = true;
-                                                break;
-                                            }
-                                        }
-
-                                        if (isInsufficient)
-                                        {
-                                            insufficientBeamIds.Add(cadId);
-                                            insufficientCount++;
-                                        }
-                                    }
-                                }
-                                // === END Sync Highlight ===
-
-                                // XData-first: update REQUIRED data only (do NOT overwrite provided layout/solution)
+                                // Cập nhật XData REQUIRED
                                 XDataUtils.UpdateBeamRequiredXData(
-                                    obj,
-                                    tr,
+                                    obj, tr,
                                     topArea: designData.TopArea,
                                     botArea: designData.BotArea,
                                     torsionArea: designData.TorsionArea,
                                     shearArea: designData.ShearArea,
                                     ttArea: designData.TTArea,
-                                    designCombo: designData.DesignCombo,
-                                    sectionName: designData.SectionName,
-                                    width: designData.Width,
-                                    sectionHeight: designData.SectionHeight,
-                                    torsionFactorUsed: designData.TorsionFactorUsed,
                                     sapElementName: designData.SapElementName);
-                                // NOTE: mappingSource đã loại bỏ
                             }
-                            catch (System.Exception ex2)
+                        }
+
+                        // Case B: Đọc trực tiếp từ XData
+                        if (designData == null)
+                        {
+                            designData = XDataUtils.ReadRebarData(obj);
+                        }
+
+                        if (designData == null || !designData.HasValidData()) continue;
+
+                        // Calculate display values
+                        string[] displayTopStr = new string[3];
+                        string[] displayBotStr = new string[3];
+
+                        for (int i = 0; i < 3; i++)
+                        {
+                            switch (displayMode)
                             {
-                                WriteMessage($" -> Lỗi WriteElementData {sapName}: {ex2.Message}");
-                                continue;
+                                case 0:
+                                    double top = (designData.TopArea?[i] ?? 0) + (designData.TorsionArea?[i] ?? 0) * (dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25);
+                                    double bot = (designData.BotArea?[i] ?? 0) + (designData.TorsionArea?[i] ?? 0) * (dtsSettings.Beam?.TorsionDist_BotBar ?? 0.25);
+                                    displayTopStr[i] = FormatValue(top);
+                                    displayBotStr[i] = FormatValue(bot);
+                                    break;
+                                case 1:
+                                    displayTopStr[i] = FormatValue(designData.TopArea?[i] ?? 0);
+                                    displayBotStr[i] = FormatValue(designData.BotArea?[i] ?? 0);
+                                    break;
+                                case 2:
+                                    displayTopStr[i] = FormatValue(designData.TTArea?[i] ?? 0);
+                                    displayBotStr[i] = FormatValue(designData.TorsionArea?[i] ?? 0);
+                                    break;
+                                case 3:
+                                    displayTopStr[i] = FormatValue(designData.ShearArea?[i] ?? 0);
+                                    displayBotStr[i] = FormatValue((designData.TorsionArea?[i] ?? 0) * (dtsSettings.Beam?.TorsionDist_SideBar ?? 0.50));
+                                    break;
                             }
+                        }
 
-                            // Calculate display values based on mode
-                            double[] displayTop = new double[3];
-                            double[] displayBot = new double[3];
-                            string[] displayTopStr = new string[3];
-                            string[] displayBotStr = new string[3];
-
-                            try
+                        // Plot
+                        var curve = obj as Curve;
+                        if (curve != null)
+                        {
+                            string ownerH = obj.Handle.ToString();
+                            for (int i = 0; i < 3; i++)
                             {
-                                // Validate arrays before access
-                                if (designData.TopArea == null || designData.BotArea == null ||
-                                    designData.TorsionArea == null || designData.ShearArea == null ||
-                                    designData.TTArea == null)
-                                {
-                                    WriteMessage($" -> Lỗi {sapName}: Dữ liệu thiết kế không đầy đủ (null arrays)");
-                                    continue;
-                                }
-
-                                for (int i = 0; i < 3; i++)
-                                {
-                                    switch (displayMode)
-                                    {
-                                        case 0: // Combined (Flex + Torsion phân bổ)
-                                            displayTop[i] = designData.TopArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_TopBar ?? 0.25);
-                                            displayBot[i] = designData.BotArea[i] + designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_BotBar ?? 0.25);
-                                            displayTopStr[i] = FormatValue(displayTop[i]);
-                                            displayBotStr[i] = FormatValue(displayBot[i]);
-                                            break;
-                                        case 1: // Flex only (Thép dọc chịu uốn thuần)
-                                            displayTopStr[i] = FormatValue(designData.TopArea[i]);
-                                            displayBotStr[i] = FormatValue(designData.BotArea[i]);
-                                            break;
-                                        case 2: // Torsion (Top=At/s, Bot=Al)
-                                                // Top: TTArea = At/s (Đai xoắn trên đơn vị dài)
-                                                // Bot: TorsionArea = Al (Tổng thép dọc xoắn)
-                                            displayTopStr[i] = FormatValue(designData.TTArea[i]);
-                                            displayBotStr[i] = FormatValue(designData.TorsionArea[i]);
-                                            break;
-                                        case 3: // Shear & Web (Top=Av/s, Bot=Al×SideRatio)
-                                                // Top: ShearArea = Av/s (Đai cắt trên đơn vị dài)
-                                                // Bot: TorsionArea × SideRatio = Thép dọc xoắn phân bổ cho sườn
-                                            displayTopStr[i] = FormatValue(designData.ShearArea[i]);
-                                            displayBotStr[i] = FormatValue(designData.TorsionArea[i] * (dtsSettings.Beam?.TorsionDist_SideBar ?? 0.50));
-                                            break;
-                                    }
-                                }
+                                LabelPlotter.PlotRebarLabel(btr, tr, curve.StartPoint, curve.EndPoint, displayTopStr[i], i, true, ownerH);
+                                LabelPlotter.PlotRebarLabel(btr, tr, curve.StartPoint, curve.EndPoint, displayBotStr[i], i, false, ownerH);
                             }
-                            catch (System.Exception exCalc)
-                            {
-                                WriteMessage($" -> Lỗi tính toán {sapName}: {exCalc.Message}");
-                                continue;
-                            }
-
-                            // Plot Labels - 6 positions (Start/Mid/End x Top/Bot)
-                            try
-                            {
-                                var curve = obj as Curve;
-                                if (curve == null)
-                                {
-                                    WriteMessage($" -> Lỗi {sapName}: Object không phải Curve");
-                                    continue;
-                                }
-                                Point3d pStart = curve.StartPoint;
-                                Point3d pEnd = curve.EndPoint;
-
-                                for (int i = 0; i < 3; i++)
-                                {
-                                    // Plot with owner handle
-                                    string ownerH = obj.Handle.ToString();
-                                    LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, displayTopStr[i], i, true, ownerH);
-                                    LabelPlotter.PlotRebarLabel(btr, tr, pStart, pEnd, displayBotStr[i], i, false, ownerH);
-                                }
-                            }
-                            catch (System.Exception exPlot)
-                            {
-                                WriteMessage($" -> Lỗi vẽ label {sapName}: {exPlot.Message}");
-                                continue;
-                            }
-
                             successCount++;
                         }
-                        catch (System.Exception ex)
-                        {
-                            WriteMessage($" -> Lỗi xử lý {sapName}: {ex.Message}");
-                        }
                     }
+                    catch { }
                 }
             });
 
-            string[] modeNames = { "Tổng hợp", "Thép dọc", "Thép xoắn", "Thép Đai/Sườn" };
-            WriteSuccess($"Đã cập nhật Label thép ({modeNames[displayMode]}) cho {successCount} dầm.");
-
-            // === NEW: Highlight insufficient beams in RED ===
+            // HIGHLIGHT insufficient beams
             if (insufficientCount > 0)
             {
-                WriteMessage($"\n⚠️ CẢNH BÁO: Phát hiện {insufficientCount} dầm thiếu khả năng chịu lực sau khi cập nhật từ SAP!");
-                WriteMessage("   Các dầm này đã được đổi sang MÀU ĐỎ trên bản vẽ (persistent).");
-                WriteMessage("   Sau khi sửa, chạy DTS_REBAR_UPDATE để trả về màu ByLayer.");
-
-                // Set PERSISTENT color (survives Regen/Pan/Zoom)
-                int changed = VisualUtils.SetPersistentColors(insufficientBeamIds, 1); // 1 = Red
-                WriteMessage($"   Đã đổi màu {changed}/{insufficientCount} dầm.");
+                WriteMessage($"\n⚠️ CẢNH BÁO: Phát hiện {insufficientCount} dầm thiếu diện tích thép!");
+                VisualUtils.SetPersistentColors(insufficientBeamIds, 1); // Red
             }
-            // === END Sync Highlight ===
+
+            string[] modeNames = { "Tổng hợp", "Thép dọc", "Thép xoắn", "Thép Đai/Sườn" };
+            WriteSuccess($"Đã hiển thị Label thép ({modeNames[displayMode]}) cho {successCount} dầm.");
         }
 
-        /// <summary>
-        /// WORKFLOW: Import dữ liệu SAP + Tự động gom nhóm
-        /// Kết hợp DTS_REBAR_SAP_RESULT + DTS_REBAR_GROUP_AUTO
-        /// Tránh trường hợp user quên gom nhóm sau khi import
-        /// </summary>
         [CommandMethod("DTS_REBAR_IMPORT_SAP")]
         public void DTS_REBAR_IMPORT_SAP()
         {
             WriteMessage("=== IMPORT KẾT QUẢ THIẾT KẾ TỪ SAP2000 ===");
-
-            // Chỉ import dữ liệu từ SAP, KHÔNG auto group
             ImportSapResultInternal();
-
             WriteSuccess("✅ Đã import dữ liệu SAP!");
         }
 
@@ -385,7 +309,7 @@ namespace DTS_Engine.Commands
                 {
                     if (id.IsErased) continue;
                     var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
-                    if (ent != null && ent.Layer == "dts_labels")
+                    if (ent != null && (ent.Layer == "dts_labels" || ent.Layer == "dts_rebar_text"))
                     {
                         bool shouldDelete = false;
 

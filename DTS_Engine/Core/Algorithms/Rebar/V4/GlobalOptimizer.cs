@@ -384,6 +384,36 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 }
             }
 
+            // --- POST-PROCESSING: UNIFY BOTTOM ADDONS PER SPAN ---
+            // Rule: Nếu trong một nhịp có nhiều vùng bụng cần gia cường, phải thống nhất theo thép bụng lớn nhất
+            var botAddonKeys = result.Addons.Keys.Where(k => k.Contains("_Bot_")).ToList();
+            if (botAddonKeys.Count > 1)
+            {
+                var spanGroups = botAddonKeys.GroupBy(k => k.Split('_')[0]); // Nhóm theo SpanId (ví dụ: S1, S2...)
+                foreach (var groupBot in spanGroups)
+                {
+                    if (groupBot.Count() <= 1) continue;
+
+                    // Tìm phương án thép có diện tích lớn nhất (Count * D^2)
+                    string maxKey = groupBot.OrderByDescending(k =>
+                    {
+                        var info = result.Addons[k];
+                        return (double)info.Count * info.Diameter * info.Diameter;
+                    }).First();
+
+                    var bestAddon = result.Addons[maxKey];
+
+                    // Áp dụng phương án tốt nhất cho tất cả các vùng bụng trong nhịp này
+                    foreach (var key in groupBot)
+                    {
+                        if (key == maxKey) continue;
+                        result.Addons[key] = bestAddon;
+                        // Lưu ý: Ta chấp nhận sự sai lệch nhẹ về khối lượng dự toán ở bước này 
+                        // vì quan trọng nhất là tính đúng đắn của phương án cấu tạo.
+                    }
+                }
+            }
+
             // Kiểm tra tỷ lệ fail - cho phép tối đa 20% section fail
             double failRatio = result.TotalChecks > 0
                 ? (double)result.FailedSections.Count / result.TotalChecks
@@ -596,7 +626,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     int maxPerLayer = (int)Math.Floor((section.UsableWidth + 25) / (d + 25));
                     if (maxPerLayer < 2) continue; // Diameter too large
 
-                    var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer);
+                    int maxLayersLimit = _settings.Beam?.MaxLayers ?? 3;
+                    var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer, maxLayersLimit);
+                    if (layers == null) continue; // Exceeds MaxLayers
+
                     return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
                 }
             }
@@ -628,14 +661,18 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 int maxPerLayer = (int)Math.Floor((section.UsableWidth + 25) / (d + 25));
                 if (maxPerLayer < 2) maxPerLayer = 2;
 
-                var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer);
-                return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
+                int maxLayersLimit = _settings.Beam?.MaxLayers ?? 3;
+                var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer, maxLayersLimit);
+                if (layers != null)
+                {
+                    return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
+                }
             }
 
             return null;
         }
 
-        private List<int> CalculateAddonLayerBreakdown(int totalAddon, int backboneCount, int maxPerLayer)
+        private List<int> CalculateAddonLayerBreakdown(int totalAddon, int backboneCount, int maxPerLayer, int maxLayersLimit)
         {
             var result = new List<int>();
             int remAddon = totalAddon;
@@ -651,6 +688,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // Layers 2+
             while (remAddon > 0)
             {
+                // CRITICAL: Check MaxLayers limit
+                if (result.Count >= maxLayersLimit)
+                {
+                    // Vượt quá số lớp cho phép -> Hủy phương án này
+                    return null;
+                }
+
                 int add = Math.Min(remAddon, maxPerLayer);
                 result.Add(add);
                 remAddon -= add;
