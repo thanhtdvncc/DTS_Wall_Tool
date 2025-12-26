@@ -45,12 +45,12 @@ namespace DTS_Engine.Core.Data
         public string ElementId { get; set; }   // Số hiệu phần tử (Frame ID)
         public string Station { get; set; }     // Nhãn vị trí (L1, Center, L2)
         public string LocationMm { get; set; }  // Tọa độ mm (Traceability)
-        public double Moment { get; set; }
-        public double Shear { get; set; }
-        public double AsCalc { get; set; }
-        public double AsProv { get; set; }
+        public double? Moment { get; set; }
+        public double? Shear { get; set; }
+        public double? AsCalc { get; set; }
+        public double? AsProv { get; set; }
         public string RebarStr { get; set; }
-        public double Ratio { get; set; }
+        public double? Ratio { get; set; }
         public string LoadCase { get; set; }
         public string Conclusion { get; set; }  // OK / NG
     }

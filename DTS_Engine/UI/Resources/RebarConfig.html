@@ -463,6 +463,18 @@
                                 <input type="text" id="StirrupSpacings_Cantilever" placeholder="100, 150">
                             </div>
                         </div>
+                        <div class="row" style="margin-top:10px;">
+                            <div class="col">
+                                <label
+                                    style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;color:#1e293b;">
+                                    <input type="checkbox" id="SymmetricStirrupSupports"
+                                        style="width:16px;height:16px;">
+                                    Đồng bộ bước đai 2 đầu gối dầm (L1 = L2)
+                                </label>
+                                <div class="hint" style="margin-left:24px;">Nếu bật, hệ thống sẽ lấy bước đai nhỏ nhất
+                                    giữa 2 gối để áp dụng cho cả hai đầu dầm.</div>
+                            </div>
+                        </div>
                         <div class="hint">Nhập khoảng: "16-25" hoặc liệt kê: "18, 20, 22". Bước đai cách nhau dấu phẩy.
                             Nếu bỏ trống các ô chuyên biệt, hệ thống sẽ dùng giá trị "Chung".
                         </div>
@@ -2030,6 +2042,7 @@
                 setId('StirrupSpacings_Support', data.Beam?.StirrupSpacings_Support?.join(',') ?? '100,150');
                 setId('StirrupSpacings_Span', data.Beam?.StirrupSpacings_Span?.join(',') ?? '150,200');
                 setId('StirrupSpacings_Cantilever', data.Beam?.StirrupSpacings_Cantilever?.join(',') ?? '100,150');
+                setCheck('SymmetricStirrupSupports', data.Beam?.SymmetricStirrupSupports ?? true);
                 setId('CoverTop', data.Beam?.CoverTop);
                 setId('CoverBot', data.Beam?.CoverBot);
                 setId('CoverSide', data.Beam?.CoverSide);
@@ -2408,6 +2421,7 @@
                         StirrupSpacings_Support: (getVal('StirrupSpacings_Support') || '').toString().split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x) && x > 0),
                         StirrupSpacings_Span: (getVal('StirrupSpacings_Span') || '').toString().split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x) && x > 0),
                         StirrupSpacings_Cantilever: (getVal('StirrupSpacings_Cantilever') || '').toString().split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x) && x > 0),
+                        SymmetricStirrupSupports: !!document.getElementById('SymmetricStirrupSupports')?.checked,
                         CoverTop: getVal('CoverTop'),
                         CoverBot: getVal('CoverBot'),
                         CoverSide: getVal('CoverSide'),

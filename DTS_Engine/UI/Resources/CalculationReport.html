@@ -568,14 +568,22 @@
                     if (isRebar) return 'val-rebar';
                     if (opts.type === 'combo') return 'txt-combo';
                     if (opts.type === 'loc') return 'txt-location';
-                    if (opts.type === 'res') return val === 'OK' ? 'val-safe' : (val === 'NG' ? 'val-unsafe' : '');
+                    if (opts.type === 'res') {
+                        if (val === 'OK') return 'val-safe';
+                        if (val === 'NG') return 'val-unsafe';
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) {
+                            // Logic Safe: Ratio >= 0.95 (hoặc 1.0 tùy threshold gán từ backend)
+                            return num >= 0.95 ? 'val-safe' : 'val-unsafe';
+                        }
+                    }
                     return '';
                 };
 
                 const formatVal = (v) => {
-                    if (v === undefined || v === null) return "-";
+                    if (v === undefined || v === null || v === "" || v === "-") return "-";
                     if (opts.type === 'rebar' || opts.type === 'combo' || opts.type === 'loc') return v;
-                    if (typeof v === 'number') return v.toFixed(opts.precision || 2);
+                    if (typeof v === 'number') return v.toFixed(opts.precision || (v % 1 === 0 ? 0 : 2));
                     return v;
                 }
 
@@ -583,10 +591,12 @@
                 let vE = "-";
                 if (typeof vL === 'number' && typeof vR === 'number') {
                     vE = Math.max(vL, vR);
-                } else if (opts.type === 'rebar' || opts.type === 'combo') {
-                    // Logic for text: pick the one with higher area/ratio might be complex, 
-                    // for now just concat or pick L if present (common practice in simplified reports)
+                } else if (typeof vL === 'number') {
                     vE = vL;
+                } else if (typeof vR === 'number') {
+                    vE = vR;
+                } else {
+                    vE = (vL !== undefined && vL !== null && vL !== "-") ? vL : vR;
                 }
 
                 return `

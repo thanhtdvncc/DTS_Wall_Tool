@@ -100,113 +100,117 @@ namespace DTS_Engine.Core.Utils
             string sapLoc = data?.LocationMm?.ElementAtOrDefault(zoneIndex).ToString() ?? "-";
 
             // Top - mm2
-            double topReq = (data?.TopArea?[zoneIndex] ?? 0) * 100.0;
-            double topProv = (data?.TopAreaProv?[zoneIndex] ?? 0) * 100.0;
+            double? topReq = data != null ? (data.TopArea?[zoneIndex] * 100.0) : (double?)null;
+            double? topProv = data != null ? (data.TopAreaProv?[zoneIndex] * 100.0) : (double?)null;
             station.TopResult = new ReportForceResult
             {
                 ElementId = sapElem,
                 Station = stationLabel,
                 LocationMm = sapLoc,
-                Moment = data != null ? Math.Round(data.TopMoment[zoneIndex], 2) : 0,
-                AsCalc = Math.Round(topReq, 1),
-                AsProv = Math.Round(topProv, 1),
+                Moment = data != null ? Math.Round(data.TopMoment[zoneIndex], 2) : (double?)null,
+                AsCalc = topReq.HasValue ? Math.Round(topReq.Value, 1) : (double?)null,
+                AsProv = topProv.HasValue ? Math.Round(topProv.Value, 1) : (double?)null,
                 RebarStr = data?.TopRebarString?.ElementAtOrDefault(zoneIndex) ?? "-",
                 LoadCase = data?.TopCombo?.ElementAtOrDefault(zoneIndex) ?? "-",
                 Ratio = CalcRatio(topReq, topProv),
-                Conclusion = CalcRatio(topReq, topProv) <= 1.05 ? "OK" : "NG"
+                Conclusion = GetConclusion(CalcRatio(topReq, topProv))
             };
 
             // Bot - mm2
-            double botReq = (data?.BotArea?[zoneIndex] ?? 0) * 100.0;
-            double botProv = (data?.BotAreaProv?[zoneIndex] ?? 0) * 100.0;
+            double? botReq = data != null ? (data.BotArea?[zoneIndex] * 100.0) : (double?)null;
+            double? botProv = data != null ? (data.BotAreaProv?[zoneIndex] * 100.0) : (double?)null;
             station.BotResult = new ReportForceResult
             {
                 ElementId = sapElem,
                 Station = stationLabel,
                 LocationMm = sapLoc,
-                Moment = data != null ? Math.Round(data.BotMoment[zoneIndex], 2) : 0,
-                AsCalc = Math.Round(botReq, 1),
-                AsProv = Math.Round(botProv, 1),
+                Moment = data != null ? Math.Round(data.BotMoment[zoneIndex], 2) : (double?)null,
+                AsCalc = botReq.HasValue ? Math.Round(botReq.Value, 1) : (double?)null,
+                AsProv = botProv.HasValue ? Math.Round(botProv.Value, 1) : (double?)null,
                 RebarStr = data?.BotRebarString?.ElementAtOrDefault(zoneIndex) ?? "-",
                 LoadCase = data?.BotCombo?.ElementAtOrDefault(zoneIndex) ?? "-",
                 Ratio = CalcRatio(botReq, botProv),
-                Conclusion = CalcRatio(botReq, botProv) <= 1.05 ? "OK" : "NG"
+                Conclusion = GetConclusion(CalcRatio(botReq, botProv))
             };
 
             // Stirrup Total (2At/st + Av/sv) - mm2/mm
-            double stirTotalReq = (data != null) ? (2 * data.TTArea[zoneIndex] + data.ShearArea[zoneIndex]) : 0;
-            double stirProv = data != null ? (StirrupStringParser.ParseAsProv(data.StirrupString?.ElementAtOrDefault(zoneIndex)) / 100.0) : 0; // cm2/m -> mm2/mm (div 100)
+            double? stirTotalReq = (data != null) ? (2 * data.TTArea[zoneIndex] + data.ShearArea[zoneIndex]) : (double?)null;
+            double? stirProv = data != null ? (StirrupStringParser.ParseAsProv(data.StirrupString?.ElementAtOrDefault(zoneIndex)) / 100.0) : (double?)null;
 
             station.StirrupResult = new ReportForceResult
             {
                 ElementId = sapElem,
                 Station = stationLabel,
                 LocationMm = sapLoc,
-                Shear = data != null ? Math.Round(data.ShearForce[zoneIndex], 2) : 0,
-                AsCalc = Math.Round(stirTotalReq, 3),
-                AsProv = Math.Round(stirProv, 3),
+                Shear = data != null ? Math.Round(data.ShearForce[zoneIndex], 2) : (double?)null,
+                AsCalc = stirTotalReq.HasValue ? Math.Round(stirTotalReq.Value, 3) : (double?)null,
+                AsProv = stirProv.HasValue ? Math.Round(stirProv.Value, 3) : (double?)null,
                 RebarStr = data?.StirrupString?.ElementAtOrDefault(zoneIndex) ?? "-",
                 LoadCase = data?.ShearCombo?.ElementAtOrDefault(zoneIndex) ?? "-",
                 Ratio = CalcRatio(stirTotalReq, stirProv),
-                Conclusion = CalcRatio(stirTotalReq, stirProv) <= 1.05 ? "OK" : "NG"
+                Conclusion = GetConclusion(CalcRatio(stirTotalReq, stirProv))
             };
 
-            // Stirrup Only (2At/st ?) - In spec 4.6 it says "Chỉ xét thép đai". 
-            // Often this means the Torsion part or Shear part. 
-            // According to spec 4.5 vs 4.6: 4.5 is TOTAL, 4.6 is "Only Stirrup".
-            // If ttArea is At/s (torsion), then 2*ttArea is the stirrup part for torsion.
-            double stirOnlyReq = (data != null) ? (2 * data.TTArea[zoneIndex]) : 0;
+            // Stirrup Only (2At/sv ?)
+            double? stirOnlyReq = (data != null) ? (2 * data.TTArea[zoneIndex]) : (double?)null;
             station.StirrupOnlyResult = new ReportForceResult
             {
                 ElementId = sapElem,
                 Station = stationLabel,
                 LocationMm = sapLoc,
-                AsCalc = Math.Round(stirOnlyReq, 3),
-                AsProv = Math.Round(stirProv, 3), // Still same rebar provided
+                AsCalc = stirOnlyReq.HasValue ? Math.Round(stirOnlyReq.Value, 3) : (double?)null,
+                AsProv = stirProv.HasValue ? Math.Round(stirProv.Value, 3) : (double?)null,
                 Ratio = CalcRatio(stirOnlyReq, stirProv),
-                Conclusion = CalcRatio(stirOnlyReq, stirProv) <= 1.5 ? "OK" : "NG" // Higher limit for check
+                Conclusion = GetConclusion(CalcRatio(stirOnlyReq, stirProv), 0.67) // 1/1.5 = 0.67
             };
 
             // Web Bar (Side bar) - mm2 (Total Area Al req)
-            double alReq = (data?.TorsionArea?[zoneIndex] ?? 0) * 100.0;
-            double webProv = data != null ? (RebarCalculator.ParseRebarArea(data.WebBarString?.ElementAtOrDefault(zoneIndex)) * 100.0) : 0;
+            double? alReq = data != null ? (data.TorsionArea?[zoneIndex] * 100.0) : (double?)null;
+            double? webProv = data != null ? (RebarCalculator.ParseRebarArea(data.WebBarString?.ElementAtOrDefault(zoneIndex)) * 100.0) : (double?)null;
 
             station.AlResult = new ReportForceResult
             {
                 ElementId = sapElem,
                 Station = stationLabel,
                 LocationMm = sapLoc,
-                AsCalc = Math.Round(alReq, 1),
-                AsProv = Math.Round(webProv, 1),
+                AsCalc = alReq.HasValue ? Math.Round(alReq.Value, 1) : (double?)null,
+                AsProv = webProv.HasValue ? Math.Round(webProv.Value, 1) : (double?)null,
                 LoadCase = data?.TorsionCombo?.ElementAtOrDefault(zoneIndex) ?? "-",
                 Ratio = CalcRatio(alReq, webProv),
-                Conclusion = CalcRatio(alReq, webProv) <= 1.05 ? "OK" : "NG"
+                Conclusion = GetConclusion(CalcRatio(alReq, webProv))
             };
 
-            station.Legs = data != null ? StirrupStringParser.GetLegs(data.StirrupString?.ElementAtOrDefault(zoneIndex)) : 0; // No fallback to 2
+            station.Legs = data != null ? StirrupStringParser.GetLegs(data.StirrupString?.ElementAtOrDefault(zoneIndex)) : 0;
 
             station.WebResult = new ReportForceResult
             {
                 ElementId = sapElem,
                 Station = stationLabel,
                 RebarStr = data?.WebBarString?.ElementAtOrDefault(zoneIndex) ?? "-",
-                AsProv = Math.Round(webProv, 1)
+                AsProv = webProv.HasValue ? Math.Round(webProv.Value, 1) : (double?)null
             };
 
             return station;
         }
 
+        private static string GetConclusion(double? ratio, double threshold = 0.95)
+        {
+            if (!ratio.HasValue) return "-";
+            return ratio.Value >= threshold ? "OK" : "NG";
+        }
+
         private static double CheckStirrupReq(BeamResultData data, int idx)
         {
             if (data == null) return 0;
-            // Công thức: 2*At/s + Av/s. SAP returns in cm2/cm -> * 100 for cm2/m
             return (2 * data.TTArea[idx] + data.ShearArea[idx]) * 100.0;
         }
 
-        private static double CalcRatio(double req, double prov)
+        private static double? CalcRatio(double? req, double? prov)
         {
-            if (prov <= 1e-6) return req > 1e-6 ? 9.99 : 0;
-            return Math.Round(req / prov, 3);
+            if (!req.HasValue || !prov.HasValue) return null;
+            if (req.Value <= 1e-6) return 9.99; // Very safe
+            if (prov.Value <= 1e-6) return 0; // Very unsafe
+            return Math.Round(prov.Value / req.Value, 3);
         }
 
         private static BeamResultData GetResultData(string handle)

@@ -722,6 +722,16 @@
             return (v === undefined || v === null) ? '' : String(v);
         }
 
+        function getStirrupText(span, pos) {
+            if (!span || !span.Stirrup) return '';
+            return span.Stirrup[pos] || '';
+        }
+
+        function getWebBarText(span, pos) {
+            if (!span || !span.WebBar) return '';
+            return span.WebBar[pos] || '';
+        }
+
         function updateLayerRebar(spanIndex, type, layer, pos, value) {
             const arr = type === 'Top' ? 'TopRebar' : 'BotRebar';
 

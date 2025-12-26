@@ -406,6 +406,11 @@ namespace DTS_Engine.Core.Data
         /// </summary>
         public string SideBarRange { get; set; } = "12-14";
 
+        /// <summary>
+        /// Đồng bộ bước đai 2 đầu gối dầm (L1 = L2 = min(L1, L2))
+        /// </summary>
+        public bool SymmetricStirrupSupports { get; set; } = true;
+
         // ===== COVER =====
         public int CoverTop { get; set; } = 25;
         public int CoverBot { get; set; } = 25;

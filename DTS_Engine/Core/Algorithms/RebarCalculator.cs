@@ -301,44 +301,92 @@ namespace DTS_Engine.Core.Algorithms
             return 5;
         }
 
+        public class StirrupResult
+        {
+            public int Diameter { get; set; }
+            public int Legs { get; set; }
+            public int Spacing { get; set; }
+            public bool IsDeficit { get; set; }
+
+            public override string ToString()
+            {
+                return $"{Legs}-d{Diameter}a{Spacing}{(IsDeficit ? "*" : "")}";
+            }
+        }
+
+        #endregion
+
+        #region Stirrup Calculation
+
         /// <summary>
-        /// Tính toán đai.
+        /// Tính toán đai - Trả về chuỗi (legacy support)
         /// </summary>
-        public static string CalculateStirrup(double shearArea, double ttArea, double beamWidthMm, DtsSettings settings)
+        public static string CalculateStirrup(double shearArea, double ttArea, double beamWidthMm, DtsSettings settings, List<int> customSpacings = null)
+        {
+            var res = CalculateStirrupDetails(shearArea, ttArea, beamWidthMm, settings, customSpacings);
+            return res?.ToString() ?? "-";
+        }
+
+        /// <summary>
+        /// Tính toán đai chi tiết để phục vụ đồng bộ
+        /// </summary>
+        public static StirrupResult CalculateStirrupDetails(double shearArea, double ttArea, double beamWidthMm, DtsSettings settings, List<int> customSpacings = null, int? fixedDiameter = null)
         {
             double totalAreaPerLen = shearArea + 2 * ttArea;
-            if (totalAreaPerLen <= 0.001) return "-";
+            if (totalAreaPerLen <= 0.001) return null;
 
             var beamCfg = settings.Beam;
             var inventory = settings.General?.AvailableDiameters ?? new List<int> { 8, 10 };
             var diameters = DiameterParser.ParseRange(beamCfg?.StirrupBarRange ?? "8-10", inventory);
             if (diameters.Count == 0) diameters = new List<int> { 8, 10 };
 
-            var spacings = beamCfg?.StirrupSpacings;
-            if (spacings == null || spacings.Count == 0) spacings = new List<int> { 100, 150, 200, 250 };
+            if (fixedDiameter.HasValue)
+            {
+                diameters = new List<int> { fixedDiameter.Value };
+            }
+
+            var spacings = customSpacings;
+            if (spacings == null || spacings.Count == 0) spacings = beamCfg?.StirrupSpacings;
+            if (spacings == null || spacings.Count == 0) spacings = new List<int> { 100, 120, 150, 200, 250 };
+            spacings = spacings.OrderByDescending(x => x).ToList();
+
             int minSpacingAcceptable = 100;
 
-            int baseLegs = GetAutoLegs(beamWidthMm, settings);
-            var legOptions = new List<int> { baseLegs };
-            if (baseLegs - 1 >= 2) legOptions.Insert(0, baseLegs - 1);
-            legOptions.Add(baseLegs + 1);
-            legOptions.Add(baseLegs + 2);
-            if (beamCfg?.AllowOddLegs != true) legOptions = legOptions.Where(l => l % 2 == 0).ToList();
-            if (legOptions.Count == 0) legOptions = new List<int> { 2, 4 };
-
+            // Thứ tự ưu tiên: 
+            // 1. Duyệt qua từng Đường kính (Diameter)
+            // 2. Với mỗi đường kính, duyệt qua từng số Nhánh đai (Legs)
+            // 3. Với mỗi nhánh đai, duyệt qua từng Bước đai (Spacing) từ Lớn đến Nhỏ
             foreach (int d in diameters.OrderBy(x => x))
             {
-                foreach (int legs in legOptions)
+                int startLegs = GetAutoLegs(beamWidthMm, settings);
+                var legOptions = new List<int>();
+                for (int l = Math.Max(2, startLegs); l <= 12; l++)
                 {
-                    string res = TryFindSpacing(totalAreaPerLen, d, legs, spacings, minSpacingAcceptable);
-                    if (res != null) return res;
+                    if (beamCfg?.AllowOddLegs == true || l % 2 == 0) legOptions.Add(l);
+                }
+
+                foreach (int legs in legOptions.OrderBy(x => x))
+                {
+                    foreach (int s in spacings)
+                    {
+                        if (s < minSpacingAcceptable) continue;
+
+                        double as1Layer = (Math.PI * d * d / 400.0) * legs;
+                        double cap = (as1Layer / s) * 1000.0; // mm2/m
+
+                        if (cap >= totalAreaPerLen * 100.0)
+                        {
+                            return new StirrupResult { Diameter = d, Legs = legs, Spacing = s };
+                        }
+                    }
                 }
             }
 
-            int maxLegs = legOptions.Last();
+            // Fallback
             int dMax = diameters.Max();
+            int lMax = (beamCfg?.AllowOddLegs == true) ? 12 : 12;
             int sMin = spacings.Min();
-            return $"{maxLegs}-d{dMax}a{sMin}*";
+            return new StirrupResult { Diameter = dMax, Legs = lMax, Spacing = sMin, IsDeficit = true };
         }
 
         private static string TryFindSpacing(double totalAreaPerLen, int d, int legs, List<int> spacings, int minSpacingAcceptable)
@@ -351,6 +399,10 @@ namespace DTS_Engine.Core.Algorithms
             }
             return null;
         }
+
+        #endregion
+
+        #region Other Calculations
 
         /// <summary>
         /// Tính toán thép thành (web bars).

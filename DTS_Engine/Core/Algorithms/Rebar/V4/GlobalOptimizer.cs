@@ -795,40 +795,83 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             result.Stirrups = new Dictionary<string, string>();
             result.WebBars = new Dictionary<string, string>();
 
-            // Add addons and auxiliary bars for this span
+            var stirrupResults = new Dictionary<string, RebarCalculator.StirrupResult>();
+
+            // 1. Raw calculation for each zone
             foreach (var section in spanSections)
             {
                 string zoneName = GetZoneName(section);
 
-                // Check for Top addon
+                // Addons (Top/Bot) - Keep same
                 string keyTop = $"{spanId}_Top_{zoneName}";
-                if (evalResult.Addons.TryGetValue(keyTop, out var addonTop))
-                {
-                    result.TopAddons[zoneName] = addonTop;
-                }
-
-                // Check for Bot addon
+                if (evalResult.Addons.TryGetValue(keyTop, out var addonTop)) result.TopAddons[zoneName] = addonTop;
                 string keyBot = $"{spanId}_Bot_{zoneName}";
-                if (evalResult.Addons.TryGetValue(keyBot, out var addonBot))
-                {
-                    result.BotAddons[zoneName] = addonBot;
-                }
+                if (evalResult.Addons.TryGetValue(keyBot, out var addonBot)) result.BotAddons[zoneName] = addonBot;
 
-                // Stirrup calculation
                 if (section.ReqStirrup > 0.01)
                 {
-                    string stirrupStr = RebarCalculator.CalculateStirrup(
-                        section.ReqStirrup, 0, section.Width, _settings);
-                    result.Stirrups[zoneName] = stirrupStr;
+                    var spanData = (group.Spans != null && section.SpanIndex < group.Spans.Count) ? group.Spans[section.SpanIndex] : null;
+                    List<int> customSpacings = null;
+                    if (spanData != null && spanData.IsConsole) customSpacings = _settings.Beam?.StirrupSpacings_Cantilever;
+                    else if (zoneName == "Left" || zoneName == "Right") customSpacings = _settings.Beam?.StirrupSpacings_Support;
+                    else if (zoneName == "Mid") customSpacings = _settings.Beam?.StirrupSpacings_Span;
+
+                    var sRes = RebarCalculator.CalculateStirrupDetails(section.ReqStirrup, 0, section.Width, _settings, customSpacings);
+                    if (sRes != null) stirrupResults[zoneName] = sRes;
                 }
 
-                // Web bar calculation
                 if (section.ReqWeb > 0.01 || section.Height >= (_settings.Beam?.WebBarMinHeight ?? 700))
                 {
-                    // ReqWeb already contains torsion distribution factor from Discretization
-                    string webStr = RebarCalculator.CalculateWebBars(
-                        section.ReqWeb, 1.0, section.Height, _settings);
-                    result.WebBars[zoneName] = webStr;
+                    result.WebBars[zoneName] = RebarCalculator.CalculateWebBars(section.ReqWeb, 1.0, section.Height, _settings);
+                }
+            }
+
+            // 2. Synchronize Diameter (Choose Max)
+            if (stirrupResults.Count > 0)
+            {
+                int maxD = stirrupResults.Values.Max(r => r.Diameter);
+
+                foreach (var zoneName in stirrupResults.Keys.ToList())
+                {
+                    var current = stirrupResults[zoneName];
+                    if (current.Diameter < maxD)
+                    {
+                        var section = spanSections.FirstOrDefault(s => GetZoneName(s) == zoneName);
+                        if (section != null)
+                        {
+                            var spanData = (group.Spans != null && section.SpanIndex < group.Spans.Count) ? group.Spans[section.SpanIndex] : null;
+                            List<int> customSpacings = null;
+                            if (spanData != null && spanData.IsConsole) customSpacings = _settings.Beam?.StirrupSpacings_Cantilever;
+                            else if (zoneName == "Left" || zoneName == "Right") customSpacings = _settings.Beam?.StirrupSpacings_Support;
+                            else if (zoneName == "Mid") customSpacings = _settings.Beam?.StirrupSpacings_Span;
+
+                            var forcedRes = RebarCalculator.CalculateStirrupDetails(section.ReqStirrup, 0, section.Width, _settings, customSpacings, fixedDiameter: maxD);
+                            if (forcedRes != null) stirrupResults[zoneName] = forcedRes;
+                        }
+                    }
+                }
+
+                // 3. Symmetric Supports (Left = Right = min spacing)
+                if (_settings.Beam?.SymmetricStirrupSupports == true)
+                {
+                    if (stirrupResults.TryGetValue("Left", out var leftRes) && stirrupResults.TryGetValue("Right", out var rightRes))
+                    {
+                        // Match diameter first (already done by maxD, but just in case)
+                        int finalD = Math.Max(leftRes.Diameter, rightRes.Diameter);
+                        int finalLegs = Math.Max(leftRes.Legs, rightRes.Legs);
+                        int finalSpacing = Math.Min(leftRes.Spacing, rightRes.Spacing);
+
+                        leftRes.Diameter = rightRes.Diameter = finalD;
+                        leftRes.Legs = rightRes.Legs = finalLegs;
+                        leftRes.Spacing = rightRes.Spacing = finalSpacing;
+                        leftRes.IsDeficit = leftRes.IsDeficit || rightRes.IsDeficit;
+                    }
+                }
+
+                // Apply to result
+                foreach (var kvp in stirrupResults)
+                {
+                    result.Stirrups[kvp.Key] = kvp.Value.ToString();
                 }
             }
 
