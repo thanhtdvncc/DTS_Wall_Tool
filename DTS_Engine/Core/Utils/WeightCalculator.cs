@@ -62,6 +62,16 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
+        /// Tính trọng lượng thép gia cường (Addon) dựa trên chiều dài nhịp
+        /// </summary>
+        public static double CalculateAddonWeight(int diameterMM, int count, double spanLengthM, double sideFactor = 0.4)
+        {
+            if (count <= 0 || spanLengthM <= 0 || diameterMM <= 0) return 0;
+            double lengthMM = spanLengthM * 1000.0 * sideFactor;
+            return CalculateWeight(diameterMM, lengthMM, count);
+        }
+
+        /// <summary>
         /// Tra bảng trọng lượng trên mét (kg/m) cho các đường kính thông dụng
         /// </summary>
         public static double GetUnitWeight(int diameterMM)

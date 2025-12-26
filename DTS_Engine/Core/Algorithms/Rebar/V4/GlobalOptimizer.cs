@@ -444,27 +444,35 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             {
                 // Tìm thấy phương án native!
                 int rawAddonCount = nativeMatch.TotalCount - backboneCount;
-                
+
                 // CRITICAL FIX: Enforce stirrup alignment rule between layers
                 int addonCount = EnforceStirrupLayerAlignment(backboneCount, rawAddonCount);
-                
+
                 if (addonCount >= 2)
                 {
                     // Validate final area meets requirement
                     double addonArea = addonCount * Math.PI * backboneDiameter * backboneDiameter / 400.0;
                     double totalProvidedArea = backboneArea + addonArea;
-                    
+
                     if (totalProvidedArea >= targetArea)
                     {
                         double spanLength = GetSpanLength(section, group);
-                        double weight = WeightCalculator.CalculateWeight(backboneDiameter, spanLength * 0.4, addonCount);
+                        double weight = WeightCalculator.CalculateAddonWeight(backboneDiameter, addonCount, spanLength / 1000.0, section.Type == SectionType.Support ? 0.3 : 0.6);
+
+                        // Use layer breakdown from arrangement
+                        var addonDetails = nativeMatch.GetAddon(backboneCount, backboneDiameter);
 
                         return new SectionResolution
                         {
                             Success = true,
                             IsNativeMatch = true,
                             AddonWeight = weight,
-                            AddonInfo = new RebarInfo { Count = addonCount, Diameter = backboneDiameter }
+                            AddonInfo = new RebarInfo
+                            {
+                                Count = addonCount,
+                                Diameter = backboneDiameter,
+                                LayerCounts = addonDetails.layerBreakdown
+                            }
                         };
                     }
                 }
@@ -473,40 +481,33 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             // 3. SYNTHESIZE: Tự tính addon với safety factor và stirrup alignment
             var synthesized = SynthesizeAddon(deficit, backboneDiameter, section, targetArea - backboneArea, backboneCount);
 
-            if (synthesized.HasValue)
-            {
-                // Validate final area meets requirement with safety factor
-                double addonArea = synthesized.Value.Count * Math.PI * synthesized.Value.Diameter * synthesized.Value.Diameter / 400.0;
-                double totalProvidedArea = backboneArea + addonArea;
-                
-                if (totalProvidedArea >= targetArea)
-                {
-                    double spanLength = GetSpanLength(section, group);
-                    double weight = WeightCalculator.CalculateWeight(synthesized.Value.Diameter, spanLength * 0.4, synthesized.Value.Count);
-
-                    return new SectionResolution
-                    {
-                        Success = true,
-                        IsNativeMatch = false,
-                        AddonWeight = weight,
-                        AddonInfo = new RebarInfo { Count = synthesized.Value.Count, Diameter = synthesized.Value.Diameter }
-                    };
-                }
-            }
-
-            // 4. FALLBACK: Tính addon bắt buộc dù không optimal
-            var fallback = ForceSynthesizeAddon(deficit, section, targetArea - backboneArea, backboneCount);
-            if (fallback.HasValue)
+            if (synthesized != null)
             {
                 double spanLength = GetSpanLength(section, group);
-                double weight = WeightCalculator.CalculateWeight(fallback.Value.Diameter, spanLength * 0.4, fallback.Value.Count);
+                double weight = WeightCalculator.CalculateAddonWeight(synthesized.Diameter, synthesized.Count, spanLength / 1000.0, section.Type == SectionType.Support ? 0.3 : 0.6);
 
                 return new SectionResolution
                 {
                     Success = true,
                     IsNativeMatch = false,
                     AddonWeight = weight,
-                    AddonInfo = new RebarInfo { Count = fallback.Value.Count, Diameter = fallback.Value.Diameter }
+                    AddonInfo = synthesized
+                };
+            }
+
+            // 4. FALLBACK: Tính addon bắt buộc dù không optimal
+            var fallback = ForceSynthesizeAddon(deficit, section, targetArea - backboneArea, backboneCount);
+            if (fallback != null)
+            {
+                double spanLength = GetSpanLength(section, group);
+                double weight = WeightCalculator.CalculateAddonWeight(fallback.Diameter, fallback.Count, spanLength / 1000.0, section.Type == SectionType.Support ? 0.3 : 0.6);
+
+                return new SectionResolution
+                {
+                    Success = true,
+                    IsNativeMatch = false,
+                    AddonWeight = weight,
+                    AddonInfo = fallback
                 };
             }
 
@@ -534,10 +535,10 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             // Minimum 2 bars for any addon layer
             if (layer2Count < 2) layer2Count = 2;
-            
+
             bool layer1IsEven = layer1Count % 2 == 0;
             bool layer2IsEven = layer2Count % 2 == 0;
-            
+
             if (layer1IsEven)
             {
                 // Layer 1 CHẴN → Layer 2 phải CHẴN
@@ -548,14 +549,14 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 }
             }
             // else: Layer 1 LẺ → Layer 2 có thể chẵn hoặc lẻ, không cần điều chỉnh
-            
+
             return layer2Count;
         }
 
         /// <summary>
         /// Sinh addon tuân thủ rule: min 2 thanh, stirrup alignment, check spacing.
         /// </summary>
-        private (int Count, int Diameter)? SynthesizeAddon(double deficit, int backboneDiameter, DesignSection section, double minRequiredAddonArea, int backboneCount)
+        private RebarInfo SynthesizeAddon(double deficit, int backboneDiameter, DesignSection section, double minRequiredAddonArea, int backboneCount)
         {
             // Ưu tiên đường kính bằng hoặc nhỏ hơn backbone
             var candidates = _allowedDiameters
@@ -581,20 +582,29 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     addonArea = count * oneBarArea;
                 }
 
-                // Check spacing
-                if (CheckAddonSpacing(section, d, count))
+                // Spacing check
+                int total1 = backboneCount + count;
+                double spacing = (section.UsableWidth - total1 * d) / (total1 - 1);
+
+                if (spacing >= 25)
                 {
-                    return (count, d);
+                    return new RebarInfo { Count = count, Diameter = d, LayerCounts = new List<int> { count } };
+                }
+                else
+                {
+                    // Multi-layer fallback
+                    int maxPerLayer = (int)Math.Floor((section.UsableWidth + 25) / (d + 25));
+                    if (maxPerLayer < 2) continue; // Diameter too large
+
+                    var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer);
+                    return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
                 }
             }
 
             return null;
         }
 
-        /// <summary>
-        /// Force sinh addon khi không có option tốt.
-        /// </summary>
-        private (int Count, int Diameter)? ForceSynthesizeAddon(double deficit, DesignSection section, double minRequiredAddonArea, int backboneCount)
+        private RebarInfo ForceSynthesizeAddon(double deficit, DesignSection section, double minRequiredAddonArea, int backboneCount)
         {
             // Dùng đường kính nhỏ nhất có thể để nhét nhiều thanh
             var candidates = _allowedDiameters.OrderBy(d => d).ToList();
@@ -603,7 +613,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             {
                 double oneBarArea = Math.PI * d * d / 400.0;
                 int count = (int)Math.Ceiling(deficit / oneBarArea);
-                
+
                 // Enforce stirrup layer alignment
                 count = EnforceStirrupLayerAlignment(backboneCount, count);
 
@@ -615,16 +625,38 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     count = EnforceStirrupLayerAlignment(backboneCount, neededCount);
                 }
 
-                // Relax spacing check
-                double usableWidth = section.UsableWidth;
-                double totalBarWidth = count * d;
-                if (totalBarWidth < usableWidth * 0.9) // 90% width
-                {
-                    return (count, d);
-                }
+                int maxPerLayer = (int)Math.Floor((section.UsableWidth + 25) / (d + 25));
+                if (maxPerLayer < 2) maxPerLayer = 2;
+
+                var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer);
+                return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
             }
 
             return null;
+        }
+
+        private List<int> CalculateAddonLayerBreakdown(int totalAddon, int backboneCount, int maxPerLayer)
+        {
+            var result = new List<int>();
+            int remAddon = totalAddon;
+            int remBackbone = backboneCount;
+
+            // Layer 1
+            int cap1 = maxPerLayer;
+            int bars1 = Math.Min(remBackbone + remAddon, cap1);
+            int add1 = Math.Max(0, bars1 - remBackbone);
+            if (add1 > 0) result.Add(add1);
+            remAddon -= add1;
+
+            // Layers 2+
+            while (remAddon > 0)
+            {
+                int add = Math.Min(remAddon, maxPerLayer);
+                result.Add(add);
+                remAddon -= add;
+            }
+
+            return result;
         }
 
         #endregion
@@ -663,7 +695,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     Diameter = kvp.Value.Diameter,
                     Count = kvp.Value.Count,
                     Position = kvp.Key.Contains("_Top_") ? "Top" : "Bot",
-                    Layer = 2
+                    Layer = kvp.Value.LayerCounts?.Count ?? 1,
+                    LayerBreakdown = kvp.Value.LayerCounts
                 };
             }
 
