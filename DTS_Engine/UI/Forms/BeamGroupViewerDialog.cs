@@ -355,7 +355,7 @@ namespace DTS_Engine.UI.Forms
                 return;
             }
 
-            // Handle UPDATE_SECTION_LABEL message from JS to update xSectionLabel/xSectionLabelLocked in XData
+            // [FIX ISSUE 3] Handle UPDATE_SECTION_LABEL with robust error handling
             if (message.StartsWith("UPDATE_SECTION_LABEL|"))
             {
                 try
@@ -367,12 +367,17 @@ namespace DTS_Engine.UI.Forms
                         string newLabel = parts[1];
                         bool locked = parts[2] == "1";
 
-                        this.BeginInvoke(new Action(() =>
+                        this.BeginInvoke(new Action(async () => // Made async for toast
                         {
                             try
                             {
                                 var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
-                                if (doc == null) return;
+                                if (doc == null)
+                                {
+                                    if (_webView?.CoreWebView2 != null)
+                                        await _webView.CoreWebView2.ExecuteScriptAsync("console.error('❌ No active document');");
+                                    return;
+                                }
 
                                 using (doc.LockDocument())
                                 using (var tr = doc.Database.TransactionManager.StartTransaction())
@@ -383,7 +388,6 @@ namespace DTS_Engine.UI.Forms
                                         var obj = tr.GetObject(objId, OpenMode.ForWrite);
                                         if (obj != null)
                                         {
-                                            // Update xSectionLabel and xSectionLabelLocked in XData using MergeRawData
                                             var updates = new Dictionary<string, object>
                                             {
                                                 { "xSectionLabel", newLabel },
@@ -391,15 +395,26 @@ namespace DTS_Engine.UI.Forms
                                             };
                                             XDataUtils.MergeRawData(obj, tr, updates);
                                             tr.Commit();
-
-                                            System.Diagnostics.Debug.WriteLine($"[UPDATE_SECTION_LABEL] Handle={handle}, Label={newLabel}, Locked={locked}");
+                                            System.Diagnostics.Debug.WriteLine($"[UPDATE_SECTION_LABEL] OK: {handle}");
                                         }
+                                        else
+                                        {
+                                            if (_webView?.CoreWebView2 != null)
+                                                await _webView.CoreWebView2.ExecuteScriptAsync($"console.error('❌ Không tìm thấy object {handle}');");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        if (_webView?.CoreWebView2 != null)
+                                            await _webView.CoreWebView2.ExecuteScriptAsync($"console.error('❌ Handle không hợp lệ: {handle}');");
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
                                 System.Diagnostics.Debug.WriteLine($"[UPDATE_SECTION_LABEL] Error: {ex.Message}");
+                                if (_webView?.CoreWebView2 != null)
+                                    await _webView.CoreWebView2.ExecuteScriptAsync($"console.error('❌ Lỗi ghi XData: {ex.Message}');");
                             }
                         }));
                     }

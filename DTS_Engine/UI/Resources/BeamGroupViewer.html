@@ -3613,9 +3613,8 @@
             // Find matching beams in the Plan View data source and update them
             data.allBeams.forEach(b => {
                 if (spanHandles.includes(b.Handle)) {
-                    // Sync properties ensuring Plan View reflects Sidebar changes immediately
+                    // [FIX ISSUE 1] Use only xSectionLabel - removed legacy SectionLabel fallback
                     b.xSectionLabel = span.xSectionLabel;
-                    b.SectionLabel = span.xSectionLabel; // Legacy fallback
                     b.xSectionLabelLocked = span.xSectionLabelLocked;
                 }
             });
