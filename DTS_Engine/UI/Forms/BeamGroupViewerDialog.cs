@@ -92,7 +92,7 @@ namespace DTS_Engine.UI.Forms
                 // Use file-based approach for large content to avoid ArgumentException
                 System.Diagnostics.Debug.WriteLine($"[BeamGroupViewer] Total HTML size: {html.Length / 1024}KB");
 
-                if (html.Length > 1_500_000) // 1.5MB limit - use file-based for safety
+                if (html.Length > 1_000_000) // 1MB limit - use file-based for safety (reduced from 1.5MB)
                 {
                     // Fallback to file-based approach - more reliable for large content
                     string tempPath = Path.Combine(Path.GetTempPath(), "dts_beam_viewer.html");
