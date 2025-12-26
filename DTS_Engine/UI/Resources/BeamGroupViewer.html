@@ -148,6 +148,11 @@
                     class="px-2 py-1 bg-green-600 hover:bg-green-500 text-white rounded text-xs flex items-center gap-1">
                     <i class="fa-solid fa-calculator"></i> Tính thép
                 </button>
+                <!-- Pull Data Button -->
+                <button onclick="pullDataFromCad()" title="Lấy dữ liệu mới nhất từ XData (Pull)"
+                    class="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs flex items-center gap-1 border border-cyan-700 shadow-sm">
+                    <i class="fa-solid fa-cloud-arrow-down"></i> Pull
+                </button>
                 <!-- Highlight CAD Toggle -->
                 <label class="flex items-center gap-1 text-xs cursor-pointer">
                     <span class="text-slate-400">Highlight</span>
@@ -4198,6 +4203,20 @@
         function doImport() { window.chrome.webview.postMessage('IMPORT'); }
         function doCancel() { window.chrome.webview.postMessage('CANCEL'); }
         function applyToDrawing() { window.chrome.webview.postMessage('APPLY|' + JSON.stringify(data)); }
+
+        // [NEW] Pull latest data from CAD XData
+        function pullDataFromCad() {
+            if (!currentGroup) {
+                console.warn('[Pull] No current group to pull data for');
+                return;
+            }
+
+            // Show waiting message (toast is disabled but log for debugging)
+            console.log('⏳ Pulling latest data from CAD XData...');
+
+            // Send message PULL_DATA with current group index
+            window.chrome.webview.postMessage('PULL_DATA|' + currentGroupIndex);
+        }
 
         // ============ TOAST ============
         // DISABLED per user request - no popup notifications to avoid disruption

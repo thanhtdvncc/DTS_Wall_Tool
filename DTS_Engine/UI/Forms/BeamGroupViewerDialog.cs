@@ -408,6 +408,53 @@ namespace DTS_Engine.UI.Forms
                 return;
             }
 
+            // [NEW] Handle PULL_DATA message - Manual refresh from XData
+            if (message.StartsWith("PULL_DATA|"))
+            {
+                try
+                {
+                    string idxStr = message.Substring(10);
+                    if (int.TryParse(idxStr, out int groupIndex) && groupIndex >= 0 && groupIndex < _groups.Count)
+                    {
+                        this.BeginInvoke(new Action(async () =>
+                        {
+                            try
+                            {
+                                // 1. Reload XData from drawing
+                                LoadRebarDataFromXDataForGroups(_groups);
+
+                                // 2. Send updated group back to WebView
+                                var group = _groups[groupIndex];
+                                var groupJson = new
+                                {
+                                    Name = group.Name,
+                                    GroupName = !string.IsNullOrEmpty(group.GroupName) ? group.GroupName : group.Name,
+                                    AxisName = group.AxisName,
+                                    Width = group.Width,
+                                    Height = group.Height,
+                                    LevelZ = group.LevelZ,
+                                    Spans = group.Spans,
+                                    EntityHandles = group.EntityHandles,
+                                    IsLocked = group.IsLocked
+                                };
+
+                                string json = Newtonsoft.Json.JsonConvert.SerializeObject(groupJson);
+                                string escapedJson = json.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\r", "").Replace("\n", "");
+                                await _webView.CoreWebView2.ExecuteScriptAsync($"if(window.onGroupUpdated) window.onGroupUpdated({groupIndex}, '{escapedJson}');");
+
+                                System.Diagnostics.Debug.WriteLine($"[PULL_DATA] Successfully refreshed group {groupIndex}");
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[PULL_DATA] Error: {ex.Message}");
+                            }
+                        }));
+                    }
+                }
+                catch { }
+                return;
+            }
+
             // Handle SET_OPACITY message for transparency when highlight mode is ON
             if (message.StartsWith("SET_OPACITY|"))
             {
