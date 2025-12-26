@@ -607,28 +607,108 @@ namespace DTS_Engine.UI.Forms
                             {
                                 try
                                 {
-                                    foreach (var handle in group.EntityHandles)
+                                    // CRITICAL FIX: Write OptUser with ACTUAL span data from group.Spans
+                                    for (int i = 0; i < group.EntityHandles.Count; i++)
                                     {
+                                        var handle = group.EntityHandles[i];
                                         var objId = Core.Utils.AcadUtils.GetObjectIdFromHandle(handle);
                                         if (objId.IsNull) continue;
 
                                         var obj = tr.GetObject(objId, OpenMode.ForWrite);
                                         if (obj == null) continue;
 
-                                        // Build OptUser from locked design
-                                        string topL0 = design?.BackboneCount_Top > 0
-                                            ? $"{design.BackboneCount_Top}D{design.BackboneDiameter}" : "";
-                                        string botL0 = design?.BackboneCount_Bot > 0
-                                            ? $"{design.BackboneCount_Bot}D{design.BackboneDiameter}" : "";
+                                        // Find corresponding span for this entity
+                                        SpanData matchingSpan = null;
+                                        if (group.Spans != null && i < group.Spans.Count)
+                                        {
+                                            matchingSpan = group.Spans[i];
+                                        }
+
+                                        // Build OptUser from span's TopRebar/BotRebar data
+                                        string topL0 = "";
+                                        string topL1 = "";
+                                        string botL0 = "";
+                                        string botL1 = "";
+                                        string stirrup = "";
+                                        string web = "";
+
+                                        if (matchingSpan != null)
+                                        {
+                                            // Layer 0 (Backbone) - get from position 0 (Left), should be consistent across span
+                                            var topRebar = matchingSpan.TopRebar;
+                                            var botRebar = matchingSpan.BotRebar;
+
+                                            if (topRebar != null && topRebar.Length > 0 && topRebar[0] != null && topRebar[0].Length > 0)
+                                            {
+                                                topL0 = topRebar[0][0] ?? "";
+                                            }
+                                            else if (matchingSpan.TopBackbone != null)
+                                            {
+                                                topL0 = matchingSpan.TopBackbone.DisplayString ?? "";
+                                            }
+
+                                            // Layer 1 (Addon) - combine from all positions
+                                            if (topRebar != null && topRebar.Length > 1 && topRebar[1] != null)
+                                            {
+                                                var addonParts = new List<string>();
+                                                for (int pos = 0; pos < topRebar[1].Length; pos++)
+                                                {
+                                                    if (!string.IsNullOrEmpty(topRebar[1][pos]) && !addonParts.Contains(topRebar[1][pos]))
+                                                        addonParts.Add(topRebar[1][pos]);
+                                                }
+                                                topL1 = string.Join(",", addonParts);
+                                            }
+
+                                            if (botRebar != null && botRebar.Length > 0 && botRebar[0] != null && botRebar[0].Length > 0)
+                                            {
+                                                botL0 = botRebar[0][0] ?? "";
+                                            }
+                                            else if (matchingSpan.BotBackbone != null)
+                                            {
+                                                botL0 = matchingSpan.BotBackbone.DisplayString ?? "";
+                                            }
+
+                                            // Layer 1 (Addon) for bot
+                                            if (botRebar != null && botRebar.Length > 1 && botRebar[1] != null)
+                                            {
+                                                var addonParts = new List<string>();
+                                                for (int pos = 0; pos < botRebar[1].Length; pos++)
+                                                {
+                                                    if (!string.IsNullOrEmpty(botRebar[1][pos]) && !addonParts.Contains(botRebar[1][pos]))
+                                                        addonParts.Add(botRebar[1][pos]);
+                                                }
+                                                botL1 = string.Join(",", addonParts);
+                                            }
+
+                                            // Stirrup (use middle position as governing)
+                                            if (matchingSpan.Stirrup != null && matchingSpan.Stirrup.Length > 1)
+                                            {
+                                                stirrup = matchingSpan.Stirrup[1] ?? matchingSpan.Stirrup[0] ?? "";
+                                            }
+
+                                            // WebBar (use middle position)
+                                            if (matchingSpan.WebBar != null && matchingSpan.WebBar.Length > 1)
+                                            {
+                                                web = matchingSpan.WebBar[1] ?? matchingSpan.WebBar[0] ?? "";
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // Fallback to backbone from design
+                                            topL0 = design?.BackboneCount_Top > 0
+                                                ? $"{design.BackboneCount_Top}D{design.BackboneDiameter}" : "";
+                                            botL0 = design?.BackboneCount_Bot > 0
+                                                ? $"{design.BackboneCount_Bot}D{design.BackboneDiameter}" : "";
+                                        }
 
                                         var optUser = new XDataUtils.RebarOptionData
                                         {
                                             TopL0 = topL0,
-                                            TopL1 = "",
+                                            TopL1 = topL1,
                                             BotL0 = botL0,
-                                            BotL1 = "",
-                                            Stirrup = "",
-                                            Web = ""
+                                            BotL1 = botL1,
+                                            Stirrup = stirrup,
+                                            Web = web
                                         };
 
                                         XDataUtils.WriteOptUser(obj, optUser, tr);
@@ -1068,20 +1148,47 @@ namespace DTS_Engine.UI.Forms
                                 // Read IsLocked
                                 span.IsManualModified = XDataUtils.ReadIsLocked(obj);
 
-                                // Map TopArea/BotArea to As_Top/As_Bot (6-position array)  
+                                // Map TopArea/BotArea to As_Top/As_Bot (6-position array)
+                                // CRITICAL FIX: Apply torsion distribution to match TopologyBuilder.PopulateSpanRequirements
                                 // XData [0,1,2] = [L1, Mid, L2] → [0, 2, 4] positions
-                                if (rebarData.TopArea != null && rebarData.TopArea.Length >= 3)
+                                var settings = DtsSettings.Instance;
+                                double torsTop = settings?.Beam?.TorsionDist_TopBar ?? 0.25;
+                                double torsBot = settings?.Beam?.TorsionDist_BotBar ?? 0.25;
+                                double torsSide = settings?.Beam?.TorsionDist_SideBar ?? 0.50;
+
+                                var topArea = rebarData.TopArea ?? new double[3];
+                                var botArea = rebarData.BotArea ?? new double[3];
+                                var torsionArea = rebarData.TorsionArea ?? new double[3];
+                                var shearArea = rebarData.ShearArea ?? new double[3];
+                                var ttArea = rebarData.TTArea ?? new double[3];
+
+                                // Initialize arrays if null
+                                if (span.As_Top == null || span.As_Top.Length < 6) span.As_Top = new double[6];
+                                if (span.As_Bot == null || span.As_Bot.Length < 6) span.As_Bot = new double[6];
+                                if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
+                                if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+
+                                // Apply same formula as TopologyBuilder.PopulateSpanRequirements
+                                for (int zi = 0; zi < 3; zi++)
                                 {
-                                    span.As_Top[0] = rebarData.TopArea[0]; // L1
-                                    span.As_Top[2] = rebarData.TopArea[1]; // Mid
-                                    span.As_Top[4] = rebarData.TopArea[2]; // L2
+                                    double asTopReq = (zi < topArea.Length ? topArea[zi] : 0) + 
+                                                      (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsTop;
+                                    double asBotReq = (zi < botArea.Length ? botArea[zi] : 0) + 
+                                                      (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsBot;
+
+                                    int p0 = zi == 0 ? 0 : (zi == 1 ? 2 : 4);
+                                    int p1 = p0 + 1;
+
+                                    span.As_Top[p0] = asTopReq;
+                                    span.As_Top[p1] = asTopReq;
+                                    span.As_Bot[p0] = asBotReq;
+                                    span.As_Bot[p1] = asBotReq;
+
+                                    span.StirrupReq[zi] = (zi < shearArea.Length ? shearArea[zi] : 0) + 
+                                                          (zi < ttArea.Length ? ttArea[zi] : 0);
+                                    span.WebReq[zi] = (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsSide;
                                 }
-                                if (rebarData.BotArea != null && rebarData.BotArea.Length >= 3)
-                                {
-                                    span.As_Bot[0] = rebarData.BotArea[0]; // L1
-                                    span.As_Bot[2] = rebarData.BotArea[1]; // Mid
-                                    span.As_Bot[4] = rebarData.BotArea[2]; // L2
-                                }
+
                             }
                             catch { /* Skip errors for individual spans */ }
                         }

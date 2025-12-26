@@ -407,6 +407,9 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         /// <summary>
         /// "Gõ cửa" từng section: Lookup → Synthesize → Fallback.
+        /// CRITICAL FIX: 
+        /// 1. Validate final area meets SafetyFactor requirement
+        /// 2. Enforce stirrup alignment rule between layers
         /// </summary>
         private SectionResolution ResolveSectionSide(
             List<SectionArrangement> existingOptions,
@@ -417,59 +420,82 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             BeamGroup group)
         {
             double backboneArea = backboneCount * Math.PI * backboneDiameter * backboneDiameter / 400.0;
+            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            double targetArea = requiredArea; // Already includes SafetyFactor from caller
 
-            // 1. Kiểm tra nếu Backbone đã đủ (Strict check - No tolerance)
-            if (backboneArea >= requiredArea)
+            // 1. Kiểm tra nếu Backbone đã đủ (Strict check with safety factor)
+            if (backboneArea >= targetArea)
             {
                 return new SectionResolution { Success = true, IsNativeMatch = true };
             }
 
-            double deficit = requiredArea - backboneArea;
+            double deficit = targetArea - backboneArea;
 
             // 2. LOOKUP: Dò trong thư viện đã tính (ValidArrangements)
             var nativeMatch = existingOptions
                 .Where(opt =>
                     opt.PrimaryDiameter == backboneDiameter &&
                     opt.TotalCount > backboneCount &&
-                    opt.TotalArea >= requiredArea) // Strict check
+                    opt.TotalArea >= targetArea) // Strict check with safety factor
                 .OrderBy(opt => opt.TotalArea) // Lấy phương án nhỏ nhất đủ yêu cầu
                 .FirstOrDefault();
 
             if (nativeMatch != null)
             {
                 // Tìm thấy phương án native!
-                int addonCount = nativeMatch.TotalCount - backboneCount;
-                double spanLength = GetSpanLength(section, group);
-                double weight = WeightCalculator.CalculateWeight(backboneDiameter, spanLength * 0.4, addonCount);
-
-                return new SectionResolution
+                int rawAddonCount = nativeMatch.TotalCount - backboneCount;
+                
+                // CRITICAL FIX: Enforce stirrup alignment rule between layers
+                int addonCount = EnforceStirrupLayerAlignment(backboneCount, rawAddonCount);
+                
+                if (addonCount >= 2)
                 {
-                    Success = true,
-                    IsNativeMatch = true,
-                    AddonWeight = weight,
-                    AddonInfo = new RebarInfo { Count = addonCount, Diameter = backboneDiameter }
-                };
+                    // Validate final area meets requirement
+                    double addonArea = addonCount * Math.PI * backboneDiameter * backboneDiameter / 400.0;
+                    double totalProvidedArea = backboneArea + addonArea;
+                    
+                    if (totalProvidedArea >= targetArea)
+                    {
+                        double spanLength = GetSpanLength(section, group);
+                        double weight = WeightCalculator.CalculateWeight(backboneDiameter, spanLength * 0.4, addonCount);
+
+                        return new SectionResolution
+                        {
+                            Success = true,
+                            IsNativeMatch = true,
+                            AddonWeight = weight,
+                            AddonInfo = new RebarInfo { Count = addonCount, Diameter = backboneDiameter }
+                        };
+                    }
+                }
             }
 
-            // 3. SYNTHESIZE: Tự tính addon
-            var synthesized = SynthesizeAddon(deficit, backboneDiameter, section);
+            // 3. SYNTHESIZE: Tự tính addon với safety factor và stirrup alignment
+            var synthesized = SynthesizeAddon(deficit, backboneDiameter, section, targetArea - backboneArea, backboneCount);
 
             if (synthesized.HasValue)
             {
-                double spanLength = GetSpanLength(section, group);
-                double weight = WeightCalculator.CalculateWeight(synthesized.Value.Diameter, spanLength * 0.4, synthesized.Value.Count);
-
-                return new SectionResolution
+                // Validate final area meets requirement with safety factor
+                double addonArea = synthesized.Value.Count * Math.PI * synthesized.Value.Diameter * synthesized.Value.Diameter / 400.0;
+                double totalProvidedArea = backboneArea + addonArea;
+                
+                if (totalProvidedArea >= targetArea)
                 {
-                    Success = true,
-                    IsNativeMatch = false,
-                    AddonWeight = weight,
-                    AddonInfo = new RebarInfo { Count = synthesized.Value.Count, Diameter = synthesized.Value.Diameter }
-                };
+                    double spanLength = GetSpanLength(section, group);
+                    double weight = WeightCalculator.CalculateWeight(synthesized.Value.Diameter, spanLength * 0.4, synthesized.Value.Count);
+
+                    return new SectionResolution
+                    {
+                        Success = true,
+                        IsNativeMatch = false,
+                        AddonWeight = weight,
+                        AddonInfo = new RebarInfo { Count = synthesized.Value.Count, Diameter = synthesized.Value.Diameter }
+                    };
+                }
             }
 
             // 4. FALLBACK: Tính addon bắt buộc dù không optimal
-            var fallback = ForceSynthesizeAddon(deficit, section);
+            var fallback = ForceSynthesizeAddon(deficit, section, targetArea - backboneArea, backboneCount);
             if (fallback.HasValue)
             {
                 double spanLength = GetSpanLength(section, group);
@@ -488,9 +514,48 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         }
 
         /// <summary>
-        /// Sinh addon tuân thủ rule: min 2 thanh, check spacing.
+        /// Enforce stirrup layer alignment rule.
+        /// 
+        /// RULE: Lớp addon (Layer 2) phải tương thích với Backbone (Layer 1) để bó đai được.
+        /// 
+        /// - Layer 1 CHẴN (4, 6, 8...) → Layer 2 phải CHẴN (2, 4, 6...)
+        ///   Vì đai lồng cần đối xứng, nếu L1=4 mà L2=3 thì không cân đai được
+        ///   
+        /// - Layer 1 LẺ (3, 5, 7...) → Layer 2 có thể CHẴN hoặc LẺ (2, 3, 4, 5...)
+        ///   Vì số lẻ L1 cho phép đai bao được cả chẵn lẫn lẻ ở L2
+        ///   
+        /// Examples:
+        /// - L1=4, raw=3 → bump to 4 (chẵn phải chẵn)
+        /// - L1=4, raw=5 → bump to 6 (chẵn phải chẵn)
+        /// - L1=5, raw=3 → keep 3 (lẻ cho phép cả hai)
+        /// - L1=6, raw=3 → bump to 4 (chẵn phải chẵn)
         /// </summary>
-        private (int Count, int Diameter)? SynthesizeAddon(double deficit, int backboneDiameter, DesignSection section)
+        private int EnforceStirrupLayerAlignment(int layer1Count, int layer2Count)
+        {
+            // Minimum 2 bars for any addon layer
+            if (layer2Count < 2) layer2Count = 2;
+            
+            bool layer1IsEven = layer1Count % 2 == 0;
+            bool layer2IsEven = layer2Count % 2 == 0;
+            
+            if (layer1IsEven)
+            {
+                // Layer 1 CHẴN → Layer 2 phải CHẴN
+                if (!layer2IsEven)
+                {
+                    // Bump lên số chẵn tiếp theo
+                    layer2Count = layer2Count + 1;
+                }
+            }
+            // else: Layer 1 LẺ → Layer 2 có thể chẵn hoặc lẻ, không cần điều chỉnh
+            
+            return layer2Count;
+        }
+
+        /// <summary>
+        /// Sinh addon tuân thủ rule: min 2 thanh, stirrup alignment, check spacing.
+        /// </summary>
+        private (int Count, int Diameter)? SynthesizeAddon(double deficit, int backboneDiameter, DesignSection section, double minRequiredAddonArea, int backboneCount)
         {
             // Ưu tiên đường kính bằng hoặc nhỏ hơn backbone
             var candidates = _allowedDiameters
@@ -503,8 +568,18 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 double oneBarArea = Math.PI * d * d / 400.0;
                 int count = (int)Math.Ceiling(deficit / oneBarArea);
 
-                // Rule: Addon tối thiểu 2 thanh
-                if (count < 2) count = 2;
+                // Enforce minimum 2 bars and stirrup layer alignment
+                count = EnforceStirrupLayerAlignment(backboneCount, count);
+
+                // Verify addon area is sufficient
+                double addonArea = count * oneBarArea;
+                if (addonArea < minRequiredAddonArea)
+                {
+                    // Need more bars, calculate and re-enforce alignment
+                    int neededCount = (int)Math.Ceiling(minRequiredAddonArea / oneBarArea);
+                    count = EnforceStirrupLayerAlignment(backboneCount, neededCount);
+                    addonArea = count * oneBarArea;
+                }
 
                 // Check spacing
                 if (CheckAddonSpacing(section, d, count))
@@ -519,7 +594,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         /// <summary>
         /// Force sinh addon khi không có option tốt.
         /// </summary>
-        private (int Count, int Diameter)? ForceSynthesizeAddon(double deficit, DesignSection section)
+        private (int Count, int Diameter)? ForceSynthesizeAddon(double deficit, DesignSection section, double minRequiredAddonArea, int backboneCount)
         {
             // Dùng đường kính nhỏ nhất có thể để nhét nhiều thanh
             var candidates = _allowedDiameters.OrderBy(d => d).ToList();
@@ -528,7 +603,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             {
                 double oneBarArea = Math.PI * d * d / 400.0;
                 int count = (int)Math.Ceiling(deficit / oneBarArea);
-                if (count < 2) count = 2;
+                
+                // Enforce stirrup layer alignment
+                count = EnforceStirrupLayerAlignment(backboneCount, count);
+
+                // Verify addon area is sufficient  
+                double addonArea = count * oneBarArea;
+                if (addonArea < minRequiredAddonArea)
+                {
+                    int neededCount = (int)Math.Ceiling(minRequiredAddonArea / oneBarArea);
+                    count = EnforceStirrupLayerAlignment(backboneCount, neededCount);
+                }
 
                 // Relax spacing check
                 double usableWidth = section.UsableWidth;
@@ -540,15 +625,6 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             }
 
             return null;
-        }
-
-        private bool CheckAddonSpacing(DesignSection section, int diameter, int count)
-        {
-            double usableWidth = section.UsableWidth;
-            double minSpacing = Math.Max(diameter, _settings.Beam?.MinClearSpacing ?? 30);
-
-            double requiredWidth = (count * diameter) + ((count - 1) * minSpacing);
-            return usableWidth >= requiredWidth;
         }
 
         #endregion
@@ -798,6 +874,25 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
         #region Helpers
 
+        /// <summary>
+        /// Check if addon can fit with proper spacing.
+        /// </summary>
+        private bool CheckAddonSpacing(DesignSection section, int diameter, int count)
+        {
+            double usableWidth = section.UsableWidth;
+            double minSpacing = _settings.Beam?.MinClearSpacing ?? 30;
+            double maxSpacing = _settings.Beam?.MaxClearSpacing ?? 200;
+
+            // Calculate spacing if bars are on one layer
+            if (count <= 1) return true;
+
+            double totalBarWidth = count * diameter;
+            double availableForGaps = usableWidth - totalBarWidth;
+            double spacing = availableForGaps / (count - 1);
+
+            return spacing >= minSpacing && spacing <= maxSpacing;
+        }
+
         private double CalculateTotalLength(BeamGroup group, List<DesignSection> sections)
         {
             if (group?.TotalLength > 0) return group.TotalLength * 1000;
@@ -820,11 +915,32 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             return 5000;
         }
 
+        /// <summary>
+        /// Get zone name from section.
+        /// ZoneIndex: 0=Left (Start support), 1=Mid (Midspan), 2=Right (End support)
+        /// CRITICAL FIX: ZoneIndex 2 is "Right", NOT "Mid"
+        /// </summary>
         private string GetZoneName(DesignSection section)
         {
-            if (section.ZoneIndex == 0) return "Left";
-            if (section.ZoneIndex == 2 || section.Type == SectionType.MidSpan) return "Mid";
-            return "Right";
+            // Primary: Use ZoneIndex directly
+            switch (section.ZoneIndex)
+            {
+                case 0:
+                    return "Left";
+                case 1:
+                    return "Mid";
+                case 2:
+                    return "Right";
+                default:
+                    // Fallback: Use SectionType
+                    if (section.Type == SectionType.MidSpan)
+                        return "Mid";
+                    if (section.IsSupportLeft)
+                        return "Left";
+                    if (section.IsSupportRight)
+                        return "Right";
+                    return "Mid"; // Default fallback
+            }
         }
 
         private void LogSolutionRanking(List<ContinuousBeamSolution> solutions)

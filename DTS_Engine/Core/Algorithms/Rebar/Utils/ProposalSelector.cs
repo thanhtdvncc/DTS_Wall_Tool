@@ -23,7 +23,11 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
             IEnumerable<ContinuousBeamSolution> allProposals,
             int maxCount = 5)
         {
-            var validProposals = allProposals?.Where(p => p != null && p.IsValid).ToList()
+            // [AUDIT FIX] Add hard constraint: minimum 2 bars required
+            // Old logic allowed 1 bar (e.g., "1d22") which violates structural rules
+            var validProposals = allProposals?.Where(p => p != null && p.IsValid)
+                                              .Where(p => HasMinTwoBars(p))
+                                              .ToList()
                                  ?? new List<ContinuousBeamSolution>();
             var results = new List<ContinuousBeamSolution>();
 
@@ -161,6 +165,32 @@ namespace DTS_Engine.Core.Algorithms.Rebar.Utils
                 score += 5;
 
             return score;
+        }
+
+        /// <summary>
+        /// [AUDIT FIX] Check minimum 2 bars constraint.
+        /// Reinforcement bars MUST come in pairs for structural integrity.
+        /// </summary>
+        private static bool HasMinTwoBars(ContinuousBeamSolution sol)
+        {
+            if (sol == null) return false;
+
+            // 1. Check Backbone (Main bars) - must have at least 2 bars each
+            if (sol.BackboneCount_Top < 2) return false;
+            if (sol.BackboneCount_Bot < 2) return false;
+
+            // 2. Check Addons (Reinforcement bars) - each position must have >= 2 bars
+            if (sol.Reinforcements != null)
+            {
+                foreach (var kvp in sol.Reinforcements)
+                {
+                    // kvp.Value is RebarSpec with Count property
+                    if (kvp.Value != null && kvp.Value.Count < 2)
+                        return false;
+                }
+            }
+
+            return true;
         }
     }
 }
