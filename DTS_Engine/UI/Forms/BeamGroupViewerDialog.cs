@@ -209,7 +209,16 @@ namespace DTS_Engine.UI.Forms
                                             // FIX: Ưu tiên span.xSectionLabel (đã được nạp từ XData)
                                             SectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
                                             xSectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
-                                            xSectionLabelLocked = span.xSectionLabelLocked
+                                            xSectionLabelLocked = span.xSectionLabelLocked,
+                                            // === REBAR DATA FOR PLAN VIEW ===
+                                            TopRS = ExtractRebarStrings(span, "Top"),      // [L, M, R]
+                                            BotRS = ExtractRebarStrings(span, "Bot"),      // [L, M, R]
+                                            StirRS = span.Stirrup ?? new string[3],        // [L, M, R]
+                                            WebRS = span.WebBar ?? new string[3],          // [L, M, R]
+                                            As_Top = span.As_Top ?? new double[6],
+                                            As_Bot = span.As_Bot ?? new double[6],
+                                            StirrupReq = span.StirrupReq ?? new double[3],
+                                            WebReq = span.WebReq ?? new double[3]
                                         });
                                     }
                                 }
@@ -626,7 +635,7 @@ namespace DTS_Engine.UI.Forms
             }
 
             // === REFRESH_PLAN_DATA: Cập nhật nhãn dầm cho mặt bằng ===
-            if (message.StartsWith("REFRESH_PLAN_DATA|"))
+            if (message.StartsWith("REFRESH_PLAN_DATA|") || message.StartsWith("REFRESH_DATA|"))
             {
                 _ = HandleRefreshPlanDataAsync();
                 return;
@@ -1302,6 +1311,38 @@ namespace DTS_Engine.UI.Forms
                                     }
                                 }
 
+                                // ═══════════════════════════════════════════════════════════════
+                                // STIRRUP & WEB BAR LOAD (Mode 2 & 4 fix: Opt -> Raw XData fallback)
+                                // ═══════════════════════════════════════════════════════════════
+                                if (span.Stirrup == null || span.Stirrup.Length < 3)
+                                    span.Stirrup = new string[3];
+                                if (span.WebBar == null || span.WebBar.Length < 3)
+                                    span.WebBar = new string[3];
+
+                                bool hasStirrupInOpt = defaultOpt != null && !string.IsNullOrEmpty(defaultOpt.GetStirrupAt(0));
+                                if (hasStirrupInOpt)
+                                {
+                                    for (int zi = 0; zi < 3; zi++)
+                                    {
+                                        span.Stirrup[zi] = defaultOpt.GetStirrupAt(zi);
+                                        span.WebBar[zi] = defaultOpt.GetWebAt(zi);
+                                    }
+                                }
+                                else if (rebarData != null)
+                                {
+                                    // Fallback to raw XData string representation if no solution/option provides it
+                                    if (rebarData.StirrupString != null)
+                                    {
+                                        for (int zi = 0; zi < 3; zi++)
+                                            span.Stirrup[zi] = (zi < rebarData.StirrupString.Length) ? rebarData.StirrupString[zi] : "-";
+                                    }
+                                    if (rebarData.WebBarString != null)
+                                    {
+                                        for (int zi = 0; zi < 3; zi++)
+                                            span.WebBar[zi] = (zi < rebarData.WebBarString.Length) ? rebarData.WebBarString[zi] : "-";
+                                    }
+                                }
+
                                 // Read IsLocked
                                 span.IsManualModified = XDataUtils.ReadIsLocked(obj);
 
@@ -1643,6 +1684,41 @@ namespace DTS_Engine.UI.Forms
                 span.BotRebarInternal[0, 0] = botLeft;
                 span.BotRebarInternal[0, 2] = botMid;
                 span.BotRebarInternal[0, 4] = botRight;
+
+                // ═══════════════════════════════════════════════════════════════
+                // STIRRUP & WEB BAR SYNC (For Modes 2 & 4)
+                // ═══════════════════════════════════════════════════════════════
+                if (spanResult != null)
+                {
+                    if (span.Stirrup == null || span.Stirrup.Length < 3) span.Stirrup = new string[3];
+                    if (span.WebBar == null || span.WebBar.Length < 3) span.WebBar = new string[3];
+
+                    // Extract Left, Mid, Right from Stirrups dictionary
+                    if (spanResult.Stirrups != null)
+                    {
+                        if (spanResult.Stirrups.TryGetValue("Left", out var sL)) span.Stirrup[0] = sL;
+                        if (spanResult.Stirrups.TryGetValue("Mid", out var sM)) span.Stirrup[1] = sM;
+                        if (spanResult.Stirrups.TryGetValue("Right", out var sR)) span.Stirrup[2] = sR;
+                    }
+
+                    // Extract Left, Mid, Right from WebBars dictionary
+                    if (spanResult.WebBars != null)
+                    {
+                        if (spanResult.WebBars.TryGetValue("Left", out var wL)) span.WebBar[0] = wL;
+                        if (spanResult.WebBars.TryGetValue("Mid", out var wM)) span.WebBar[1] = wM;
+                        if (spanResult.WebBars.TryGetValue("Right", out var wR)) span.WebBar[2] = wR;
+                    }
+
+                    // Sync Requirements (for comparison modes)
+                    if (spanResult.ReqStirrup != null && spanResult.ReqStirrup.Length >= 3)
+                    {
+                        for (int i = 0; i < 3; i++) span.StirrupReq[i] = spanResult.ReqStirrup[i];
+                    }
+                    if (spanResult.ReqWeb != null && spanResult.ReqWeb.Length >= 3)
+                    {
+                        for (int i = 0; i < 3; i++) span.WebReq[i] = spanResult.ReqWeb[i];
+                    }
+                }
             }
         }
 
@@ -2005,6 +2081,54 @@ namespace DTS_Engine.UI.Forms
         }
 
         #endregion // V5.0 Group Operations
+
+        #region Rebar Data Helpers
+
+        /// <summary>
+        /// Trích xuất chuỗi thép cho 3 vùng (L, M, R) từ SpanData.
+        /// Đọc từ TopRebarInternal/BotRebarInternal và ghép tất cả layers.
+        /// </summary>
+        private static string[] ExtractRebarStrings(SpanData span, string side)
+        {
+            if (span == null) return new string[3] { "", "", "" };
+
+            var result = new string[3];
+            var rebarMatrix = side == "Top" ? span.TopRebarInternal : span.BotRebarInternal;
+            if (rebarMatrix == null) return new string[3] { "", "", "" };
+
+            // Zones: 0=Left(pos 0,1), 1=Mid(pos 2,3), 2=Right(pos 4,5)
+            for (int zone = 0; zone < 3; zone++)
+            {
+                int posBase = zone * 2; // Left=0, Mid=2, Right=4
+                var parts = new List<string>();
+
+                for (int layer = 0; layer < rebarMatrix.GetLength(0); layer++)
+                {
+                    // Use the first position of the zone (0, 2, 4)
+                    string val = rebarMatrix[layer, posBase];
+                    if (!string.IsNullOrWhiteSpace(val) && val != "-" && val != "0")
+                    {
+                        if (layer == 0)
+                        {
+                            // Layer 0 is backbone, just add directly
+                            parts.Add(val);
+                        }
+                        else
+                        {
+                            // Layer 1+ are addons, prepend with "+"
+                            parts.Add("+" + val);
+                        }
+                    }
+                }
+
+                result[zone] = string.Join(" ", parts);
+            }
+
+            return result;
+        }
+
+        #endregion // Rebar Data Helpers
+
 
         private void Dialog_FormClosing(object sender, FormClosingEventArgs e)
         {
@@ -2398,10 +2522,19 @@ namespace DTS_Engine.UI.Forms
                                     LevelZ = group.LevelZ,
                                     GroupName = displayName,
                                     GroupId = groupId,
-                                    // CRITICAL FIX: Ưu tiên span.xSectionLabel (được cập nhật bởi LoadRebarDataFromXDataForGroups)
+                                    // CRITICAL FIX: Ưu tiên span.xSectionLabel
                                     SectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
                                     xSectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
-                                    xSectionLabelLocked = span.xSectionLabelLocked
+                                    xSectionLabelLocked = span.xSectionLabelLocked,
+                                    // === REBAR DATA FOR PLAN VIEW ===
+                                    TopRS = ExtractRebarStrings(span, "Top"),
+                                    BotRS = ExtractRebarStrings(span, "Bot"),
+                                    StirRS = span.Stirrup ?? new string[3],
+                                    WebRS = span.WebBar ?? new string[3],
+                                    As_Top = span.As_Top ?? new double[6],
+                                    As_Bot = span.As_Bot ?? new double[6],
+                                    StirrupReq = span.StirrupReq ?? new double[3],
+                                    WebReq = span.WebReq ?? new double[3]
                                 });
                             }
                         }

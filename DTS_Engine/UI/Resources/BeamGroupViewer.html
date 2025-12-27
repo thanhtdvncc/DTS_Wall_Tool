@@ -187,20 +187,45 @@
             <div id="zoomIndicator"
                 class="absolute bottom-2 right-2 bg-slate-800/70 text-white text-[10px] px-2 py-0.5 rounded z-20">100%
             </div>
-            <!-- Real-time Label Scale Slider (next to Zoom Fit) -->
+            <!-- Plan View Toolbar (top right) -->
             <div
-                class="absolute top-2 right-12 z-20 flex items-center px-2 py-1 gap-2 group transition-all opacity-40 hover:opacity-100">
-                <span class="text-[10px] text-slate-600 font-bold select-none">Aa</span>
-                <input type="range" min="0.5" max="3" step="0.1" value="1"
+                class="absolute top-2 right-2 z-20 flex items-center gap-1 bg-white/90 rounded-md shadow-sm px-1 py-0.5 border border-slate-200">
+                <!-- Toggle Rebar Mode button (SVG Eye Icon) -->
+                <button id="btnToggleRebar" onclick="toggleRebarMode()" title="Rebar Display Mode"
+                    class="w-7 h-7 hover:bg-slate-100 text-slate-500 hover:text-blue-600 text-sm rounded flex items-center justify-center transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path
+                            d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                        <circle cx="12" cy="12" r="3" />
+                    </svg>
+                </button>
+                <div class="w-px h-4 bg-slate-300"></div>
+                <!-- Lock Text Zoom Toggle -->
+                <label class="flex items-center gap-0.5 cursor-pointer" title="Lock text to zoom (scale with canvas)">
+                    <div class="relative">
+                        <input type="checkbox" id="lockTextZoom" class="sr-only peer"
+                            onchange="toggleLockTextZoom(this.checked)">
+                        <div class="w-6 h-3 bg-slate-300 rounded-full peer-checked:bg-blue-500 transition-colors"></div>
+                        <div
+                            class="absolute top-0.5 left-0.5 w-2 h-2 bg-white rounded-full peer-checked:translate-x-3 transition-transform shadow-sm">
+                        </div>
+                    </div>
+                    <i class="fa-solid fa-lock text-[8px] text-slate-400"></i>
+                </label>
+                <!-- Label Scale Slider -->
+                <span class="text-[9px] text-slate-500 font-bold select-none">Aa</span>
+                <input type="range" id="labelScaleSlider" min="0.5" max="3" step="0.1" value="1"
                     oninput="planLabelScale = parseFloat(this.value); render();"
-                    class="w-20 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-400 hover:accent-blue-500 transition-colors">
-                <span class="text-xs text-slate-600 font-bold select-none">Aa</span>
+                    class="w-14 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-400 hover:accent-blue-500">
+                <span class="text-[11px] text-slate-500 font-bold select-none">Aa</span>
+                <div class="w-px h-4 bg-slate-300"></div>
+                <!-- Zoom Fit button -->
+                <button onclick="resetPlanCanvasView()" title="Zoom to fit"
+                    class="w-7 h-7 hover:bg-slate-100 text-slate-500 hover:text-blue-600 text-sm rounded flex items-center justify-center transition-colors">
+                    <i class="fa-solid fa-arrows-to-dot"></i>
+                </button>
             </div>
-            <!-- Zoom Fit button (top right corner) -->
-            <button onclick="resetPlanCanvasView()" title="Zoom to fit"
-                class="absolute top-2 right-2 w-8 h-8 bg-slate-100/10 hover:bg-slate-200 text-slate-500 hover:text-blue-600 text-sm rounded flex items-center justify-center z-20 transition-colors border border-transparent hover:border-slate-300">
-                <i class="fa-solid fa-arrows-to-dot"></i>
-            </button>
             <!-- Help overlay -->
             <div id="helpOverlay"
                 class="absolute bottom-2 left-2 text-[9px] text-slate-400 bg-white/70 px-1 rounded z-20">
@@ -208,7 +233,7 @@
 
             <!-- ELEMENTS PANEL (Top-Left) - Like index.html -->
             <div id="elements-panel"
-                class="absolute left-2 top-12 w-44 bg-white/95 rounded border border-slate-200 shadow-sm z-20 max-h-[60vh] overflow-hidden flex flex-col transition-all duration-300">
+                class="absolute left-2 top-12 w-44 bg-white/95 rounded border border-slate-200 shadow-sm z-20 max-h-[60vh] overflow-hidden flex flex-col transition-all duration-300 opacity-40 hover:opacity-100">
                 <div
                     class="bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700 border-b flex justify-between items-center">
                     <span><i class="fa-solid fa-tag mr-1"></i>Sections</span>
@@ -858,6 +883,10 @@
             lh: 600
         };
         let planLabelScale = 1.0; // Tỷ lệ kích thước nhãn mặt bằng
+        // REBAR MODE: 0=Off, 1=Longitudinal (Top+Bot), 2=Stirrup/Web, 3=AsCompare, 4=Detailed
+        let rebarMode = 0;
+        // LOCK TEXT ZOOM: Khi bật, text sẽ zoom theo canvas (thay vì cố định size)
+        let lockTextZoom = false;
 
         // ============ INLINE LABEL EDIT FUNCTIONS (Restored from u7.7) ============
 
@@ -895,6 +924,8 @@
                 autoLockOnEdit();
                 showToast(`✓ Cốt chủ ${type} đã cập nhật toàn bộ nhịp: ${value}`);
                 maybeRenderTable();
+                // N-way Sync: Update allBeams for all spans
+                currentGroup.Spans.forEach(span => syncSpanDataToAllBeams(span));
                 refreshUI();
                 return;
             }
@@ -922,6 +953,8 @@
                 }
                 maybeRenderTable();
             }
+            // N-way Sync: Update allBeams for this span
+            syncSpanDataToAllBeams(currentGroup.Spans[spanIndex]);
             refreshUI();
         }
 
@@ -931,6 +964,8 @@
             span.Stirrup[pos] = value;
             autoLockOnEdit();
             maybeRenderTable();
+            // N-way Sync
+            syncSpanDataToAllBeams(span);
             refreshUI();
         }
 
@@ -940,8 +975,153 @@
             span.WebBar[pos] = value;
             autoLockOnEdit();
             maybeRenderTable();
+            // N-way Sync
+            syncSpanDataToAllBeams(span);
             refreshUI();
         }
+
+        // ============ REBAR MODE & SYNC FUNCTIONS ============
+
+        /**
+         * Chuyển đổi chế độ hiển thị thép trên Plan View.
+         * Modes: 0=Off, 1=Longitudinal, 2=Stirrup/Web, 3=AsCompare, 4=Detailed
+         */
+        function toggleRebarMode() {
+            rebarMode = (rebarMode + 1) % 5;
+            // Mode mapping giống DTS_REBAR_SHOW:
+            // 0: Off, 1: Thép dọc, 2: Đai/Sườn, 3: So sánh As, 4: Chi tiết đai/sườn
+            const modeNames = ['Off', 'Thép dọc', 'Đai/Sườn', 'So sánh As', 'Chi tiết'];
+            showToast(`👁 Rebar Mode: ${modeNames[rebarMode]}`, 'info');
+            updateRebarModeButton();
+            render();
+        }
+
+        function updateRebarModeButton() {
+            const btn = document.getElementById('btnToggleRebar');
+            if (!btn) return;
+            // Update title based on mode (giống DTS_REBAR_SHOW)
+            btn.title = ['Rebar Off', 'Thép dọc', 'Đai + Sườn', 'So sánh As', 'Chi tiết đai/sườn'][rebarMode];
+            // Change SVG color based on mode (active = blue, off = gray)
+            const svg = btn.querySelector('svg');
+            if (svg) {
+                svg.style.stroke = rebarMode > 0 ? '#2563eb' : 'currentColor';
+            }
+        }
+
+        /**
+         * Toggle lock text zoom - khi bật, text sẽ zoom theo canvas.
+         * Logic: Duy trì visual size hiện tại khi toggle.
+         * - ON: Visual size = planLabelScale -> Sau đó thành planLabelScale * canvasZoom
+         *       => planLabelScale mới = planLabelScale cũ / canvasZoom
+         * - OFF: Visual size = planLabelScale * canvasZoom -> Sau đó thành planLabelScale
+         *        => planLabelScale mới = planLabelScale cũ * canvasZoom
+         */
+        function toggleLockTextZoom(checked) {
+            const slider = document.getElementById('labelScaleSlider');
+
+            if (checked && !lockTextZoom) {
+                // Turning ON: Điều chỉnh planLabelScale để visual size không đổi
+                // Visual trước = planLabelScale
+                // Visual sau = planLabelScale * canvasZoom
+                // => planLabelScale mới = planLabelScale / canvasZoom
+                planLabelScale = planLabelScale / canvasZoom;
+            } else if (!checked && lockTextZoom) {
+                // Turning OFF: Điều chỉnh planLabelScale để visual size không đổi
+                // Visual trước = planLabelScale * canvasZoom
+                // Visual sau = planLabelScale
+                // => planLabelScale mới = planLabelScale * canvasZoom
+                planLabelScale = planLabelScale * canvasZoom;
+            }
+
+            // Clamp to slider range
+            planLabelScale = Math.max(0.5, Math.min(3, planLabelScale));
+
+            // Update slider to reflect new value
+            if (slider) {
+                slider.value = planLabelScale;
+            }
+
+            lockTextZoom = checked;
+            showToast(lockTextZoom ? '🔒 Text zoom theo canvas' : '🔓 Text cố định size', 'info');
+            render();
+        }
+
+        /**
+         * N-way Sync: Đồng bộ dữ liệu từ currentGroup.Spans -> data.allBeams.
+         * Gọi hàm này sau mọi thay đổi thép trong Detail View.
+         * @param {object} span - SpanData đã được chỉnh sửa
+         */
+        function syncSpanDataToAllBeams(span) {
+            if (!span || !data.allBeams) return;
+            const handle = span.Segments?.[0]?.EntityHandle;
+            if (!handle) return;
+
+            const beam = data.allBeams.find(b => b.Handle === handle);
+            if (!beam) return;
+
+            // Sync rebar strings (từ span sang beam trong allBeams)
+            beam.TopRS = extractRebarStringsJS(span, 'Top');
+            beam.BotRS = extractRebarStringsJS(span, 'Bot');
+            beam.StirRS = span.Stirrup || [];
+            beam.WebRS = span.WebBar || [];
+            beam.As_Top = span.As_Top || [];
+            beam.As_Bot = span.As_Bot || [];
+            beam.StirrupReq = span.StirrupReq || [];
+            beam.WebReq = span.WebReq || [];
+
+            // Trigger Plan View re-render
+            renderPlanView();
+        }
+
+        /**
+         * Helper: Trích xuất chuỗi thép cho 3 vùng (L, M, R) từ span (phía JS).
+         */
+        function extractRebarStringsJS(span, side) {
+            const result = ['', '', ''];
+            if (!span) return result;
+
+            const rebar = (side === 'Top') ? span.TopRebar : span.BotRebar;
+            if (!rebar || !Array.isArray(rebar)) return result;
+
+            // Zones: 0=Left(pos 0), 1=Mid(pos 2), 2=Right(pos 4)
+            for (let zone = 0; zone < 3; zone++) {
+                const posBase = zone * 2;
+                const parts = [];
+
+                for (let layer = 0; layer < rebar.length; layer++) {
+                    const arr = rebar[layer] || [];
+                    const val = arr[posBase];
+                    if (val && val !== '-' && val !== '0') {
+                        if (layer === 0) {
+                            parts.push(val);
+                        } else {
+                            parts.push('+' + val);
+                        }
+                    }
+                }
+                result[zone] = parts.join(' ');
+            }
+            return result;
+        }
+
+        /**
+         * Helper: Tính diện tích thép từ chuỗi (VD: "3D20" -> 942 mm²).
+         */
+        function parseRebarArea(str) {
+            if (!str || typeof str !== 'string') return 0;
+            const parts = str.split(/\s*\+\s*/); // Split by "+"
+            let total = 0;
+            for (const part of parts) {
+                const m = part.match(/(\d+)\s*[DdΦφ#]?\s*(\d+)/);
+                if (m) {
+                    const count = parseInt(m[1], 10) || 0;
+                    const dia = parseInt(m[2], 10) || 0;
+                    total += count * Math.PI * dia * dia / 4;
+                }
+            }
+            return total;
+        }
+
 
         function startInlineLabelEdit(label) {
             if (!label) return;
@@ -2224,10 +2404,14 @@
             ctx.fillText(`Plan View - Z=${z} | ${beamsOnStory.length} beams | ${gridsOnStory.length} grids | ${columnsOnStory.length} columns`, 10, 20);
 
             // ================== LABEL RENDERING (3 modes) ==================
+            // Calculate effective label scale (base scale * canvasZoom if lockTextZoom is on)
+            const effectiveLabelScale = lockTextZoom ? planLabelScale * canvasZoom : planLabelScale;
+
             // Label Mode 1: GROUP NAME (1 nhãn duy nhất per group, đặt trên dầm giữa)
             if (labelMode === 1 && data.groups) {
                 ctx.save();
-                ctx.font = 'bold 10px sans-serif';
+                const fontSize = (lockTextZoom ? 10 * effectiveLabelScale : 10 * planLabelScale);
+                ctx.font = `bold ${fontSize}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
 
@@ -2310,15 +2494,15 @@
                         label = '-';
                     }
 
-                    // 1. Vẽ Nhãn (Text)
-                    const scaledFontSize = 10 * planLabelScale;
+                    // 1. Vẽ Nhãn (Text) - Sử dụng effectiveLabelScale
+                    const scaledFontSize = 10 * effectiveLabelScale;
                     ctx.font = `bold ${scaledFontSize}px sans-serif`;
                     ctx.textAlign = 'center'; // FIX Alignment
                     const textWidth = ctx.measureText(label).width;
-                    const labelW = Math.max(textWidth + 8, 24 * planLabelScale);
-                    const labelH = 14 * planLabelScale;
+                    const labelW = Math.max(textWidth + 8, 24 * effectiveLabelScale);
+                    const labelH = 14 * effectiveLabelScale;
                     const lx = -labelW / 2;
-                    const ly = -12 * planLabelScale; // Offset lên trên trục dầm
+                    const ly = -12 * effectiveLabelScale; // Offset lên trên trục dầm
 
                     // Lưu bounds (Screen-relative coordinates for hit testing)
                     planSectionLabelBounds.push({
@@ -2330,23 +2514,23 @@
                         width: labelW,
                         height: labelH,
                         offsetX: 0,
-                        offsetY: -6 * planLabelScale
+                        offsetY: -6 * effectiveLabelScale
                     });
 
                     // Stroke viền trắng cho dễ đọc
                     ctx.strokeStyle = 'rgba(255,255,255,0.8)';
                     ctx.lineWidth = 3;
-                    ctx.strokeText(label, 0, -6 * planLabelScale);
+                    ctx.strokeText(label, 0, -6 * effectiveLabelScale);
                     ctx.fillStyle = '#0f172a';
-                    ctx.fillText(label, 0, -6 * planLabelScale);
+                    ctx.fillText(label, 0, -6 * effectiveLabelScale);
 
                     // 2. Vẽ biểu tượng khóa (🔒/🔓)
                     const isLocked = !!b.xSectionLabelLocked;
                     const lockIcon = isLocked ? '🔒' : '🔓';
-                    const lockX = labelW / 2 + 8 * planLabelScale;
-                    const lockY = -6 * planLabelScale;
+                    const lockX = labelW / 2 + 8 * effectiveLabelScale;
+                    const lockY = -6 * effectiveLabelScale;
 
-                    ctx.font = `${10 * planLabelScale}px sans-serif`;
+                    ctx.font = `${10 * effectiveLabelScale}px sans-serif`;
                     ctx.fillText(lockIcon, lockX, lockY);
 
                     planLockBounds.push({
@@ -2355,8 +2539,8 @@
                         cx: screenX,
                         cy: screenY,
                         angle: angle,
-                        width: 18 * planLabelScale, // Tăng diện tích bấm
-                        height: 18 * planLabelScale,
+                        width: 18 * effectiveLabelScale, // Tăng diện tích bấm
+                        height: 18 * effectiveLabelScale,
                         offsetX: lockX,
                         offsetY: lockY
                     });
@@ -2368,6 +2552,143 @@
                 ctx.restore();
             }
             // labelMode === 0: Không vẽ label
+
+            // ================== REBAR LABEL RENDERING (rebarMode > 0) ==================
+            // Mode mapping giống DTS_REBAR_SHOW:
+            // 1: Thép dọc (Longitudinal)
+            // 2: Đai + Sườn (Stirrup + Web)
+            // 3: So sánh As (As_prv/As_req + thép dọc)
+            // 4: Chi tiết đai/sườn
+            if (rebarMode > 0) {
+                ctx.save();
+                const rebarFontSize = 8 * effectiveLabelScale;
+                ctx.font = `${rebarFontSize}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                beamsOnStory.forEach(b => {
+                    // Calculate beam direction and angle
+                    const dx = b.EndX - b.StartX;
+                    const dy = b.EndY - b.StartY;
+                    let angle = Math.atan2(dy, dx);
+                    if (angle > Math.PI / 2) angle -= Math.PI;
+                    else if (angle < -Math.PI / 2) angle += Math.PI;
+
+                    const len = Math.sqrt(dx * dx + dy * dy);
+                    if (len < 100) return; // Skip very short beams
+
+                    // 3 zones along the beam
+                    const zones = [
+                        { t: 0.15, label: 'L' },  // Left (start)
+                        { t: 0.50, label: 'M' },  // Mid
+                        { t: 0.85, label: 'R' }   // Right (end)
+                    ];
+
+                    zones.forEach((zone, zIdx) => {
+                        const px = b.StartX + dx * zone.t;
+                        const py = b.StartY + dy * zone.t;
+                        const sx = tx(px);
+                        const sy = ty(py);
+
+                        ctx.save();
+                        ctx.translate(sx, sy);
+                        ctx.rotate(-angle);
+
+                        // Get rebar strings for this zone
+                        const topRS = b.TopRS ? (b.TopRS[zIdx] || '') : '';
+                        const botRS = b.BotRS ? (b.BotRS[zIdx] || '') : '';
+                        const stirRS = b.StirRS ? (b.StirRS[zIdx] || '') : '';
+                        const webRS = b.WebRS ? (b.WebRS[zIdx] || '') : '';
+
+                        // Get required areas
+                        const posIdx = zIdx * 2; // 0, 2, 4
+                        const asTopReq = b.As_Top ? (b.As_Top[posIdx] || 0) : 0;
+                        const asBotReq = b.As_Bot ? (b.As_Bot[posIdx] || 0) : 0;
+                        const asTopProv = parseRebarArea(topRS);
+                        const asBotProv = parseRebarArea(botRS);
+
+                        // Check errors
+                        const topErr = asTopProv < asTopReq * 0.99;
+                        const botErr = asBotProv < asBotReq * 0.99;
+
+                        // Draw text offsets
+                        const yOffsetTop = -12 * effectiveLabelScale;
+                        const yOffsetBot = 10 * effectiveLabelScale;
+                        // Gần hơn 50%: thay vì -24 thành -18 (gần top hơn)
+                        const yOffsetTop2 = -18 * effectiveLabelScale; // Comparison line above (sát hơn)
+                        const yOffsetBot2 = 16 * effectiveLabelScale;  // Comparison line below (sát hơn)
+
+                        // Helper function to draw rebar text
+                        function drawRebarText(text, yOffset, isError, fontScale = 1.0, isComparison = false) {
+                            if (!text || text === '') return;
+                            const fontSize = rebarFontSize * fontScale;
+                            // BỎ in nghiêng theo yêu cầu
+                            ctx.font = `${fontSize}px sans-serif`;
+                            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                            ctx.lineWidth = 2;
+                            ctx.strokeText(text, 0, yOffset);
+
+                            // Màu sắc: isComparison -> xanh/đỏ nhẹ, else -> xám đậm/đỏ đậm
+                            if (isComparison) {
+                                // Xanh nhẹ (#3b82f6) hoặc Đỏ nhẹ (#f87171)
+                                ctx.fillStyle = isError ? '#f87171' : '#3b82f6';
+                            } else {
+                                // Xám đậm (#1f2937) hoặc Đỏ đậm (#dc2626)
+                                ctx.fillStyle = isError ? '#dc2626' : '#1f2937';
+                            }
+
+                            ctx.fillText(text, 0, yOffset);
+                            // Reset font
+                            ctx.font = `${rebarFontSize}px sans-serif`;
+                        }
+
+                        // ========== MODE 1: LONGITUDINAL (Thép dọc) ==========
+                        if (rebarMode === 1) {
+                            drawRebarText(topRS, yOffsetTop, topErr);
+                            drawRebarText(botRS, yOffsetBot, botErr);
+                        }
+
+                        // ========== MODE 2: STIRRUP + WEB (Đai + Sườn) ==========
+                        else if (rebarMode === 2) {
+                            // Hiển thị dù empty (dấu -)
+                            const stirDisplay = stirRS || '-';
+                            const webDisplay = webRS || '-';
+                            drawRebarText(stirDisplay, yOffsetTop, false);
+                            drawRebarText(webDisplay, yOffsetBot, false);
+                        }
+
+                        // ========== MODE 3: AS COMPARE (So sánh As) ==========
+                        else if (rebarMode === 3) {
+                            // Hiển thị 1 chữ số thập phân, size 0.8, màu nhẹ
+                            const topAsText = `(${asTopProv.toFixed(1)}/${asTopReq.toFixed(1)})`;
+                            const botAsText = `(${asBotProv.toFixed(1)}/${asBotReq.toFixed(1)})`;
+
+                            // As comparison: không nghiêng, màu nhẹ (xanh/đỏ), font 0.8
+                            drawRebarText(topAsText, yOffsetTop2, topErr, 0.8, true);
+                            drawRebarText(topRS, yOffsetTop, topErr);
+                            drawRebarText(botRS, yOffsetBot, botErr);
+                            drawRebarText(botAsText, yOffsetBot2, botErr, 0.8, true);
+                        }
+
+                        // ========== MODE 4: DETAILED (Chi tiết đai/sườn) ==========
+                        else if (rebarMode === 4) {
+                            // Hiển thị cả stirrup và web với chi tiết
+                            const stirrupReq = b.StirrupReq ? (b.StirrupReq[zIdx] || 0) : 0;
+                            const webReq = b.WebReq ? (b.WebReq[zIdx] || 0) : 0;
+
+                            const stirDisplay = stirRS || '-';
+                            // Nếu webRS rỗng thì hiện [Al=...], nếu có thì gộp
+                            const webDisplay = (webRS && webRS !== '-') ? `${webRS} [${webReq.toFixed(0)}]` : `[Al=${webReq.toFixed(0)}]`;
+
+                            drawRebarText(stirDisplay, yOffsetTop, false);
+                            drawRebarText(webDisplay, yOffsetBot, false);
+                        }
+
+                        ctx.restore();
+                    });
+                });
+                ctx.restore();
+            }
         }
 
         // Mode-aware render wrapper - ALWAYS use renderPlanView for main canvas
@@ -3617,6 +3938,17 @@
                         span.BotRebar[layerIdx] = [layerData[0] || '', '', layerData[1] || '', '', layerData[2] || '', ''];
                     }
                 }
+
+                // [FIX] Apply Stirrup & WebBar from Option (Modes 2 & 4 fix)
+                if (opt.Stirrup && opt.Stirrup.length >= 3) {
+                    span.Stirrup = [...opt.Stirrup];
+                }
+                if (opt.WebBar && opt.WebBar.length >= 3) {
+                    span.WebBar = [...opt.WebBar];
+                }
+
+                // Sync to Plan View
+                syncSpanDataToAllBeams(span);
             });
         }
 
@@ -4988,6 +5320,11 @@
 
             // REFRESH_DATA triggers a full sweep in C# and returns updated data package
             sendRefreshAllData();
+
+            // [FIX] Also pull heavy rebar data for the current group details
+            if (typeof currentGroupIndex !== 'undefined') {
+                window.chrome.webview?.postMessage('PULL_DATA|' + currentGroupIndex);
+            }
         }
 
         // ============ TOAST & CANVAS CONFIRM ============

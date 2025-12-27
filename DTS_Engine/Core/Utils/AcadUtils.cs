@@ -166,6 +166,49 @@ namespace DTS_Engine.Core.Utils
         }
 
         /// <summary>
+        /// Phiên bản mở rộng: Trả về cả status để phân biệt Enter (None) và Esc (Cancel).
+        /// wasEscPressed = true nếu user nhấn Esc (Cancel), false nếu Enter hoặc OK.
+        /// </summary>
+        public static List<ObjectId> SelectObjectsOnScreenEx(string types, out bool wasEscPressed)
+        {
+            wasEscPressed = false;
+            List<ObjectId> resultIds = new List<ObjectId>();
+
+            var filterValues = new List<TypedValue>();
+
+            if (!string.IsNullOrWhiteSpace(types))
+            {
+                filterValues.Add(new TypedValue((int)DxfCode.Start, types));
+            }
+
+            // Exclude DTS temporary layers
+            filterValues.Add(new TypedValue((int)DxfCode.Operator, "<NOT"));
+            filterValues.Add(new TypedValue((int)DxfCode.LayerName, "dts_linkmap,dts_highlight,dts_temp,dts_frame_label,dts_labels"));
+            filterValues.Add(new TypedValue((int)DxfCode.Operator, "NOT>"));
+
+            SelectionFilter filter = new SelectionFilter(filterValues.ToArray());
+
+            PromptSelectionOptions opts = new PromptSelectionOptions();
+            opts.MessageForAdding = "\nChọn đối tượng (Enter để bỏ qua): ";
+            opts.AllowDuplicates = false;
+
+            PromptSelectionResult selRes = Ed.GetSelection(opts, filter);
+
+            if (selRes.Status == PromptStatus.OK)
+            {
+                resultIds.AddRange(selRes.Value.GetObjectIds());
+            }
+            else if (selRes.Status == PromptStatus.Cancel)
+            {
+                // User nhấn Esc
+                wasEscPressed = true;
+            }
+            // PromptStatus.None = Enter (empty selection, not cancel)
+
+            return resultIds;
+        }
+
+        /// <summary>
         /// Chọn tất cả đối tượng theo loại trong bản vẽ
         /// </summary>
         public static List<ObjectId> SelectAll(string types)

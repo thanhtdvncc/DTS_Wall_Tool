@@ -1281,7 +1281,16 @@ namespace DTS_Engine.Commands
 
             try
             {
-                var selectedIds = AcadUtils.SelectObjectsOnScreen("LINE,LWPOLYLINE,POLYLINE", true);
+                // FIX: Phân biệt Enter (quét tất cả) và Esc (hủy command)
+                bool wasEscPressed;
+                var selectedIds = AcadUtils.SelectObjectsOnScreenEx("LINE,LWPOLYLINE,POLYLINE", out wasEscPressed);
+
+                // Nếu user nhấn Esc, thoát command
+                if (wasEscPressed)
+                {
+                    WriteMessage("\nĐã hủy.");
+                    return;
+                }
 
                 var topologyBuilder = new TopologyBuilder();
                 var resultGroups = new List<BeamGroup>();
