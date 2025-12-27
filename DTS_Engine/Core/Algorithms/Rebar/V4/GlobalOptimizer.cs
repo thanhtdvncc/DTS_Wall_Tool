@@ -563,6 +563,13 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         /// </summary>
         private int EnforceStirrupLayerAlignment(int layer1Count, int layer2Count)
         {
+            // [x] Addon Rules
+            // - [x] Enforce Minimum 2 Bars per Addon Layer (GlobalOptimizer.cs) [/]
+            // - [x] Update `CalculateAddonLayerBreakdown` logic [/]
+            // - [x] Sync `SynthesizeAddon` and `ForceSynthesizeAddon` [/]
+            // [ ] Stirrup Rules
+            // - [ ] Implement Constructive Stirrup Rule (RebarCalculator.cs) [/]
+            // - [ ] Modify `CalculateStirrupDetails` to handle zero requirement [/]
             // Minimum 2 bars for any addon layer
             if (layer2Count < 2) layer2Count = 2;
 
@@ -630,7 +637,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer, maxLayersLimit);
                     if (layers == null) continue; // Exceeds MaxLayers
 
-                    return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
+                    return new RebarInfo { Count = layers.Sum(), Diameter = d, LayerCounts = layers };
                 }
             }
 
@@ -665,7 +672,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 var layers = CalculateAddonLayerBreakdown(count, backboneCount, maxPerLayer, maxLayersLimit);
                 if (layers != null)
                 {
-                    return new RebarInfo { Count = count, Diameter = d, LayerCounts = layers };
+                    return new RebarInfo { Count = layers.Sum(), Diameter = d, LayerCounts = layers };
                 }
             }
 
@@ -676,26 +683,45 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         {
             var result = new List<int>();
             int remAddon = totalAddon;
-            int remBackbone = backboneCount;
 
-            // Layer 1
+            // Layer 1 (Merge with Backbone)
             int cap1 = maxPerLayer;
-            int bars1 = Math.Min(remBackbone + remAddon, cap1);
-            int add1 = Math.Max(0, bars1 - remBackbone);
-            if (add1 > 0) result.Add(add1);
-            remAddon -= add1;
+            int add1 = Math.Min(remAddon, Math.Max(0, cap1 - backboneCount));
 
-            // Layers 2+
+            // RULE: Min 2 bars per addon layer
+            if (add1 == 1)
+            {
+                // Can we bump to 2 in Layer 1?
+                if (backboneCount + 2 <= maxPerLayer)
+                {
+                    add1 = 2;
+                }
+                else
+                {
+                    // No room for 2 addon bars in L1, push all to L2+
+                    add1 = 0;
+                }
+            }
+
+            if (add1 > 0)
+            {
+                result.Add(add1);
+                remAddon -= add1;
+            }
+
+            // Layers 2+ (Pure Addon Layers)
             while (remAddon > 0)
             {
-                // CRITICAL: Check MaxLayers limit
                 if (result.Count >= maxLayersLimit)
                 {
-                    // Vượt quá số lớp cho phép -> Hủy phương án này
                     return null;
                 }
 
                 int add = Math.Min(remAddon, maxPerLayer);
+
+                // RULE: Min 2 bars per layer
+                if (add == 1) add = 2;
+
                 result.Add(add);
                 remAddon -= add;
             }
@@ -810,7 +836,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 string keyBot = $"{spanId}_Bot_{zoneName}";
                 if (evalResult.Addons.TryGetValue(keyBot, out var addonBot)) result.BotAddons[zoneName] = addonBot;
 
-                if (section.ReqStirrup > 0.01)
+                // Always calculate stirrups (even for zero requirement) to ensure constructive stirrup placement
                 {
                     var spanData = (group.Spans != null && section.SpanIndex < group.Spans.Count) ? group.Spans[section.SpanIndex] : null;
                     List<int> customSpacings = null;

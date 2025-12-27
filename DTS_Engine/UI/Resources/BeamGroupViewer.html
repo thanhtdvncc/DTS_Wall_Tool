@@ -306,7 +306,7 @@
 
         <!-- Detail Panel Toggle (when collapsed) -->
         <button id="detailPanelFloatBtn" onclick="toggleDetailPanel()" title="Mở Detail Panel"
-            class="hidden absolute bottom-0 left-4 w-16 h-6 bg-slate-700 hover:bg-slate-600 text-white rounded-t z-30 flex items-center justify-center">
+            class="absolute bottom-0 left-4 w-16 h-6 bg-slate-700 hover:bg-slate-600 text-white rounded-t z-30 flex items-center justify-center">
             <i class="fa-solid fa-chevron-up text-xs"></i>
         </button>
 
@@ -475,7 +475,7 @@
         <!-- BOTTOM DETAIL PANEL - Collapsible overlay (resizable) -->
         <div id="detailPanel"
             class="absolute left-0 bottom-0 bg-white border-t border-slate-300 shadow-lg z-20 transition-transform duration-300 flex flex-col"
-            style="right: 0px; height: 40vh;">
+            style="right: 0px; height: 40vh; transform: translateY(100%);">
 
             <!-- Resize Handle (drag to resize panel height) - larger hitbox for easy clicking -->
             <div id="detailPanelResizer"
@@ -610,6 +610,11 @@
                 updateStaleGeometryBanner();
             }
 
+            initRebarModeButton();
+
+            // SSOT: Build the index map immediately upon load
+            rebuildSpanMap();
+
             // 4. Render All Views
             renderPlanView();
             renderDetailCanvas();
@@ -713,8 +718,11 @@
                         SpanId: s.SpanId,
                         TopRebar: s.TopRebar,
                         BotRebar: s.BotRebar,
-                        Stirrup: s.Stirrup,
-                        WebBar: s.WebBar
+                        StirRS: s.StirRS,
+                        WebRS: s.WebRS,
+                        As_Stir: s.As_Stir,
+                        As_Web: s.As_Web,
+                        SideBar: s.SideBar
                     })),
                     selectedBackbone: currentGroup.SelectedBackboneIndex
                 });
@@ -750,8 +758,11 @@
                             if (span) {
                                 span.TopRebar = sr.TopRebar;
                                 span.BotRebar = sr.BotRebar;
-                                span.Stirrup = sr.Stirrup;
-                                span.WebBar = sr.WebBar;
+                                span.StirRS = sr.StirRS;
+                                span.WebRS = sr.WebRS;
+                                span.As_Stir = sr.As_Stir;
+                                span.As_Web = sr.As_Web;
+                                span.SideBar = sr.SideBar;
                             }
                         });
                     }
@@ -861,11 +872,43 @@
         let tablePanelCollapsed = false;
         // NEW: Sidebar collapse states
         let rightSidebarCollapsed = true;
-        let detailPanelCollapsed = false;
+        let detailPanelCollapsed = true;
         // Detail canvas zoom/pan (separate from main canvas)
         let detailZoom = 1.0;
         let detailPanX = 0;
         let detailPanY = 0;
+        let isDetailPanning = false;
+
+        // V6.1: ELEMENT-CENTRIC INDEX MAP (Handle -> Span Data)
+        // SSOT Strategy: Mapping view elements directly to their data source
+        let spanMap = {};
+
+        function rebuildSpanMap() {
+            spanMap = {};
+            if (!data.groups) return;
+
+            console.log("Building Element-Centric Data Map...");
+            data.groups.forEach((g, gIdx) => {
+                if (!g.Spans) return;
+                g.Spans.forEach((s, sIdx) => {
+                    // 1. Index by Segment Handle (Primary)
+                    if (s.Segments) {
+                        s.Segments.forEach(seg => {
+                            if (seg.EntityHandle) {
+                                spanMap[seg.EntityHandle] = s;
+                            }
+                        });
+                    }
+                    // 2. Index by EntityHandles list (Fallback)
+                    // This handles cases where Segments might be regenerated but Handles persist
+                    if (g.EntityHandles && sIdx < g.EntityHandles.length) {
+                        const h = g.EntityHandles[sIdx];
+                        if (h) spanMap[h] = s;
+                    }
+                });
+            });
+            console.log(`Mapped ${Object.keys(spanMap).length} elements to data sources.`);
+        }
         // FIX 5: Toggle group name labels on plan view
         // Label Mode: 0=Off, 1=Group Name, 2=Section Name (bxh)
         let labelMode = 1; // Mặc định hiển thị Group Name
@@ -898,14 +941,16 @@
             return (v === undefined || v === null) ? '' : String(v);
         }
 
-        function getStirrupText(span, pos) {
-            if (!span || !span.Stirrup) return '';
-            return span.Stirrup[pos] || '';
+        function getStirrupText(spanIndex, pos) {
+            const span = currentGroup.Spans[spanIndex];
+            if (!span || !span.StirRS) return '';
+            return span.StirRS[pos] || '';
         }
 
-        function getWebBarText(span, pos) {
-            if (!span || !span.WebBar) return '';
-            return span.WebBar[pos] || '';
+        function getWebBarText(spanIndex, pos) {
+            const span = currentGroup.Spans[spanIndex];
+            if (!span || !span.WebRS) return '';
+            return span.WebRS[pos] || '';
         }
 
         function updateLayerRebar(spanIndex, type, layer, pos, value) {
@@ -960,8 +1005,8 @@
 
         function updateStirrup(spanIndex, pos, value) {
             const span = currentGroup.Spans[spanIndex];
-            if (!span.Stirrup) span.Stirrup = [];
-            span.Stirrup[pos] = value;
+            if (!span.StirRS) span.StirRS = [];
+            span.StirRS[pos] = value;
             autoLockOnEdit();
             maybeRenderTable();
             // N-way Sync
@@ -971,8 +1016,8 @@
 
         function updateWebBar(spanIndex, pos, value) {
             const span = currentGroup.Spans[spanIndex];
-            if (!span.WebBar) span.WebBar = [];
-            span.WebBar[pos] = value;
+            if (!span.WebRS) span.WebRS = [];
+            span.WebRS[pos] = value;
             autoLockOnEdit();
             maybeRenderTable();
             // N-way Sync
@@ -1060,14 +1105,23 @@
             if (!beam) return;
 
             // Sync rebar strings (từ span sang beam trong allBeams)
-            beam.TopRS = extractRebarStringsJS(span, 'Top');
-            beam.BotRS = extractRebarStringsJS(span, 'Bot');
-            beam.StirRS = span.Stirrup || [];
-            beam.WebRS = span.WebBar || [];
+            // SSOT: Use standardized preview logic matching C#
+            const topRS = previewRebarStringFromMatrix(span, 'Top');
+            const botRS = previewRebarStringFromMatrix(span, 'Bot');
+
+            // Update source object properties as well
+            span.TopRS = topRS;
+            span.BotRS = botRS;
+
+            beam.TopRS = topRS;
+            beam.BotRS = botRS;
+
+            beam.StirRS = span.StirRS || [];
+            beam.WebRS = span.WebRS || [];
             beam.As_Top = span.As_Top || [];
             beam.As_Bot = span.As_Bot || [];
-            beam.StirrupReq = span.StirrupReq || [];
-            beam.WebReq = span.WebReq || [];
+            beam.As_Stir = span.As_Stir || [];
+            beam.As_Web = span.As_Web || [];
 
             // Trigger Plan View re-render
             renderPlanView();
@@ -1076,7 +1130,11 @@
         /**
          * Helper: Trích xuất chuỗi thép cho 3 vùng (L, M, R) từ span (phía JS).
          */
-        function extractRebarStringsJS(span, side) {
+        /**
+         * Helper: Generate preview strings from matrix (Client-side)
+         * Matches C# XDataUtils.FlattenRebarLayers logic strictly.
+         */
+        function previewRebarStringFromMatrix(span, side) {
             const result = ['', '', ''];
             if (!span) return result;
 
@@ -1092,14 +1150,15 @@
                     const arr = rebar[layer] || [];
                     const val = arr[posBase];
                     if (val && val !== '-' && val !== '0') {
-                        if (layer === 0) {
-                            parts.push(val);
-                        } else {
+                        // Standard: L0+L1+L2 (No spaces)
+                        if (parts.length > 0) {
                             parts.push('+' + val);
+                        } else {
+                            parts.push(val);
                         }
                     }
                 }
-                result[zone] = parts.join(' ');
+                result[zone] = parts.join(''); // Join without space
             }
             return result;
         }
@@ -1158,7 +1217,7 @@
                 if (label.type === 'Stirrup' || label.type === 'WebBar') {
                     const idx = Number.isFinite(label.pos) ? label.pos : 0;
                     const isStirrup = label.type === 'Stirrup';
-                    const currentVal = (isStirrup ? (span?.Stirrup?.[idx] || '') : (span?.WebBar?.[idx] || '')).toString();
+                    const currentVal = (isStirrup ? (span?.StirRS?.[idx] || '') : (span?.WebRS?.[idx] || '')).toString();
                     const title = `${isStirrup ? 'ĐAI' : 'SƯỜN'} - Nhịp ${span.SpanId || (label.spanIndex + 1)}`;
                     const nextVal = prompt(title, currentVal);
                     if (nextVal === null) return;
@@ -1221,9 +1280,9 @@
             } else {
                 const span = currentGroup.Spans[label.spanIndex];
                 if (label.type === 'Stirrup') {
-                    labelEditorEl.value = (span?.Stirrup?.[label.pos || 0] || '').toString();
+                    labelEditorEl.value = (span?.StirRS?.[label.pos || 0] || '').toString();
                 } else if (label.type === 'WebBar') {
-                    labelEditorEl.value = (span?.WebBar?.[label.pos || 0] || '').toString();
+                    labelEditorEl.value = (span?.WebRS?.[label.pos || 0] || '').toString();
                 } else if (label.type === 'SectionLabel') {
                     labelEditorEl.value = (span?.xSectionLabel || '').toString();
                 } else {
@@ -1953,8 +2012,8 @@
             for (let li = 0; li < labelXs.length; li++) {
                 const cx = labelXs[li];
                 const pos = labelPos[li];
-                drawEditableLabelDetail(ctx, getStirrupText(span, pos), cx, stirY, '#475569', { spanIndex: i, type: 'Stirrup', pos });
-                drawEditableLabelDetail(ctx, getWebBarText(span, pos), cx, webY, '#64748b', { spanIndex: i, type: 'WebBar', pos });
+                drawEditableLabelDetail(ctx, getStirrupText(i, pos), cx, stirY, '#475569', { spanIndex: i, type: 'Stirrup', pos });
+                drawEditableLabelDetail(ctx, getWebBarText(i, pos), cx, webY, '#64748b', { spanIndex: i, type: 'WebBar', pos });
             }
         }
 
@@ -2594,11 +2653,21 @@
                         ctx.translate(sx, sy);
                         ctx.rotate(-angle);
 
-                        // Get rebar strings for this zone
-                        const topRS = b.TopRS ? (b.TopRS[zIdx] || '') : '';
-                        const botRS = b.BotRS ? (b.BotRS[zIdx] || '') : '';
-                        const stirRS = b.StirRS ? (b.StirRS[zIdx] || '') : '';
-                        const webRS = b.WebRS ? (b.WebRS[zIdx] || '') : '';
+                        // V6.1 FIX: DIRECT LOOKUP STRATEGY (Element-Centric)
+                        // Look up the REAL data object using the Element's unique Handle
+                        const realSpan = spanMap[b.Handle];
+
+                        // Default to empty if not found (or fallback to 'b' properties if valid)
+                        const sData = realSpan || b;
+
+                        // Get rebar strings directly from the Source Object
+                        // Note: Plan View 'b' might have stale copies, 'realSpan' has fresh data
+                        const topRS = sData.TopRS ? (sData.TopRS[zIdx] || '') : '';
+                        const botRS = sData.BotRS ? (sData.BotRS[zIdx] || '') : '';
+
+                        // Stirrup/Web: Use standardized properties (SSOT strategy)
+                        const stirRS = sData.StirRS ? (sData.StirRS[zIdx] || '') : '';
+                        const webRS = sData.WebRS ? (sData.WebRS[zIdx] || '') : '';
 
                         // Get required areas
                         const posIdx = zIdx * 2; // 0, 2, 4
@@ -2672,12 +2741,14 @@
 
                         // ========== MODE 4: DETAILED (Chi tiết đai/sườn) ==========
                         else if (rebarMode === 4) {
-                            // Hiển thị cả stirrup và web với chi tiết
-                            const stirrupReq = b.StirrupReq ? (b.StirrupReq[zIdx] || 0) : 0;
-                            const webReq = b.WebReq ? (b.WebReq[zIdx] || 0) : 0;
+                            // Read Req from MASTER object (Standardized fields)
+                            const stirReqArr = sData.As_Stir || [];
+                            const webReqArr = sData.As_Web || [];
+
+                            const stirrupReq = stirReqArr[zIdx] || 0;
+                            const webReq = webReqArr[zIdx] || 0;
 
                             const stirDisplay = stirRS || '-';
-                            // Nếu webRS rỗng thì hiện [Al=...], nếu có thì gộp
                             const webDisplay = (webRS && webRS !== '-') ? `${webRS} [${webReq.toFixed(0)}]` : `[Al=${webReq.toFixed(0)}]`;
 
                             drawRebarText(stirDisplay, yOffsetTop, false);
@@ -2711,7 +2782,7 @@
                 const x = Math.min(boxSelectStart.x, boxSelectEnd.x);
                 const y = Math.min(boxSelectStart.y, boxSelectEnd.y);
                 const w = Math.abs(boxSelectEnd.x - boxSelectStart.x);
-                const h = Math.abs(boxSelectEnd.y - boxSelectStart.y);
+                const h = Math.abs(boxSelectEnd.y - boxSelectEnd.y);
 
                 ctx.save();
                 if (isLeftToRight) {
@@ -2930,7 +3001,10 @@
                                         const dest = currentGroup.Spans[spanIndex];
                                         dest.TopRebar = JSON.parse(JSON.stringify(copySourceSpan.TopRebar || []));
                                         dest.BotRebar = JSON.parse(JSON.stringify(copySourceSpan.BotRebar || []));
-                                        dest.Stirrup = [...(copySourceSpan.Stirrup || [])];
+                                        dest.StirRS = [...(copySourceSpan.StirRS || [])];
+                                        dest.WebRS = [...(copySourceSpan.WebRS || [])];
+                                        dest.As_Stir = [...(copySourceSpan.As_Stir || [])];
+                                        dest.As_Web = [...(copySourceSpan.As_Web || [])];
                                         copyFormatMode = false;
                                         copySourceSpan = null;
                                         document.body.style.cursor = 'default';
@@ -3762,8 +3836,8 @@
 
         // Get Stirrup/WebBar requirement text with As_prov/As_req format
         function getShearRatioText(span, provKind, reqKind, idx) {
-            // provKind: 'Stirrup' or 'WebBar'
-            // reqKind: 'StirrupReq' or 'WebReq'
+            // provKind: 'StirRS' or 'WebRS'
+            // reqKind: 'As_Stir' or 'As_Web'
             const provArr = span?.[provKind];
             const reqArr = span?.[reqKind];
 
@@ -3789,7 +3863,7 @@
             if (label.type === 'Stirrup') {
                 const span = currentGroup.Spans[label.spanIndex];
                 const idx = Number.isFinite(label.pos) ? label.pos : 0;
-                const currentVal = (span?.Stirrup?.[idx] || '').toString();
+                const currentVal = (span?.StirRS?.[idx] || '').toString();
                 const title = `ĐAI - Nhịp ${span.SpanId || (label.spanIndex + 1)} (${idx === 0 ? 'L1' : (idx === 1 ? 'Giữa' : 'L2')})`;
                 const nextVal = prompt(title, currentVal);
                 if (nextVal === null) return;
@@ -3801,7 +3875,7 @@
             if (label.type === 'WebBar') {
                 const span = currentGroup.Spans[label.spanIndex];
                 const idx = Number.isFinite(label.pos) ? label.pos : 0;
-                const currentVal = (span?.WebBar?.[idx] || '').toString();
+                const currentVal = (span?.WebRS?.[idx] || '').toString();
                 const title = `SƯỜN - Nhịp ${span.SpanId || (label.spanIndex + 1)} (${idx === 0 ? 'L1' : (idx === 1 ? 'Giữa' : 'L2')})`;
                 const nextVal = prompt(title, currentVal);
                 if (nextVal === null) return;
@@ -3940,11 +4014,11 @@
                 }
 
                 // [FIX] Apply Stirrup & WebBar from Option (Modes 2 & 4 fix)
-                if (opt.Stirrup && opt.Stirrup.length >= 3) {
-                    span.Stirrup = [...opt.Stirrup];
+                if (opt.StirRS && opt.StirRS.length >= 3) {
+                    span.StirRS = [...opt.StirRS];
                 }
-                if (opt.WebBar && opt.WebBar.length >= 3) {
-                    span.WebBar = [...opt.WebBar];
+                if (opt.WebRS && opt.WebRS.length >= 3) {
+                    span.WebRS = [...opt.WebRS];
                 }
 
                 // Sync to Plan View
@@ -4170,8 +4244,8 @@
                     // Shear-web mode: editable stirrup labels (provided) outside beam
                     const stirrupY = beamY + BEAM_HEIGHT + 22;
                     const webY = stirrupY + 18;
-                    const stirrup = span.Stirrup || [];
-                    const webBar = span.WebBar || [];
+                    const stirrup = span.StirRS || [];
+                    const webBar = span.WebRS || [];
                     const stirrupXs = [x + w * 0.125, x + w * 0.50, x + w * 0.875];
                     for (let si = 0; si < stirrupXs.length; si++) {
                         drawEditableLabel(
@@ -4198,8 +4272,8 @@
                     const reqTopY = beamY - 24;
                     const reqBotY = webY + 36;
                     for (let si = 0; si < stirrupXs.length; si++) {
-                        drawInfoLabel(ctx, getShearRatioText(span, 'Stirrup', 'StirrupReq', si), stirrupXs[si], reqTopY, '#b45309');
-                        drawInfoLabel(ctx, getShearRatioText(span, 'WebBar', 'WebReq', si), stirrupXs[si], reqBotY, '#0f766e');
+                        drawInfoLabel(ctx, getShearRatioText(span, 'StirRS', 'As_Stir', si), stirrupXs[si], reqTopY, '#b45309');
+                        drawInfoLabel(ctx, getShearRatioText(span, 'WebRS', 'As_Web', si), stirrupXs[si], reqBotY, '#0f766e');
                     }
                 }
 
@@ -4295,7 +4369,7 @@
                 // No additional rendering needed here to avoid duplicate labels.
             } else if (canvasMode === 'shear') {
                 // SHEAR/WEB BAR MODE - Show stirrup layout as vertical lines
-                const stirrups = span.Stirrup || [];
+                const stirrups = span.StirRS || [];
                 ctx.strokeStyle = '#6b7280';
                 ctx.lineWidth = 1;
                 ctx.setLineDash([]);
@@ -4426,7 +4500,7 @@
                                         onchange="updateSideBar(${spanIdx}, this.value)"
                                         placeholder="2D12"
                                         class="w-12 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px] mb-0.5">
-                                    <span class="text-[8px] text-slate-400 text-center truncate w-12" title="Max Required Web Area">${formatRebarValue(Math.max(...(span.WebReq || [0])))}</span>
+                                    <span class="text-[8px] text-slate-400 text-center truncate w-12" title="Max Required Web Area">${formatRebarValue(Math.max(...(span.As_Web || [0])))}</span>
                                 </div>
                             </td>
                         `;
@@ -4482,7 +4556,7 @@
             const placeholders = ['d8a100', 'd8a150', 'd8a100'];
 
             positions.forEach((pos) => {
-                const val = span.Stirrup?.[pos] || '';
+                const val = span.StirRS?.[pos] || '';
                 html += `<td class="p-0.5 w-12" rowspan="${maxLayers}">
                     <input type="text" value="${val}" 
                         onchange="updateStirrup(${spanIndex}, ${pos}, this.value)"
@@ -4536,7 +4610,12 @@
         // NOTE: updateStirrup moved to line 734, updateWebBar to line 743 (use renderDetailCanvas)
 
         function updateSideBar(spanIndex, value) {
-            currentGroup.Spans[spanIndex].SideBar = value;
+            const span = currentGroup.Spans[spanIndex];
+            span.SideBar = value;
+
+            // [V2 SYNC] Update WebRS as well for Plan View consistency if needed
+            // WebRS[1] is typically the governing sidebar value
+            if (span.WebRS) span.WebRS[1] = value;
 
             // ===== AUTO-LOCK: Tự động chốt khi sửa tay =====
             autoLockOnEdit();
@@ -4552,9 +4631,18 @@
             // Find matching beams in the Plan View data source and update them
             data.allBeams.forEach(b => {
                 if (spanHandles.includes(b.Handle)) {
-                    // [FIX ISSUE 1] Use only xSectionLabel - removed legacy SectionLabel fallback
+                    // [V2 SYNC] Update all rebar-related properties
                     b.xSectionLabel = span.xSectionLabel;
                     b.xSectionLabelLocked = span.xSectionLabelLocked;
+                    b.TopRS = span.TopRS;
+                    b.BotRS = span.BotRS;
+                    b.StirRS = span.StirRS;
+                    b.WebRS = span.WebRS;
+                    b.SideBar = span.SideBar;
+                    b.As_Top = span.As_Top;
+                    b.As_Bot = span.As_Bot;
+                    b.As_Stir = span.As_Stir;
+                    b.As_Web = span.As_Web;
                 }
             });
         }
@@ -4659,10 +4747,10 @@
 
             currentGroup.Spans.forEach(span => {
                 if (span.IsActive !== false) {
-                    span.Stirrup = [
+                    span.StirRS = [
                         `d${dia}a${parts[0] || 100}`,
                         `d${dia}a${parts[1] || 150}`,
-                        `d${dia}a${parts[2] || 100}`
+                        `d${dia}a${parts[2] || parts[0] || 100}`
                     ];
                 }
             });

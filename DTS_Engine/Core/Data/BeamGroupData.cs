@@ -251,10 +251,16 @@ namespace DTS_Engine.Core.Data
             }
         }
 
+        // ===== DISPLAY STRINGS (TopRS/BotRS) =====
+        // Standardized flattened strings for Viewer Display (SSOT form)
+        // Populated from XDataUtils.ReadRebarData
+        public string[] TopRS { get; set; } = new string[3];
+        public string[] BotRS { get; set; } = new string[3];
+
         // ===== THÉP ĐAI & BỤNG =====
         // Index: 0=Đầu, 1=Giữa, 2=Cuối
-        public string[] Stirrup { get; set; } = new string[3];
-        public string[] WebBar { get; set; } = new string[3];
+        public string[] StirRS { get; set; } = new string[3];
+        public string[] WebRS { get; set; } = new string[3];
         public string SideBar { get; set; }
 
         // ===== V7.0: 5 OPTIONS TỪ XDATA (Opt0-4) + OptUser =====
@@ -271,8 +277,8 @@ namespace DTS_Engine.Core.Data
 
         // ===== YÊU CẦU ĐAI & SƯỜN (3 vị trí) =====
         // Unit depends on upstream (typically cm2/cm for stirrup req, cm2 for web req)
-        public double[] StirrupReq { get; set; } = new double[3];
-        public double[] WebReq { get; set; } = new double[3];
+        public double[] As_Stir { get; set; } = new double[3];
+        public double[] As_Web { get; set; } = new double[3];
 
         // ===== SPLICE POSITIONS (cho tương lai) =====
         /// <summary>

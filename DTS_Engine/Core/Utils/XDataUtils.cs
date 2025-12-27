@@ -21,10 +21,10 @@ namespace DTS_Engine.Core.Utils
         private const string APP_NAME = "DTS_APP";
         private const int CHUNK_SIZE = 250;
 
-        // Rebar XData Keys - tránh magic strings
-        public const string KEY_TOP_REBAR = "TopRebar";
-        public const string KEY_BOT_REBAR = "BotRebar";
-        public const string KEY_STIRRUP = "Stirrup";
+        // Rebar XData Keys - RS = Rebar String (Consistency with BeamResultData)
+        public const string KEY_TOP_REBAR = "TopRS";
+        public const string KEY_BOT_REBAR = "BotRS";
+        public const string KEY_STIRRUP = "StirRS";
         public const string KEY_SIDE_BAR = "SideBar";
         public const string KEY_BEAM_GROUP = "BeamGroupName";
         public const string KEY_BEAM_TYPE = "BeamType";
@@ -225,16 +225,99 @@ namespace DTS_Engine.Core.Utils
             var dict = GetRawData(obj);
             if (dict == null) return null;
 
-            // Check if beam data exists (by key presence, not xType)
-            // ISO/IEC 25010: Single Source of Truth - dùng xKeys
-            bool hasRebarData = dict.ContainsKey("TopArea") || dict.ContainsKey("xSapFrameName");
-            bool hasSupportData = dict.ContainsKey("xSupport_I");
-            if (!hasRebarData && !hasSupportData)
+            // [FIX] Relax early return: Allow reading if ANY rebar keys OR Options exist
+            // This is critical for neighbors or dầm mới thiết kế chưa có Area data nhưng đã có Option
+            bool hasArea = dict.ContainsKey("TopArea") || dict.ContainsKey("BotArea");
+            bool hasOptions = dict.ContainsKey("OptUser") || dict.ContainsKey("Opt0");
+            bool hasSupport = dict.ContainsKey("xSupport_I");
+
+            if (!hasArea && !hasOptions && !hasSupport)
                 return null;
 
             var result = new BeamResultData();
             result.FromDictionary(dict);
+
+            // [SSOT STANDARDIZATION]
+            // If Stirrup/Web data is missing or empty from explicit keys, extract from Active Option.
+            // FIX: Check if mảng exists AND contains non-null/non-empty strings
+            bool stirMissing = result.StirRS == null || result.StirRS.Length == 0 || string.IsNullOrEmpty(string.Join("", result.StirRS).Trim());
+            bool webMissing = result.WebRS == null || result.WebRS.Length == 0 || string.IsNullOrEmpty(string.Join("", result.WebRS).Trim());
+
+            if (stirMissing || webMissing)
+            {
+                string optStr = null;
+                if (dict.TryGetValue("OptUser", out var ou) && ou != null && !string.IsNullOrWhiteSpace(ou.ToString()))
+                    optStr = ou.ToString();
+                else if (dict.TryGetValue("Opt0", out var o0) && o0 != null)
+                    optStr = o0.ToString();
+
+                if (!string.IsNullOrEmpty(optStr))
+                {
+                    var optData = RebarOptionData.Parse(optStr);
+
+                    // 1. Stirrups (S)
+                    if (stirMissing)
+                    {
+                        if (!string.IsNullOrEmpty(optData.Stirrup))
+                        {
+                            var parts = optData.Stirrup.Split('|');
+                            result.StirRS = new string[3];
+                            for (int i = 0; i < 3; i++)
+                                result.StirRS[i] = (i < parts.Length) ? parts[i] : (parts.Length > 0 ? parts.Last() : "-");
+                        }
+                    }
+
+                    // 2. Web/Side (W)
+                    if (webMissing)
+                    {
+                        if (!string.IsNullOrEmpty(optData.Web))
+                        {
+                            var parts = optData.Web.Split('|');
+                            result.WebRS = new string[3];
+                            for (int i = 0; i < 3; i++)
+                                result.WebRS[i] = (i < parts.Length) ? parts[i] : (parts.Length > 0 ? parts.Last() : "-");
+                        }
+                    }
+
+                    // 3. Top Rebar (T) - Flatten Logic
+                    if (result.TopRS == null || result.TopRS.Length == 0 || string.IsNullOrEmpty(string.Join("", result.TopRS).Trim()))
+                    {
+                        result.TopRS = FlattenRebarLayers(optData.TopL0, optData.TopAddons);
+                    }
+
+                    // 4. Bot Rebar (B) - Flatten Logic
+                    if (result.BotRS == null || result.BotRS.Length == 0 || string.IsNullOrEmpty(string.Join("", result.BotRS).Trim()))
+                    {
+                        result.BotRS = FlattenRebarLayers(optData.BotL0, optData.BotAddons);
+                    }
+                }
+            }
             return result;
+        }
+
+        private static string[] FlattenRebarLayers(string l0, List<string[]> addons)
+        {
+            var res = new string[3];
+            // Format: L0 + L1 + ...
+            // Simplified flattening for display
+            string baseStr = l0 ?? "";
+
+            for (int z = 0; z < 3; z++)
+            {
+                var sb = new StringBuilder();
+                if (!string.IsNullOrEmpty(baseStr)) sb.Append(baseStr);
+
+                foreach (var layer in addons)
+                {
+                    if (layer != null && z < layer.Length && !string.IsNullOrEmpty(layer[z]))
+                    {
+                        if (sb.Length > 0) sb.Append("+"); // or " " or separator
+                        sb.Append(layer[z]);
+                    }
+                }
+                res[z] = sb.ToString();
+            }
+            return res;
         }
 
         /// <summary>
@@ -313,12 +396,12 @@ namespace DTS_Engine.Core.Utils
 
             SetRawData(obj, dict, tr);
         }
-        // NOTE: UpdateBeamSolutionXData (TopRebarString/BotRebarString/StirrupString/WebBarString) đã xóa
+        // NOTE: UpdateBeamSolutionXData (RS properties) đã xóa
         // V6.0: Dùng OptUser là Single Source of Truth
 
         /// <summary>
         /// XData-first: cập nhật dữ liệu yêu cầu thép (từ SAP) vào XData của phần tử,
-        /// nhưng KHÔNG ghi đè các key layout/solution (TopRebarString/BotRebarString/StirrupString/WebBarString...).
+        /// nhưng KHÔNG ghi đè các key layout/solution (TopRS/BotRS/StirRS/WebRS...).
         /// Đồng thời KHÔNG ghi đè xType (thường là BEAM từ DTS_PLOT_FROM_SAP).
         /// 
         /// CLEAN v2: Xóa các trường trùng lặp với xSectionName/xWidth/xDepth/xSapFrameName.

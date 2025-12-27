@@ -650,8 +650,8 @@ namespace DTS_Engine.Core.Algorithms
             // Ensure arrays exist
             if (span.As_Top == null || span.As_Top.Length < 6) span.As_Top = new double[6];
             if (span.As_Bot == null || span.As_Bot.Length < 6) span.As_Bot = new double[6];
-            if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
-            if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+            if (span.As_Stir == null || span.As_Stir.Length < 3) span.As_Stir = new double[3];
+            if (span.As_Web == null || span.As_Web.Length < 3) span.As_Web = new double[3];
 
             // Source arrays
             var topArea = data.TopArea ?? new double[3];
@@ -684,8 +684,8 @@ namespace DTS_Engine.Core.Algorithms
                 span.As_Bot[p0] = asBotReq;
                 span.As_Bot[p1] = asBotReq;
 
-                span.StirrupReq[zi] = shearArea.ElementAtOrDefault(zi);
-                span.WebReq[zi] = torsionArea.ElementAtOrDefault(zi) * torsSide;
+                span.As_Stir[zi] = shearArea.ElementAtOrDefault(zi);
+                span.As_Web[zi] = torsionArea.ElementAtOrDefault(zi) * torsSide;
             }
         }
 

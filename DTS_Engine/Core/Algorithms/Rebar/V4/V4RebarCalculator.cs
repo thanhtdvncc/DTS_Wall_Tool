@@ -271,17 +271,17 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     // SYNC STIRRUP/WEB REQUIREMENTS
                     if (spanResult.ReqStirrup != null && spanResult.ReqStirrup.Length >= 3)
                     {
-                        if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
-                        span.StirrupReq[0] = spanResult.ReqStirrup[0];
-                        span.StirrupReq[1] = spanResult.ReqStirrup[1];
-                        span.StirrupReq[2] = spanResult.ReqStirrup[2];
+                        if (span.As_Stir == null || span.As_Stir.Length < 3) span.As_Stir = new double[3];
+                        span.As_Stir[0] = spanResult.ReqStirrup[0];
+                        span.As_Stir[1] = spanResult.ReqStirrup[1];
+                        span.As_Stir[2] = spanResult.ReqStirrup[2];
                     }
                     if (spanResult.ReqWeb != null && spanResult.ReqWeb.Length >= 3)
                     {
-                        if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
-                        span.WebReq[0] = spanResult.ReqWeb[0];
-                        span.WebReq[1] = spanResult.ReqWeb[1];
-                        span.WebReq[2] = spanResult.ReqWeb[2];
+                        if (span.As_Web == null || span.As_Web.Length < 3) span.As_Web = new double[3];
+                        span.As_Web[0] = spanResult.ReqWeb[0];
+                        span.As_Web[1] = spanResult.ReqWeb[1];
+                        span.As_Web[2] = spanResult.ReqWeb[2];
                     }
 
                     // Apply backbone
@@ -317,22 +317,22 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     // Apply stirrups if available
                     if (spanResult.Stirrups != null && spanResult.Stirrups.Count > 0)
                     {
-                        if (span.Stirrup == null) span.Stirrup = new string[3];
-                        if (spanResult.Stirrups.TryGetValue("Left", out var sl)) span.Stirrup[0] = sl;
-                        if (spanResult.Stirrups.TryGetValue("Mid", out var sm)) span.Stirrup[1] = sm;
-                        if (spanResult.Stirrups.TryGetValue("Right", out var sr)) span.Stirrup[2] = sr;
+                        if (span.StirRS == null) span.StirRS = new string[3];
+                        if (spanResult.Stirrups.TryGetValue("Left", out var sl)) span.StirRS[0] = sl;
+                        if (spanResult.Stirrups.TryGetValue("Mid", out var sm)) span.StirRS[1] = sm;
+                        if (spanResult.Stirrups.TryGetValue("Right", out var sr)) span.StirRS[2] = sr;
                     }
 
                     // Apply web bars (side bars) if available
                     if (spanResult.WebBars != null && spanResult.WebBars.Count > 0)
                     {
-                        if (span.WebBar == null) span.WebBar = new string[3];
-                        if (spanResult.WebBars.TryGetValue("Left", out var wl)) span.WebBar[0] = wl;
-                        if (spanResult.WebBars.TryGetValue("Mid", out var wm)) span.WebBar[1] = wm;
-                        if (spanResult.WebBars.TryGetValue("Right", out var wr)) span.WebBar[2] = wr;
+                        if (span.WebRS == null) span.WebRS = new string[3];
+                        if (spanResult.WebBars.TryGetValue("Left", out var wl)) span.WebRS[0] = wl;
+                        if (spanResult.WebBars.TryGetValue("Mid", out var wm)) span.WebRS[1] = wm;
+                        if (spanResult.WebBars.TryGetValue("Right", out var wr)) span.WebRS[2] = wr;
 
                         // Also set Sidebar for legacy if needed (governing one)
-                        span.SideBar = span.WebBar[1] ?? span.WebBar[0];
+                        span.SideBar = span.WebRS[1] ?? span.WebRS[0];
                     }
                 }
             }

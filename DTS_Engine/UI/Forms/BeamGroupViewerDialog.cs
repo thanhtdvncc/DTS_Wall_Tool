@@ -210,15 +210,15 @@ namespace DTS_Engine.UI.Forms
                                             SectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
                                             xSectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
                                             xSectionLabelLocked = span.xSectionLabelLocked,
-                                            // === REBAR DATA FOR PLAN VIEW ===
-                                            TopRS = ExtractRebarStrings(span, "Top"),      // [L, M, R]
-                                            BotRS = ExtractRebarStrings(span, "Bot"),      // [L, M, R]
-                                            StirRS = span.Stirrup ?? new string[3],        // [L, M, R]
-                                            WebRS = span.WebBar ?? new string[3],          // [L, M, R]
+                                            // FALLBACK: Keep these for Neighbors or as backup if FrontEnd Map fails
+                                            TopRS = ExtractRebarStrings(span, "Top"),
+                                            BotRS = ExtractRebarStrings(span, "Bot"),
+                                            StirRS = span.StirRS ?? new string[3],
+                                            WebRS = span.WebRS ?? new string[3],
                                             As_Top = span.As_Top ?? new double[6],
                                             As_Bot = span.As_Bot ?? new double[6],
-                                            StirrupReq = span.StirrupReq ?? new double[3],
-                                            WebReq = span.WebReq ?? new double[3]
+                                            As_Stir = span.As_Stir ?? new double[3],
+                                            As_Web = span.As_Web ?? new double[3]
                                         });
                                     }
                                 }
@@ -797,15 +797,14 @@ namespace DTS_Engine.UI.Forms
                                             }
 
                                             // Stirrup (use middle position as governing)
-                                            if (matchingSpan.Stirrup != null && matchingSpan.Stirrup.Length > 1)
+                                            if (matchingSpan.StirRS != null && matchingSpan.StirRS.Length > 1)
                                             {
-                                                stirrup = matchingSpan.Stirrup[1] ?? matchingSpan.Stirrup[0] ?? "";
+                                                stirrup = matchingSpan.StirRS[1] ?? matchingSpan.StirRS[0] ?? "";
                                             }
 
-                                            // WebBar (use middle position)
-                                            if (matchingSpan.WebBar != null && matchingSpan.WebBar.Length > 1)
+                                            if (matchingSpan.WebRS != null && matchingSpan.WebRS.Length > 1)
                                             {
-                                                web = matchingSpan.WebBar[1] ?? matchingSpan.WebBar[0] ?? "";
+                                                web = matchingSpan.WebRS[1] ?? matchingSpan.WebRS[0] ?? "";
                                             }
                                         }
                                         else
@@ -1070,8 +1069,8 @@ namespace DTS_Engine.UI.Forms
                                 if (entityOptions.Count > 0)
                                 {
                                     var firstOpt = entityOptions[0];
-                                    firstOpt.Stirrup = group.Spans[i].Stirrup != null && group.Spans[i].Stirrup.Length > 1 ? group.Spans[i].Stirrup[1] : "";
-                                    firstOpt.Web = group.Spans[i].WebBar != null && group.Spans[i].WebBar.Length > 1 ? group.Spans[i].WebBar[1] : "";
+                                    firstOpt.Stirrup = group.Spans[i].StirRS != null && group.Spans[i].StirRS.Length > 1 ? group.Spans[i].StirRS[1] : "";
+                                    firstOpt.Web = group.Spans[i].WebRS != null && group.Spans[i].WebRS.Length > 1 ? group.Spans[i].WebRS[1] : "";
 
                                     XDataUtils.WriteOptUser(obj, firstOpt, tr);
                                     XDataUtils.WriteIsLocked(obj, false, tr); // Also unlock by default
@@ -1312,35 +1311,30 @@ namespace DTS_Engine.UI.Forms
                                 }
 
                                 // ═══════════════════════════════════════════════════════════════
-                                // STIRRUP & WEB BAR LOAD (Mode 2 & 4 fix: Opt -> Raw XData fallback)
+                                // STIRRUP & WEB BAR LOAD (SSOT: Prioritize XData via ReadRebarData)
                                 // ═══════════════════════════════════════════════════════════════
-                                if (span.Stirrup == null || span.Stirrup.Length < 3)
-                                    span.Stirrup = new string[3];
-                                if (span.WebBar == null || span.WebBar.Length < 3)
-                                    span.WebBar = new string[3];
+                                if (rebarData != null)
+                                {
+                                    if (rebarData.StirRS != null)
+                                    {
+                                        for (int zi = 0; zi < 3; zi++)
+                                            span.StirRS[zi] = (zi < rebarData.StirRS.Length) ? rebarData.StirRS[zi] : "-";
+                                    }
+                                    if (rebarData.WebRS != null)
+                                    {
+                                        for (int zi = 0; zi < 3; zi++)
+                                            span.WebRS[zi] = (zi < rebarData.WebRS.Length) ? rebarData.WebRS[zi] : "-";
 
-                                bool hasStirrupInOpt = defaultOpt != null && !string.IsNullOrEmpty(defaultOpt.GetStirrupAt(0));
-                                if (hasStirrupInOpt)
-                                {
-                                    for (int zi = 0; zi < 3; zi++)
-                                    {
-                                        span.Stirrup[zi] = defaultOpt.GetStirrupAt(zi);
-                                        span.WebBar[zi] = defaultOpt.GetWebAt(zi);
+                                        // FIX: Populate SideBar for Table View (use Mid or Start)
+                                        span.SideBar = (span.WebRS[1] != "" && span.WebRS[1] != "-") ? span.WebRS[1] : span.WebRS[0];
                                     }
-                                }
-                                else if (rebarData != null)
-                                {
-                                    // Fallback to raw XData string representation if no solution/option provides it
-                                    if (rebarData.StirrupString != null)
-                                    {
-                                        for (int zi = 0; zi < 3; zi++)
-                                            span.Stirrup[zi] = (zi < rebarData.StirrupString.Length) ? rebarData.StirrupString[zi] : "-";
-                                    }
-                                    if (rebarData.WebBarString != null)
-                                    {
-                                        for (int zi = 0; zi < 3; zi++)
-                                            span.WebBar[zi] = (zi < rebarData.WebBarString.Length) ? rebarData.WebBarString[zi] : "-";
-                                    }
+
+                                    // SSOT: Populate TopRS/BotRS from rebarData (flattened strings)
+                                    // This powers the standardized frontend display (main + neighbor)
+                                    if (rebarData.TopRS != null)
+                                        span.TopRS = rebarData.TopRS;
+                                    if (rebarData.BotRS != null)
+                                        span.BotRS = rebarData.BotRS;
                                 }
 
                                 // Read IsLocked
@@ -1364,8 +1358,8 @@ namespace DTS_Engine.UI.Forms
                                 // Initialize arrays if null
                                 if (span.As_Top == null || span.As_Top.Length < 6) span.As_Top = new double[6];
                                 if (span.As_Bot == null || span.As_Bot.Length < 6) span.As_Bot = new double[6];
-                                if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
-                                if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+                                if (span.As_Stir == null || span.As_Stir.Length < 3) span.As_Stir = new double[3];
+                                if (span.As_Web == null || span.As_Web.Length < 3) span.As_Web = new double[3];
 
                                 // Apply same formula as TopologyBuilder.PopulateSpanRequirements / V4RebarCalculator
                                 for (int zi = 0; zi < 3; zi++)
@@ -1385,11 +1379,11 @@ namespace DTS_Engine.UI.Forms
                                     span.As_Bot[p1] = asBotReq;
 
                                     // Stirrup: (Av/s + 2 * At/s) - NO SafetyFactor for display
-                                    span.StirrupReq[zi] = (zi < shearArea.Length ? shearArea[zi] : 0) +
+                                    span.As_Stir[zi] = (zi < shearArea.Length ? shearArea[zi] : 0) +
                                                           2 * (zi < ttArea.Length ? ttArea[zi] : 0);
 
                                     // Side bar: (Al * torsSide) - NO SafetyFactor for display
-                                    span.WebReq[zi] = (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsSide;
+                                    span.As_Web[zi] = (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsSide;
                                 }
 
                             }
@@ -1528,12 +1522,12 @@ namespace DTS_Engine.UI.Forms
             ReverseArray(data.TorsionArea);
             ReverseArray(data.ShearArea);
             ReverseArray(data.TTArea);
-            ReverseArray(data.TopRebarString);
-            ReverseArray(data.BotRebarString);
+            ReverseArray(data.TopRS);
+            ReverseArray(data.BotRS);
             ReverseArray(data.TopAreaProv);
             ReverseArray(data.BotAreaProv);
-            ReverseArray(data.StirrupString);
-            ReverseArray(data.WebBarString);
+            ReverseArray(data.StirRS);
+            ReverseArray(data.WebRS);
         }
 
         private static void ReverseArray<T>(T[] arr)
@@ -1690,33 +1684,33 @@ namespace DTS_Engine.UI.Forms
                 // ═══════════════════════════════════════════════════════════════
                 if (spanResult != null)
                 {
-                    if (span.Stirrup == null || span.Stirrup.Length < 3) span.Stirrup = new string[3];
-                    if (span.WebBar == null || span.WebBar.Length < 3) span.WebBar = new string[3];
+                    if (span.StirRS == null || span.StirRS.Length < 3) span.StirRS = new string[3];
+                    if (span.WebRS == null || span.WebRS.Length < 3) span.WebRS = new string[3];
 
                     // Extract Left, Mid, Right from Stirrups dictionary
                     if (spanResult.Stirrups != null)
                     {
-                        if (spanResult.Stirrups.TryGetValue("Left", out var sL)) span.Stirrup[0] = sL;
-                        if (spanResult.Stirrups.TryGetValue("Mid", out var sM)) span.Stirrup[1] = sM;
-                        if (spanResult.Stirrups.TryGetValue("Right", out var sR)) span.Stirrup[2] = sR;
+                        if (spanResult.Stirrups.TryGetValue("Left", out var sL)) span.StirRS[0] = sL;
+                        if (spanResult.Stirrups.TryGetValue("Mid", out var sM)) span.StirRS[1] = sM;
+                        if (spanResult.Stirrups.TryGetValue("Right", out var sR)) span.StirRS[2] = sR;
                     }
 
                     // Extract Left, Mid, Right from WebBars dictionary
                     if (spanResult.WebBars != null)
                     {
-                        if (spanResult.WebBars.TryGetValue("Left", out var wL)) span.WebBar[0] = wL;
-                        if (spanResult.WebBars.TryGetValue("Mid", out var wM)) span.WebBar[1] = wM;
-                        if (spanResult.WebBars.TryGetValue("Right", out var wR)) span.WebBar[2] = wR;
+                        if (spanResult.WebBars.TryGetValue("Left", out var wL)) span.WebRS[0] = wL;
+                        if (spanResult.WebBars.TryGetValue("Mid", out var wM)) span.WebRS[1] = wM;
+                        if (spanResult.WebBars.TryGetValue("Right", out var wR)) span.WebRS[2] = wR;
                     }
 
                     // Sync Requirements (for comparison modes)
                     if (spanResult.ReqStirrup != null && spanResult.ReqStirrup.Length >= 3)
                     {
-                        for (int i = 0; i < 3; i++) span.StirrupReq[i] = spanResult.ReqStirrup[i];
+                        for (int i = 0; i < 3; i++) span.As_Stir[i] = spanResult.ReqStirrup[i];
                     }
                     if (spanResult.ReqWeb != null && spanResult.ReqWeb.Length >= 3)
                     {
-                        for (int i = 0; i < 3; i++) span.WebReq[i] = spanResult.ReqWeb[i];
+                        for (int i = 0; i < 3; i++) span.As_Web[i] = spanResult.ReqWeb[i];
                     }
                 }
             }
@@ -2389,9 +2383,13 @@ namespace DTS_Engine.UI.Forms
 
                         // First try to get Z from XData
                         BeamData beamData = null;
+                        BeamResultData rebarData = null;
                         try
                         {
                             beamData = XDataUtils.ReadElementData(ent) as BeamData;
+                            // Also attempt to read rebar data (BeamResultData) which might be stored separately or merged
+                            rebarData = XDataUtils.ReadRebarData(ent);
+
                             if (beamData?.BaseZ != null && beamData.BaseZ.Value != 0)
                             {
                                 z = beamData.BaseZ.Value;
@@ -2459,10 +2457,21 @@ namespace DTS_Engine.UI.Forms
                             LevelZ = z,
                             GroupName = groupName,
                             GroupId = "", // Not in selected group
-                                          // FIX: Add SectionLabel for neighbor beams too
+                            // FIX: Add SectionLabel for neighbor beams too
                             SectionLabel = beamData?.SectionLabel ?? "",
                             xSectionLabel = beamData?.SectionLabel ?? "",
-                            xSectionLabelLocked = beamData != null && beamData.SectionLabelLocked
+                            xSectionLabelLocked = beamData != null && beamData.SectionLabelLocked,
+
+                            // NEIGHBOR DATA: Use rebarData (BeamResultData)
+                            TopRS = rebarData?.TopRS ?? new string[3],
+                            BotRS = rebarData?.BotRS ?? new string[3],
+                            StirRS = rebarData?.StirRS ?? new string[3],
+                            WebRS = rebarData?.WebRS ?? new string[3],
+                            SideBar = (rebarData?.WebRS != null && rebarData.WebRS.Length > 0) ? (rebarData.WebRS.Length > 1 ? rebarData.WebRS[1] : rebarData.WebRS[0]) : "-",
+                            As_Top = rebarData?.TopAreaProv ?? new double[6],
+                            As_Bot = rebarData?.BotAreaProv ?? new double[6],
+                            As_Stir = new double[3],
+                            As_Web = new double[3]
                         });
                     }
                     tr.Commit();
@@ -2526,15 +2535,16 @@ namespace DTS_Engine.UI.Forms
                                     SectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
                                     xSectionLabel = span.xSectionLabel ?? seg.xSectionLabel ?? group.Name ?? "",
                                     xSectionLabelLocked = span.xSectionLabelLocked,
-                                    // === REBAR DATA FOR PLAN VIEW ===
+                                    // FALLBACK: Keep these for Neighbors or as backup if FrontEnd Map fails
                                     TopRS = ExtractRebarStrings(span, "Top"),
                                     BotRS = ExtractRebarStrings(span, "Bot"),
-                                    StirRS = span.Stirrup ?? new string[3],
-                                    WebRS = span.WebBar ?? new string[3],
-                                    As_Top = span.As_Top ?? new double[6],
-                                    As_Bot = span.As_Bot ?? new double[6],
-                                    StirrupReq = span.StirrupReq ?? new double[3],
-                                    WebReq = span.WebReq ?? new double[3]
+                                    StirRS = span.StirRS,
+                                    WebRS = span.WebRS,
+                                    SideBar = span.SideBar ?? "-",
+                                    As_Top = span.As_Top,
+                                    As_Bot = span.As_Bot,
+                                    As_Stir = span.As_Stir,
+                                    As_Web = span.As_Web
                                 });
                             }
                         }

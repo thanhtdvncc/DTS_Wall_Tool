@@ -910,12 +910,12 @@ namespace DTS_Engine.Commands
             flipped.TorsionArea = FlipArray(original.TorsionArea);
             flipped.ShearArea = FlipArray(original.ShearArea);
             flipped.TTArea = FlipArray(original.TTArea);
-            flipped.TopRebarString = FlipArray(original.TopRebarString);
-            flipped.BotRebarString = FlipArray(original.BotRebarString);
+            flipped.TopRS = FlipArray(original.TopRS);
+            flipped.BotRS = FlipArray(original.BotRS);
             flipped.TopAreaProv = FlipArray(original.TopAreaProv);
             flipped.BotAreaProv = FlipArray(original.BotAreaProv);
-            flipped.StirrupString = FlipArray(original.StirrupString);
-            flipped.WebBarString = FlipArray(original.WebBarString);
+            flipped.StirRS = FlipArray(original.StirRS);
+            flipped.WebRS = FlipArray(original.WebRS);
 
             return flipped;
         }
@@ -1129,8 +1129,8 @@ namespace DTS_Engine.Commands
                             {
                                 TopL0 = span.TopRebarInternal[0, idxM] ?? "", // Backbone (typically same across all)
                                 BotL0 = span.BotRebarInternal[0, idxM] ?? "",
-                                Stirrup = Get3ZoneDelimited(span.Stirrup, isReversed),
-                                Web = Get3ZoneDelimited(span.WebBar, isReversed)
+                                Stirrup = Get3ZoneDelimited(span.StirRS, isReversed),
+                                Web = Get3ZoneDelimited(span.WebRS, isReversed)
                             };
 
                             // Addons (Layers 1 to 7)
@@ -1167,7 +1167,7 @@ namespace DTS_Engine.Commands
                                 string topMid = CombineBackboneAndAddon(optUser.TopL0, optUser.TopAddons, 1, isReversed);
                                 string topRight = CombineBackboneAndAddon(optUser.TopL0, optUser.TopAddons, 2, isReversed);
 
-                                resData.TopRebarString = new string[] { topTotal, topMid, topRight };
+                                resData.TopRS = new string[] { topTotal, topMid, topRight };
                                 resData.TopAreaProv = new double[] {
                                     RebarStringParser.Parse(topTotal),
                                     RebarStringParser.Parse(topMid),
@@ -1179,7 +1179,7 @@ namespace DTS_Engine.Commands
                                 string botMid = CombineBackboneAndAddon(optUser.BotL0, optUser.BotAddons, 1, isReversed);
                                 string botRight = CombineBackboneAndAddon(optUser.BotL0, optUser.BotAddons, 2, isReversed);
 
-                                resData.BotRebarString = new string[] { botTotal, botMid, botRight };
+                                resData.BotRS = new string[] { botTotal, botMid, botRight };
                                 resData.BotAreaProv = new double[] {
                                     RebarStringParser.Parse(botTotal),
                                     RebarStringParser.Parse(botMid),
@@ -1191,14 +1191,14 @@ namespace DTS_Engine.Commands
                                 string sM = optUser.GetStirrupAt(1);
                                 string sR = optUser.GetStirrupAt(2);
 
-                                resData.StirrupString = new string[] { sL, sM, sR };
+                                resData.StirRS = new string[] { sL, sM, sR };
                                 resData.StirrupAreaProv = new double[] {
                                     StirrupStringParser.ParseAsProv(sL),
                                     StirrupStringParser.ParseAsProv(sM),
                                     StirrupStringParser.ParseAsProv(sR)
                                 };
 
-                                resData.WebBarString = new string[] {
+                                resData.WebRS = new string[] {
                                     optUser.GetWebAt(0),
                                     optUser.GetWebAt(1),
                                     optUser.GetWebAt(2)
@@ -1676,8 +1676,8 @@ namespace DTS_Engine.Commands
                 // Ensure arrays exist
                 if (span.As_Top == null || span.As_Top.Length < 6) span.As_Top = new double[6];
                 if (span.As_Bot == null || span.As_Bot.Length < 6) span.As_Bot = new double[6];
-                if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
-                if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+                if (span.As_Stir == null || span.As_Stir.Length < 3) span.As_Stir = new double[3];
+                if (span.As_Web == null || span.As_Web.Length < 3) span.As_Web = new double[3];
 
                 // Map 3 zones -> 6 positions
                 for (int zi = 0; zi < 3; zi++)
@@ -1695,8 +1695,8 @@ namespace DTS_Engine.Commands
                     span.As_Bot[p0] = RebarCalculator.RoundRebarValue(asBotReq);
                     span.As_Bot[p1] = RebarCalculator.RoundRebarValue(asBotReq);
 
-                    span.StirrupReq[zi] = RebarCalculator.RoundRebarValue(designData.ShearArea?.ElementAtOrDefault(zi) ?? 0);
-                    span.WebReq[zi] = RebarCalculator.RoundRebarValue((designData.TorsionArea?.ElementAtOrDefault(zi) ?? 0) * torsSide);
+                    span.As_Stir[zi] = RebarCalculator.RoundRebarValue(designData.ShearArea?.ElementAtOrDefault(zi) ?? 0);
+                    span.As_Web[zi] = RebarCalculator.RoundRebarValue((designData.TorsionArea?.ElementAtOrDefault(zi) ?? 0) * torsSide);
                 }
             }
         }
@@ -1722,11 +1722,11 @@ namespace DTS_Engine.Commands
                 string[] botStrings = null;
                 string[] stirrupStrings = null;
 
-                if (rawData.TryGetValue("TopRebarString", out var topObj) && topObj is object[] topArr)
+                if (rawData.TryGetValue("TopRS", out var topObj) && topObj is object[] topArr)
                     topStrings = topArr.Select(x => x?.ToString()).ToArray();
-                if (rawData.TryGetValue("BotRebarString", out var botObj) && botObj is object[] botArr)
+                if (rawData.TryGetValue("BotRS", out var botObj) && botObj is object[] botArr)
                     botStrings = botArr.Select(x => x?.ToString()).ToArray();
-                if (rawData.TryGetValue("StirrupString", out var stirObj) && stirObj is object[] stirArr)
+                if (rawData.TryGetValue("StirRS", out var stirObj) && stirObj is object[] stirArr)
                     stirrupStrings = stirArr.Select(x => x?.ToString()).ToArray();
 
                 // FIX 1.4: REMOVED flip logic - XData is in L→R canonical order
@@ -1757,7 +1757,7 @@ namespace DTS_Engine.Commands
 
                 if (stirrupStrings != null)
                 {
-                    span.Stirrup = stirrupStrings;
+                    span.StirRS = stirrupStrings;
                 }
 
                 // FIX: Populate TopRebarInternal/BotRebarInternal for viewer display

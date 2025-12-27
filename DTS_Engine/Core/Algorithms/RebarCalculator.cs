@@ -333,7 +333,8 @@ namespace DTS_Engine.Core.Algorithms
         public static StirrupResult CalculateStirrupDetails(double shearArea, double ttArea, double beamWidthMm, DtsSettings settings, List<int> customSpacings = null, int? fixedDiameter = null)
         {
             double totalAreaPerLen = shearArea + 2 * ttArea;
-            if (totalAreaPerLen <= 0.001) return null;
+            // Always calculate, even if requirement is zero, to provide constructive stirrups.
+            if (totalAreaPerLen < 0) totalAreaPerLen = 0;
 
             var beamCfg = settings.Beam;
             var inventory = settings.General?.AvailableDiameters ?? new List<int> { 8, 10 };

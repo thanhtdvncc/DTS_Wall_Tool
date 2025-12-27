@@ -37,13 +37,13 @@ namespace DTS_Engine.Core.Data
             clone.Width = Width;
             clone.SectionHeight = SectionHeight;
             clone.TorsionFactorUsed = TorsionFactorUsed;
-            clone.TopRebarString = (string[])TopRebarString?.Clone();
-            clone.BotRebarString = (string[])BotRebarString?.Clone();
+            clone.TopRS = (string[])TopRS?.Clone();
+            clone.BotRS = (string[])BotRS?.Clone();
             clone.TopAreaProv = (double[])TopAreaProv?.Clone();
             clone.BotAreaProv = (double[])BotAreaProv?.Clone();
             clone.StirrupAreaProv = (double[])StirrupAreaProv?.Clone();
-            clone.StirrupString = (string[])StirrupString?.Clone();
-            clone.WebBarString = (string[])WebBarString?.Clone();
+            clone.StirRS = (string[])StirRS?.Clone();
+            clone.WebRS = (string[])WebRS?.Clone();
             clone.BeamName = BeamName;
             // SAP Mapping
             clone.SapElementName = SapElementName;
@@ -184,15 +184,15 @@ namespace DTS_Engine.Core.Data
         public double TorsionFactorUsed { get; set; } = 0.25;
 
         // ===== Phương án bố trí thép dọc =====
-        public string[] TopRebarString { get; set; } = new string[3];
-        public string[] BotRebarString { get; set; } = new string[3];
+        public string[] TopRS { get; set; } = new string[3];
+        public string[] BotRS { get; set; } = new string[3];
         public double[] TopAreaProv { get; set; } = new double[3];
         public double[] BotAreaProv { get; set; } = new double[3];
         public double[] StirrupAreaProv { get; set; } = new double[3];
 
         // ===== Phương án thép đai & thép sườn =====
-        public string[] StirrupString { get; set; } = new string[3]; // VD: "d8a150"
-        public string[] WebBarString { get; set; } = new string[3];  // VD: "2d12"
+        public string[] StirRS { get; set; } = new string[3]; // VD: "d8a150"
+        public string[] WebRS { get; set; } = new string[3];  // VD: "2d12"
 
         // ===== Beam Name (from Naming command) =====
         public string BeamName { get; set; }
@@ -230,7 +230,7 @@ namespace DTS_Engine.Core.Data
             if (!string.IsNullOrEmpty(SectionLabel)) dict["xSectionLabel"] = SectionLabel;
             if (SectionLabelLocked) dict["xSectionLabelLocked"] = "1";
 
-            // V6.0: TopRebarString/BotRebarString/StirrupString/WebBarString không còn ghi vào XData
+            // V6.0: RS properties không còn ghi vào XData
             // Dùng OptUser là Single Source of Truth
             dict["BeamName"] = BeamName;
 
@@ -247,10 +247,10 @@ namespace DTS_Engine.Core.Data
             if (!string.IsNullOrEmpty(AxisName)) dict["xOnAxis"] = AxisName;
 
             // Report Strings
-            dict["TopRS"] = TopRebarString;
-            dict["BotRS"] = BotRebarString;
-            dict["StirRS"] = StirrupString;
-            dict["WebRS"] = WebBarString;
+            dict["TopRS"] = TopRS;
+            dict["BotRS"] = BotRS;
+            dict["StirRS"] = StirRS;
+            dict["WebRS"] = WebRS;
 
             // Provided Areas
             dict["TopP"] = RoundArray(TopAreaProv);
@@ -310,10 +310,10 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("TorC", out var trc)) TorsionCombo = ConvertToStringArray(trc);
 
             // Report Strings
-            if (dict.TryGetValue("TopRS", out var trs)) TopRebarString = ConvertToStringArray(trs);
-            if (dict.TryGetValue("BotRS", out var brs)) BotRebarString = ConvertToStringArray(brs);
-            if (dict.TryGetValue("StirRS", out var srs)) StirrupString = ConvertToStringArray(srs);
-            if (dict.TryGetValue("WebRS", out var wrs)) WebBarString = ConvertToStringArray(wrs);
+            if (dict.TryGetValue("TopRS", out var trs)) TopRS = ConvertToStringArray(trs);
+            if (dict.TryGetValue("BotRS", out var brs)) BotRS = ConvertToStringArray(brs);
+            if (dict.TryGetValue("StirRS", out var srs)) StirRS = ConvertToStringArray(srs);
+            if (dict.TryGetValue("WebRS", out var wrs)) WebRS = ConvertToStringArray(wrs);
 
             // Provided Areas
             if (dict.TryGetValue("TopP", out var tp)) TopAreaProv = ConvertToDoubleArray(tp);
@@ -328,7 +328,7 @@ namespace DTS_Engine.Core.Data
             if (dict.TryGetValue("xSectionLabel", out var sl)) SectionLabel = sl?.ToString();
             if (dict.TryGetValue("xSectionLabelLocked", out var sll)) SectionLabelLocked = sll?.ToString() == "1";
 
-            // V6.0: TopRebarString/BotRebarString/StirrupString/WebBarString không còn đọc từ XData
+            // V6.0: RS properties không còn đọc từ XData
             // Dùng OptUser là Single Source of Truth
             if (dict.TryGetValue("BeamName", out var bn)) BeamName = bn?.ToString();
 
