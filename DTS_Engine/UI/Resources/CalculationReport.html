@@ -53,8 +53,7 @@
         }
 
         .sidebar.compact .sidebar-header span,
-        .sidebar.compact .section-count,
-        .sidebar.compact .section-name {
+        .sidebar.compact .section-count {
             display: none;
         }
 
@@ -142,6 +141,16 @@
         .section-count {
             font-size: 10px;
             color: #6c757d;
+        }
+
+        .section-dims {
+            font-size: 10px;
+            color: #888;
+            margin-top: 1px;
+        }
+
+        .group-item.active .section-dims {
+            color: #e9ecef;
         }
 
         .group-item.active .section-count {
@@ -546,10 +555,10 @@
 </head>
 
 <body class="mode-detailed">
-    <div class="sidebar" id="sidebar">
+    <div class="sidebar compact" id="sidebar">
         <div class="sidebar-header">
             <span>Danh sách Tiết diện</span>
-            <button class="sidebar-toggle" onclick="toggleSidebar()" title="Thu gọn">◀</button>
+            <button class="sidebar-toggle" onclick="toggleSidebar()" title="Mở rộng">▶</button>
         </div>
         <ul class="group-list" id="groupList"></ul>
     </div>
@@ -558,7 +567,7 @@
         <div class="top-bar">
             <div class="top-bar-left">
                 <button class="sidebar-expand-btn" onclick="toggleSidebar()" title="Mở sidebar">☰</button>
-                <div class="report-title">
+                <div class="report-title" style="display: none;">
                     <h2>Thuyết minh: <span id="lblGroupName">---</span>
                         <small id="lblProjectName"
                             style="font-weight: normal; color: #888; margin-left:8px; font-size:11px;"></small>
@@ -671,8 +680,19 @@
             reportData.forEach((group, index) => {
                 const li = document.createElement('li');
                 li.className = 'group-item' + (index === currentGroupIndex ? ' active' : '');
+
+                // Extract dimensions from first span (e.g. 400x600 -> 40x60)
+                let dims = '';
+                const firstSpan = group.Spans?.[0];
+                if (firstSpan && firstSpan.Section) {
+                    dims = firstSpan.Section.replace(/(\d+)x(\d+)/, (m, w, h) => {
+                        return (parseInt(w) / 10) + 'x' + (parseInt(h) / 10);
+                    });
+                }
+
                 li.innerHTML = `
                     <div class="section-name">${group.GroupName || 'Group ' + (index + 1)}</div>
+                    <div class="section-dims">${dims}</div>
                     <div class="section-count">Gồm ${(group.Spans || []).length} nhịp</div>
                 `;
                 li.onclick = () => selectGroup(index);
@@ -725,15 +745,9 @@
                 tab.classList.toggle('active', i === index);
             });
 
-            // Update info panel
+            // Update info panel - HIDDEN per user request
             const infoPanel = document.getElementById('spanInfoPanel');
-            infoPanel.innerHTML = `
-                <div class="span-title">${span.SpanId || 'S' + (index + 1)} (RC${span.Section || '?'})</div>
-                <div class="span-details">
-                    <span><b>L:</b> ${span.Length || '-'} mm</span>
-                    <span><b>Mat:</b> ${span.Material || '-'}</span>
-                </div>
-            `;
+            infoPanel.style.display = 'none';
 
             renderTable();
         }
@@ -801,8 +815,8 @@
                 return match ? match[2] : str;
             };
 
-            // --- BY SAP2000 BLOCK --- (14 rows)
-            tbody.innerHTML += rRow({ text: 'By SAP2000', rowspan: 14 }, { text: 'As, top (mm²)', rowspan: 3 }, 'Demand req.',
+            // --- BY SAP2000 BLOCK --- (10 rows)
+            tbody.innerHTML += rRow({ text: 'By SAP2000', rowspan: 10 }, { text: 'As, top (mm²)', rowspan: 3 }, 'Demand req.',
                 safe(l, 'TopResult.AsCalc'), safe(m, 'TopResult.AsCalc'), safe(r, 'TopResult.AsCalc'));
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
                 safe(l, 'TopResult.ElementId'), safe(m, 'TopResult.ElementId'), safe(r, 'TopResult.ElementId'), { type: 'combo' });
@@ -821,6 +835,8 @@
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
                 safe(l, 'StirrupResult.LoadCase'), safe(m, 'StirrupResult.LoadCase'), safe(r, 'StirrupResult.LoadCase'), { type: 'combo' });
 
+            // Hide redundant torsion/shear check rows as requested
+            /*
             tbody.innerHTML += rRow(null, { text: '2At/sv', rowspan: 2 }, 'mm²/mm (Torsion)',
                 safe(l, 'StirrupOnlyResult.AsCalc'), safe(m, 'StirrupOnlyResult.AsCalc'), safe(r, 'StirrupOnlyResult.AsCalc'));
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
@@ -830,16 +846,17 @@
                 safe(l, 'ShearResult.AsCalc'), safe(m, 'ShearResult.AsCalc'), safe(r, 'ShearResult.AsCalc'));
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
                 safe(l, 'ShearResult.LoadCase'), safe(m, 'ShearResult.LoadCase'), safe(r, 'ShearResult.LoadCase'), { type: 'combo' });
+            */
 
             tbody.innerHTML += rRow(null, { text: 'Al (mm²)', rowspan: 2 }, 'Torsion Long.',
                 safe(l, 'AlResult.AsCalc'), safe(m, 'AlResult.AsCalc'), safe(r, 'AlResult.AsCalc'));
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
                 safe(l, 'AlResult.LoadCase'), safe(m, 'AlResult.LoadCase'), safe(r, 'AlResult.LoadCase'), { type: 'combo' });
 
-            tbody.innerHTML += '<tr class="row-separator"><td colspan="8"></td></tr>';
+            tbody.innerHTML += '<tr class="row-separator"><td colspan="7"></td></tr>';
 
-            // --- FINAL USE BLOCK --- (15 rows)
-            tbody.innerHTML += rRow({ text: 'Final Use', rowspan: 15 }, { text: 'Top bar', rowspan: 3 }, 'Rebar config',
+            // --- FINAL USE BLOCK --- (12 rows)
+            tbody.innerHTML += rRow({ text: 'Final Use', rowspan: 12 }, { text: 'Top bar', rowspan: 3 }, 'Rebar config',
                 safe(l, 'TopResult.RebarStr'), safe(m, 'TopResult.RebarStr'), safe(r, 'TopResult.RebarStr'), { type: 'rebar' });
             tbody.innerHTML += rRow(null, null, 'Provide (mm²)',
                 safe(l, 'TopResult.AsProv'), safe(m, 'TopResult.AsProv'), safe(r, 'TopResult.AsProv'));
@@ -853,18 +870,22 @@
             tbody.innerHTML += rRow(null, null, 'Ratio / Check',
                 safe(l, 'BotResult.Ratio'), safe(m, 'BotResult.Ratio'), safe(r, 'BotResult.Ratio'), { type: 'res' });
 
-            tbody.innerHTML += rRow(null, { text: 'Stirrup – Đai cắt', rowspan: 6 }, 'a) No. Leg',
+            tbody.innerHTML += rRow(null, { text: 'Stirrup', rowspan: 3 }, 'a) No. Leg',
                 safe(l, 'Legs'), safe(m, 'Legs'), safe(r, 'Legs'), { type: 'rebar' });
             tbody.innerHTML += rRow(null, null, 'b) Rebar',
                 cleanStirrupStr(safe(l, 'StirrupResult.RebarStr')), cleanStirrupStr(safe(m, 'StirrupResult.RebarStr')), cleanStirrupStr(safe(r, 'StirrupResult.RebarStr')), { type: 'rebar' });
             tbody.innerHTML += rRow(null, null, 'c) Check 2At/st + Av/sv',
                 safe(l, 'StirrupResult.AsProv'), safe(m, 'StirrupResult.AsProv'), safe(r, 'StirrupResult.AsProv'), { precision: 3, type: 'res' });
+
+            // Hide redundant stirrup check rows as requested
+            /*
             tbody.innerHTML += rRow(null, null, 'Ref SAP demand',
                 safe(l, 'StirrupResult.AsCalc'), safe(m, 'StirrupResult.AsCalc'), safe(r, 'StirrupResult.AsCalc'), { precision: 3, type: 'loc' });
             tbody.innerHTML += rRow(null, null, 'd) Check 2At/sv',
                 safe(l, 'StirrupOnlyResult.AsProv'), safe(m, 'StirrupOnlyResult.AsProv'), safe(r, 'StirrupOnlyResult.AsProv'), { precision: 3, type: 'res' });
             tbody.innerHTML += rRow(null, null, 'Ref SAP demand',
                 safe(l, 'StirrupOnlyResult.AsCalc'), safe(m, 'StirrupOnlyResult.AsCalc'), safe(r, 'StirrupOnlyResult.AsCalc'), { precision: 3, type: 'loc' });
+            */
 
             tbody.innerHTML += rRow(null, { text: 'Web bar', rowspan: 3 }, 'Rebar config',
                 safe(l, 'WebResult.RebarStr'), safe(m, 'WebResult.RebarStr'), safe(r, 'WebResult.RebarStr'), { type: 'rebar' });

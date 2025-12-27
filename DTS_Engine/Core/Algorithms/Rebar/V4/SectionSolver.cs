@@ -68,7 +68,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         /// </summary>
         public List<SectionArrangement> Solve(DesignSection section, RebarPosition position)
         {
-            double reqArea = position == RebarPosition.Top ? section.ReqTop : section.ReqBot;
+            double safetyFactor = _settings?.Rules?.SafetyFactor ?? 1.0;
+            double reqArea = (position == RebarPosition.Top ? section.ReqTop : section.ReqBot) * safetyFactor;
 
             // No requirement = return empty arrangement
             if (reqArea <= 0.01)
@@ -99,7 +100,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
             }
 
             // CRITICAL: Lấy SafetyFactor từ Settings thay vì hardcode tolerance
-            double safetyFactor = _settings.Rules?.SafetyFactor ?? 1.0;
+            // safetyFactor already defined at start of Solve
             double tolerance = 1.0 - safetyFactor;
             if (tolerance < 0) tolerance = 0;
             // NOTE: Relax tolerance slightly for strict cases

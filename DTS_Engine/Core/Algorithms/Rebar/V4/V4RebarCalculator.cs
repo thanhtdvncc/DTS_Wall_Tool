@@ -268,6 +268,22 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                         span.As_Bot[5] = spanResult.ReqBot[2];
                     }
 
+                    // SYNC STIRRUP/WEB REQUIREMENTS
+                    if (spanResult.ReqStirrup != null && spanResult.ReqStirrup.Length >= 3)
+                    {
+                        if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
+                        span.StirrupReq[0] = spanResult.ReqStirrup[0];
+                        span.StirrupReq[1] = spanResult.ReqStirrup[1];
+                        span.StirrupReq[2] = spanResult.ReqStirrup[2];
+                    }
+                    if (spanResult.ReqWeb != null && spanResult.ReqWeb.Length >= 3)
+                    {
+                        if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
+                        span.WebReq[0] = spanResult.ReqWeb[0];
+                        span.WebReq[1] = spanResult.ReqWeb[1];
+                        span.WebReq[2] = spanResult.ReqWeb[2];
+                    }
+
                     // Apply backbone
                     span.TopBackbone = spanResult.TopBackbone ?? new RebarInfo
                     {
@@ -538,7 +554,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     int resultZoneIndex = MapZoneToResultIndex(zoneIdx, zonesPerSpan);
                     double at_st = result?.TTArea?.ElementAtOrDefault(resultZoneIndex) ?? 0;
                     double av_sv = result?.ShearArea?.ElementAtOrDefault(resultZoneIndex) ?? 0;
-                    double reqStirrup = (2 * at_st + av_sv) * safetyFactor;
+                    double reqStirrup = (2 * at_st + av_sv); // NO SafetyFactor here, will apply in Optimizer for solving
 
                     string sectionId = $"{spanInfo.SpanId}_{GetZoneName(zoneIdx, zonesPerSpan)}";
 
@@ -787,8 +803,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                 double flex = (isWebOnly || areaList == null || i >= areaList.Length) ? 0 : areaList[i];
                 double tor = (torsionList != null && i < torsionList.Length) ? torsionList[i] : 0;
 
-                // Công thức: As_req = (As_flex + As_torsion * Factor) * SafetyFactor
-                double total = (flex + tor * torsionFactor) * safetyFactor;
+                // Công thức: As_req_raw = (As_flex + As_torsion * Factor)
+                double total = (flex + tor * torsionFactor); // NO SafetyFactor here, will apply in Solver for solving
 
                 if (total > maxArea) maxArea = total;
             }

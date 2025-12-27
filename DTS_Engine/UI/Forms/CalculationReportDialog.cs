@@ -45,7 +45,7 @@ namespace DTS_Engine.UI.Forms
             this.webView.Dock = System.Windows.Forms.DockStyle.Fill;
             this.webView.Location = new System.Drawing.Point(0, 0);
             this.webView.Name = "webView";
-            this.webView.Size = new System.Drawing.Size(726, 466);
+            this.webView.Size = new System.Drawing.Size(765, 733);
             this.webView.TabIndex = 0;
             this.webView.ZoomFactor = 1D;
             // 
@@ -53,7 +53,7 @@ namespace DTS_Engine.UI.Forms
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(726, 466);
+            this.ClientSize = new System.Drawing.Size(765, 733);
             this.Controls.Add(this.webView);
             this.Name = "CalculationReportDialog";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;

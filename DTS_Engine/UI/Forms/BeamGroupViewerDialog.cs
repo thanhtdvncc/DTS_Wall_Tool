@@ -239,7 +239,8 @@ namespace DTS_Engine.UI.Forms
                                 SteelGradeMain = settings.General?.SteelGradeMain ?? 0,
                                 MaxLayers = settings.Beam?.MaxLayers ?? 2,
                                 MainBarRange = settings.Beam?.MainBarRange ?? "16-25",
-                                StirrupBarRange = settings.Beam?.StirrupBarRange ?? "8-10"
+                                StirrupBarRange = settings.Beam?.StirrupBarRange ?? "8-10",
+                                SafetyFactor = settings.Rules?.SafetyFactor ?? 1.0
                             }
                         };
 
@@ -578,6 +579,35 @@ namespace DTS_Engine.UI.Forms
                     }
                 }
                 catch { }
+                return;
+            }
+
+            // === AUTO_NAME: Đặt tên tiết diện dầm tự động ===
+            if (message.StartsWith("AUTO_NAME|"))
+            {
+                try
+                {
+                    string json = message.Substring(10);
+                    var handles = JsonConvert.DeserializeObject<List<string>>(json) ?? new List<string>();
+
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        try
+                        {
+                            int count = PerformAutoNaming(handles);
+                            _webView.CoreWebView2.PostWebMessageAsString($"NAMING_DONE|{count}");
+                        }
+                        catch (Exception ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[AUTO_NAME] Error: {ex.Message}");
+                            _webView.CoreWebView2.PostWebMessageAsString($"NAMING_ERROR|{ex.Message}");
+                        }
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    _webView.CoreWebView2.PostWebMessageAsString($"NAMING_ERROR|{ex.Message}");
+                }
                 return;
             }
 
@@ -1189,6 +1219,16 @@ namespace DTS_Engine.UI.Forms
                                 var rebarData = XDataUtils.ReadRebarData(obj);
                                 if (rebarData == null) continue;
 
+                                // Sync Section Label from XData (Single Source: xKeys)
+                                var dict = XDataUtils.GetRawData(obj);
+                                if (dict != null)
+                                {
+                                    if (dict.TryGetValue("xSectionLabel", out var xsl) && xsl != null)
+                                        span.xSectionLabel = xsl.ToString();
+                                    if (dict.TryGetValue("xSectionLabelLocked", out var xsll) && xsll != null)
+                                        span.xSectionLabelLocked = xsll.ToString() == "1";
+                                }
+
                                 // Check if data needs reversing (R->L geometry)
                                 bool isReversed = false;
                                 if (seg?.StartPoint != null && seg?.EndPoint != null)
@@ -1248,6 +1288,7 @@ namespace DTS_Engine.UI.Forms
                                 // CRITICAL FIX: Apply torsion distribution to match TopologyBuilder.PopulateSpanRequirements
                                 // XData [0,1,2] = [L1, Mid, L2] → [0, 2, 4] positions
                                 var settings = DtsSettings.Instance;
+                                // double safetyFactor = settings?.Rules?.SafetyFactor ?? 1.0; // REMOVED as per user: only for check, not display
                                 double torsTop = settings?.Beam?.TorsionDist_TopBar ?? 0.25;
                                 double torsBot = settings?.Beam?.TorsionDist_BotBar ?? 0.25;
                                 double torsSide = settings?.Beam?.TorsionDist_SideBar ?? 0.50;
@@ -1264,9 +1305,10 @@ namespace DTS_Engine.UI.Forms
                                 if (span.StirrupReq == null || span.StirrupReq.Length < 3) span.StirrupReq = new double[3];
                                 if (span.WebReq == null || span.WebReq.Length < 3) span.WebReq = new double[3];
 
-                                // Apply same formula as TopologyBuilder.PopulateSpanRequirements
+                                // Apply same formula as TopologyBuilder.PopulateSpanRequirements / V4RebarCalculator
                                 for (int zi = 0; zi < 3; zi++)
                                 {
+                                    // Longitudinal Steel: (Flex + TorsionDist * Al) - NO SafetyFactor for display
                                     double asTopReq = (zi < topArea.Length ? topArea[zi] : 0) +
                                                       (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsTop;
                                     double asBotReq = (zi < botArea.Length ? botArea[zi] : 0) +
@@ -1280,8 +1322,11 @@ namespace DTS_Engine.UI.Forms
                                     span.As_Bot[p0] = asBotReq;
                                     span.As_Bot[p1] = asBotReq;
 
+                                    // Stirrup: (Av/s + 2 * At/s) - NO SafetyFactor for display
                                     span.StirrupReq[zi] = (zi < shearArea.Length ? shearArea[zi] : 0) +
-                                                          (zi < ttArea.Length ? ttArea[zi] : 0);
+                                                          2 * (zi < ttArea.Length ? ttArea[zi] : 0);
+
+                                    // Side bar: (Al * torsSide) - NO SafetyFactor for display
                                     span.WebReq[zi] = (zi < torsionArea.Length ? torsionArea[zi] : 0) * torsSide;
                                 }
 
@@ -1701,6 +1746,81 @@ namespace DTS_Engine.UI.Forms
                 }
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Đặt tên tiết diện dầm tự động và ghi vào XData
+        /// </summary>
+        private int PerformAutoNaming(List<string> handles)
+        {
+            if (_groups == null || _groups.Count == 0) return 0;
+
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return 0;
+
+            int count = 0;
+
+            using (var docLock = doc.LockDocument())
+            using (var tr = doc.TransactionManager.StartTransaction())
+            {
+                try
+                {
+                    // Nếu handles rỗng, đặt tên cho tất cả dầm trong _groups
+                    HashSet<string> handleSet = null;
+                    if (handles != null && handles.Count > 0)
+                    {
+                        handleSet = new HashSet<string>(handles, StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    // Gọi NamingEngine để đặt tên cho groups
+                    Core.Algorithms.NamingEngine.AutoLabeling(_groups, Core.Data.DtsSettings.Instance);
+
+                    // Ghi xSectionLabel vào XData cho từng dầm
+                    foreach (var group in _groups)
+                    {
+                        if (group.EntityHandles == null) continue;
+
+                        foreach (var entityHandle in group.EntityHandles)
+                        {
+                            // Nếu có filter handles, chỉ xử lý các dầm được chọn
+                            if (handleSet != null && !handleSet.Contains(entityHandle))
+                                continue;
+
+                            try
+                            {
+                                var objId = Core.Utils.AcadUtils.GetObjectIdFromHandle(entityHandle);
+                                if (objId.IsValid && !objId.IsNull)
+                                {
+                                    var obj = tr.GetObject(objId, Autodesk.AutoCAD.DatabaseServices.OpenMode.ForWrite);
+                                    if (obj != null)
+                                    {
+                                        // Ghi tên group vào xSectionLabel
+                                        string sectionLabel = group.Name ?? "-";
+                                        Core.Utils.XDataUtils.MergeRawData(obj, tr, new Dictionary<string, object>
+                                        {
+                                            { "xSectionLabel", sectionLabel }
+                                        });
+                                        count++;
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[PerformAutoNaming] Error for {entityHandle}: {ex.Message}");
+                            }
+                        }
+                    }
+
+                    tr.Commit();
+                }
+                catch
+                {
+                    tr.Abort();
+                    throw;
+                }
+            }
+
+            return count;
         }
 
         private void HandleExport()

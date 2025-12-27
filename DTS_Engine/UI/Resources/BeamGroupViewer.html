@@ -236,7 +236,7 @@
         <!-- FLOATING TOGGLE BUTTONS - Visible when sidebars are collapsed -->
         <!-- Right Sidebar Toggle (when collapsed) -->
         <button id="rightSidebarFloatBtn" onclick="toggleRightSidebar()" title="Mở Metrics & Table"
-            class="hidden absolute right-0 top-16 w-6 h-16 bg-slate-700 hover:bg-slate-600 text-white rounded-l z-30 flex items-center justify-center">
+            class="absolute right-0 top-16 w-6 h-16 bg-slate-700 hover:bg-slate-600 text-white rounded-l z-30 flex items-center justify-center">
             <i class="fa-solid fa-chevron-left text-xs"></i>
         </button>
 
@@ -248,14 +248,15 @@
 
         <!-- RIGHT SIDEBAR - Collapsible overlay (Metrics + Table) -->
         <div id="rightSidebar"
-            class="absolute right-0 top-0 bottom-0 w-80 bg-slate-50/95 backdrop-blur border-l border-slate-300 shadow-lg z-20 transition-transform duration-300 flex flex-col">
+            class="absolute right-0 top-0 bottom-0 w-80 bg-slate-50/95 backdrop-blur border-l border-slate-300 shadow-lg z-20 transition-transform duration-300 flex flex-col"
+            style="transform: translateX(100%);">
 
             <!-- METRICS BAR - Top of sidebar with toggle in title -->
             <div id="metricsBar" class="flex-none bg-slate-100 border-b border-slate-200 p-3">
                 <div onclick="toggleRightSidebar()"
                     class="flex justify-between items-center cursor-pointer hover:bg-slate-200 -m-2 p-2 rounded mb-2">
                     <span class="text-xs font-bold text-slate-600">📊 Metrics & Table</span>
-                    <i id="rightSidebarIcon" class="fa-solid fa-chevron-right text-xs text-slate-400"></i>
+                    <i id="rightSidebarIcon" class="fa-solid fa-chevron-left text-xs text-slate-400"></i>
                 </div>
                 <div class="grid grid-cols-2 gap-2 text-xs">
                     <div class="flex items-center gap-1">
@@ -410,7 +411,7 @@
         <!-- BOTTOM DETAIL PANEL - Collapsible overlay (resizable) -->
         <div id="detailPanel"
             class="absolute left-0 bottom-0 bg-white border-t border-slate-300 shadow-lg z-20 transition-transform duration-300 flex flex-col"
-            style="right: 320px; height: 40vh;">
+            style="right: 0px; height: 40vh;">
 
             <!-- Resize Handle (drag to resize panel height) - larger hitbox for easy clicking -->
             <div id="detailPanelResizer"
@@ -524,6 +525,42 @@
             boxZoomStartY: 0,
             boxZoomEndX: 0,
             boxZoomEndY: 0,
+
+            // === BOX SELECTION (Window/Crossing) ===
+            selectedHandles: new Set(),  // Các handle dầm được chọn
+            boxSelectActive: false,
+            boxSelectStart: { x: 0, y: 0 },
+            boxSelectEnd: { x: 0, y: 0 },
+
+            // Selection helper functions (OOP pattern từ index.html)
+            toggleHandleSelection(handle, ctrlKey = false) {
+                if (ctrlKey) {
+                    if (this.selectedHandles.has(handle)) {
+                        this.selectedHandles.delete(handle);
+                    } else {
+                        this.selectedHandles.add(handle);
+                    }
+                } else {
+                    this.selectedHandles.clear();
+                    this.selectedHandles.add(handle);
+                }
+            },
+
+            isHandleSelected(handle) {
+                return this.selectedHandles.has(handle);
+            },
+
+            clearHandleSelection() {
+                this.selectedHandles.clear();
+            },
+
+            addHandlesToSelection(handles) {
+                if (handles) handles.forEach(h => this.selectedHandles.add(h));
+            },
+
+            removeHandlesFromSelection(handles) {
+                if (handles) handles.forEach(h => this.selectedHandles.delete(h));
+            },
 
             // UI
             tablePanelCollapsed: false,
@@ -698,7 +735,7 @@
         let boxZoomEndY = 0;
         let tablePanelCollapsed = false;
         // NEW: Sidebar collapse states
-        let rightSidebarCollapsed = false;
+        let rightSidebarCollapsed = true;
         let detailPanelCollapsed = false;
         // Detail canvas zoom/pan (separate from main canvas)
         let detailZoom = 1.0;
@@ -711,6 +748,15 @@
         let selectedBeamHandle = null;  // null = full group selected, string = single beam selected
         let singleBeamMode = false;  // Tab toggles this
         let selectedBeamIndex = -1;   // -1 = all beams in group, >=0 = specific beam index
+
+        // NEW: Shared plan view transform state for hit-testing
+        let planTransform = {
+            baseScale: 1.0,
+            baseOffsetX: 0,
+            baseOffsetY: 0,
+            lw: 800,
+            lh: 600
+        };
 
         // ============ INLINE LABEL EDIT FUNCTIONS (Restored from u7.7) ============
 
@@ -1004,6 +1050,7 @@
             }
 
             updateDetailPanelWidth();
+            updateOverlayPositions();
         }
 
         function toggleDetailPanel() {
@@ -1024,6 +1071,7 @@
                 floatBtn?.classList.add('hidden');  // Hide floating button
                 // Re-render detail canvas when panel is expanded
                 resizeDetailCanvas();
+                updateOverlayPositions();
             }
         }
 
@@ -1062,6 +1110,7 @@
 
                 // Resize canvas bên trong ngay lập tức
                 resizeDetailCanvas();
+                updateOverlayPositions();
             };
 
             // Handler xử lý nhả chuột (Up)
@@ -1180,16 +1229,6 @@
             }
         }
 
-        function resizeDetailCanvas() {
-            const container = document.getElementById('detailCanvasContainer');
-            const canvas = document.getElementById('detailCanvas');
-            if (!container || !canvas) return;
-
-            canvas.width = container.clientWidth;
-            canvas.height = container.clientHeight;
-
-            renderDetailCanvas();
-        }
 
         function resetDetailCanvasView() {
             detailZoom = 1.0;
@@ -1224,15 +1263,19 @@
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
 
-            // Clear
+            const dpr = window.devicePixelRatio || 1;
+            const lw = canvas.width / dpr;
+            const lh = canvas.height / dpr;
+
+            // Clear using logical scale
             ctx.fillStyle = '#f8fafc';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, lw, lh);
 
             if (!currentGroup?.Spans?.length) {
                 ctx.fillStyle = '#94a3b8';
                 ctx.font = '14px sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText('Không có dữ liệu nhịp', canvas.width / 2, canvas.height / 2);
+                ctx.fillText('Không có dữ liệu nhịp', lw / 2, lh / 2);
                 return;
             }
 
@@ -1266,9 +1309,13 @@
                 return equalSpanWidth;
             });
 
-            // Clear
+            const dpr = window.devicePixelRatio || 1;
+            const lw = canvas.width / dpr;
+            const lh = canvas.height / dpr;
+
+            // Clear using logical scale
             ctx.fillStyle = '#f8fafc';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, lw, lh);
 
             // Apply detail zoom and pan
             ctx.save();
@@ -1631,36 +1678,57 @@
                 columnPoints.push({ x: b.EndX, y: b.EndY });
             });
 
-            // Calculate bounds
-            const allX = beamsOnStory.flatMap(b => [b.StartX, b.EndX]);
-            const allY = beamsOnStory.flatMap(b => [b.StartY, b.EndY]);
-            const minX = Math.min(...allX) - 2000;
-            const maxX = Math.max(...allX) + 2000;
-            const minY = Math.min(...allY) - 2000;
-            const maxY = Math.max(...allY) + 2000;
-
-            // Scale to fit canvas (base scale)
-            const scaleX = (canvas.width - 40) / (maxX - minX);
-            const scaleY = (canvas.height - 40) / (maxY - minY);
-            const baseScale = Math.min(scaleX, scaleY) * 0.85;
-            const baseOffsetX = 20 - minX * baseScale;
-            const baseOffsetY = 20 - minY * baseScale;
-
-            // Apply interactive zoom and pan
-            const tx = x => (x * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
-            const ty = y => (canvas.height - (y * baseScale + baseOffsetY)) * canvasZoom + canvasPanY; // Flip Y
-
-            // Clear
-            ctx.fillStyle = '#f8fafc';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Draw grid lines from AutoCAD layer (dts_axis)
-            // FIX: Filter grids by LevelZ from XData (story elevation when grid was plotted)
+            // FIX: Move grid filtering up before bounds calculation
             const gridsOnStory = (data.allGrids || []).filter(grid => {
-                // Use LevelZ from XData if available, otherwise use geometry Z
                 const gridLevelZ = grid.LevelZ || grid.Z || 0;
                 return Math.abs(gridLevelZ - z) < Z_TOLERANCE;
             });
+
+            // Collect all points for bounds (beams + grids)
+            const ptsX = beamsOnStory.flatMap(b => [b.StartX, b.EndX]);
+            const ptsY = beamsOnStory.flatMap(b => [b.StartY, b.EndY]);
+
+            gridsOnStory.forEach(g => {
+                ptsX.push(g.StartX, g.EndX);
+                ptsY.push(g.StartY, g.EndY);
+            });
+
+            const minX = Math.min(...ptsX);
+            const maxX = Math.max(...ptsX);
+            const minY = Math.min(...ptsY);
+            const maxY = Math.max(...ptsY);
+
+            const contentW = maxX - minX || 1000;
+            const contentH = maxY - minY || 1000;
+
+            // Padding for labels and axis text
+            const PADDING = 100;
+
+            // logical dimensions for centering calculations
+            const dpr = window.devicePixelRatio || 1;
+            const lw = canvas.width / dpr;
+            const lh = canvas.height / dpr;
+
+            // Scale to fit canvas (base scale)
+            const scaleX = (lw - PADDING * 2) / contentW;
+            const scaleY = (lh - PADDING * 2) / contentH;
+            const baseScale = Math.min(scaleX, scaleY, 1.0); // Don't scale up too much
+
+            // Center content in canvas
+            const baseOffsetX = (lw - contentW * baseScale) / 2 - minX * baseScale;
+            const baseOffsetY = (lh - contentH * baseScale) / 2 - minY * baseScale;
+
+            // NEW: Sync shared transform for hit-testing
+            planTransform = { baseScale, baseOffsetX, baseOffsetY, lw, lh };
+
+            // Apply interactive zoom and pan
+            const tx = x => (x * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
+            const ty = y => (lh - (y * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
+
+            // Clear using logical coordinates
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, 0, lw, lh);
+
 
             ctx.strokeStyle = '#cbd5e1';
             ctx.lineWidth = 1;
@@ -1745,8 +1813,29 @@
                     }
                 }
 
-                ctx.strokeStyle = isHighlighted ? '#3b82f6' : (isInGroup ? '#93c5fd' : '#475569');
-                ctx.lineWidth = isHighlighted ? 4 : (isInGroup ? 3 : 2);
+                // Check if beam is selected by box selection
+                const isChosen = Beam.State.isHandleSelected(b.Handle);
+
+                // Determine stroke style based on selection priority
+                let strokeStyle = '#475569';
+                let lineWidth = 2;
+
+                if (isChosen) {
+                    // Selected by box selection: màu cam (giống index.html)
+                    strokeStyle = '#f97316';
+                    lineWidth = 4;
+                } else if (isHighlighted) {
+                    // Highlighted by group/span selection
+                    strokeStyle = '#3b82f6';
+                    lineWidth = 4;
+                } else if (isInGroup) {
+                    // Part of current group
+                    strokeStyle = '#93c5fd';
+                    lineWidth = 3;
+                }
+
+                ctx.strokeStyle = strokeStyle;
+                ctx.lineWidth = lineWidth;
                 ctx.beginPath();
                 ctx.moveTo(tx(b.StartX), ty(b.StartY));
                 ctx.lineTo(tx(b.EndX), ty(b.EndY));
@@ -1986,23 +2075,35 @@
         function render() {
             // ALWAYS render plan view for main canvas - no mode check needed
             renderPlanView();
+            updateOverlayPositions();
 
-            // FIX 2: Draw box zoom selection rectangle AFTER content
-            if (boxZoomActive) {
+            // Draw box selection rectangle AFTER content
+            if (Beam.State.boxSelectActive) {
                 const canvas = document.getElementById('beamCanvas');
                 const ctx = canvas.getContext('2d');
-                const x1 = Math.min(boxZoomStartX, boxZoomEndX);
-                const y1 = Math.min(boxZoomStartY, boxZoomEndY);
-                const w = Math.abs(boxZoomEndX - boxZoomStartX);
-                const h = Math.abs(boxZoomEndY - boxZoomStartY);
+                const { boxSelectStart, boxSelectEnd } = Beam.State;
+                const isLeftToRight = boxSelectEnd.x >= boxSelectStart.x;
+
+                const x = Math.min(boxSelectStart.x, boxSelectEnd.x);
+                const y = Math.min(boxSelectStart.y, boxSelectEnd.y);
+                const w = Math.abs(boxSelectEnd.x - boxSelectStart.x);
+                const h = Math.abs(boxSelectEnd.y - boxSelectStart.y);
 
                 ctx.save();
-                ctx.strokeStyle = '#3b82f6';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([5, 3]);
-                ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
-                ctx.fillRect(x1, y1, w, h);
-                ctx.strokeRect(x1, y1, w, h);
+                if (isLeftToRight) {
+                    // Window Selection: Blue solid
+                    ctx.strokeStyle = '#3b82f6';
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
+                    ctx.setLineDash([]);
+                } else {
+                    // Crossing Selection: Green dashed
+                    ctx.strokeStyle = '#22c55e';
+                    ctx.fillStyle = 'rgba(34, 197, 94, 0.1)';
+                    ctx.setLineDash([5, 3]);
+                }
+                ctx.lineWidth = 1;
+                ctx.fillRect(x, y, w, h);
+                ctx.strokeRect(x, y, w, h);
                 ctx.restore();
             }
         }
@@ -2035,26 +2136,51 @@
             }
         }
 
-        // Resize canvas to fill container (proper pixel sizing, no CSS stretch)
+        // Resize canvas to fill container (proper DPI scaling)
         function resizeCanvas() {
-            // Main Plan Canvas
             const planContainer = document.getElementById('planCanvasContainer');
             const canvas = document.getElementById('beamCanvas');
             if (planContainer && canvas) {
-                canvas.style.width = '';
-                canvas.style.height = '';
+                const dpr = window.devicePixelRatio || 1;
                 const w = planContainer.clientWidth || 800;
                 const h = planContainer.clientHeight || 300;
-                if (canvas.width !== w || canvas.height !== h) {
-                    canvas.width = w;
-                    canvas.height = h;
-                    // Always render Plan View on main canvas
+
+                if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+                    canvas.width = w * dpr;
+                    canvas.height = h * dpr;
+                    canvas.style.width = w + 'px';
+                    canvas.style.height = h + 'px';
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.resetTransform();
+                    ctx.scale(dpr, dpr);
+
                     renderPlanView();
                 }
             }
+        }
 
-            // Also resize detail canvas
-            resizeDetailCanvas();
+        function resizeDetailCanvas() {
+            const container = document.getElementById('detailCanvasContainer');
+            const canvas = document.getElementById('detailCanvas');
+            if (container && canvas) {
+                const dpr = window.devicePixelRatio || 1;
+                const w = container.clientWidth || 800;
+                const h = container.clientHeight || 200;
+
+                if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+                    canvas.width = w * dpr;
+                    canvas.height = h * dpr;
+                    canvas.style.width = w + 'px';
+                    canvas.style.height = h + 'px';
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.resetTransform();
+                    ctx.scale(dpr, dpr);
+
+                    renderDetailCanvas();
+                }
+            }
         }
 
         function init() {
@@ -2068,10 +2194,11 @@
             // Resize canvas with multiple fallbacks for reliable sizing
             // Container may not have size immediately on WebView2 load
             resizeCanvas();
-            requestAnimationFrame(resizeCanvas);
-            setTimeout(resizeCanvas, 100);
-            setTimeout(resizeCanvas, 300);
-            window.addEventListener('resize', () => { hideInlineLabelEditor(); resizeCanvas(); updateDetailPanelWidth(); });
+            resizeDetailCanvas();
+            requestAnimationFrame(() => { resizeCanvas(); resizeDetailCanvas(); });
+            setTimeout(() => { resizeCanvas(); resizeDetailCanvas(); updateOverlayPositions(); }, 100);
+            setTimeout(() => { resizeCanvas(); resizeDetailCanvas(); updateOverlayPositions(); }, 500);
+            window.addEventListener('resize', () => { hideInlineLabelEditor(); resizeCanvas(); updateDetailPanelWidth(); updateOverlayPositions(); });
 
             const planContainer = document.getElementById('planCanvasContainer');
             if (planContainer) {
@@ -2204,10 +2331,9 @@
                 canvas.addEventListener('mousemove', (e) => {
                     const rect = canvas.getBoundingClientRect();
 
-                    // Handle box zoom drag
-                    if (boxZoomActive) {
-                        boxZoomEndX = e.clientX - rect.left;
-                        boxZoomEndY = e.clientY - rect.top;
+                    // Handle box selection drag
+                    if (Beam.State.boxSelectActive) {
+                        Beam.State.boxSelectEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
                         render(); // Will draw selection box
                         return;
                     }
@@ -2264,112 +2390,99 @@
                     }
                 });
 
-                // Middle click or Alt+click to start pan, Ctrl+click or left-click-hold to start box zoom
-                let boxZoomTimer = null;
+                // Middle click or Alt+click to start pan, Left click to start box selection
                 canvas.addEventListener('mousedown', (e) => {
                     mouseDownButton = e.button; // Track which button started the interaction
                     hideInlineLabelEditor();
                     const rect = canvas.getBoundingClientRect();
 
-                    // Ctrl+Left click = Immediate Box Zoom
-                    if (e.button === 0 && e.ctrlKey) {
-                        boxZoomActive = true;
-                        boxZoomStartX = e.clientX - rect.left;
-                        boxZoomStartY = e.clientY - rect.top;
-                        boxZoomEndX = boxZoomStartX;
-                        boxZoomEndY = boxZoomStartY;
-                        canvas.style.cursor = 'crosshair';
-                        e.preventDefault();
-                        return;
-                    }
-
-                    // Left click = start timer for box zoom (hold 200ms to activate)
-                    if (e.button === 0 && !e.altKey) {
-                        const startX = e.clientX - rect.left;
-                        const startY = e.clientY - rect.top;
-                        boxZoomTimer = setTimeout(() => {
-                            boxZoomActive = true;
-                            boxZoomStartX = startX;
-                            boxZoomStartY = startY;
-                            boxZoomEndX = startX;
-                            boxZoomEndY = startY;
-                            canvas.style.cursor = 'crosshair';
-                        }, 200); // 200ms hold to start box zoom
-                    }
-
                     // Middle click or Alt+Left click = Pan
                     if (e.button === 1 || (e.button === 0 && e.altKey)) {
-                        if (boxZoomTimer) { clearTimeout(boxZoomTimer); boxZoomTimer = null; }
                         canvasDragging = true;
                         isPanDragging = false; // Reset drag flag
                         canvasLastX = e.clientX;
                         canvasLastY = e.clientY;
                         canvas.style.cursor = 'grabbing';
                         e.preventDefault();
+                        return;
+                    }
+
+                    // Left click (no modifier except Ctrl/Shift for selection) = Start Box Selection
+                    if (e.button === 0 && !e.altKey && canvasMode === 'plan') {
+                        Beam.State.boxSelectActive = true;
+                        Beam.State.boxSelectStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+                        Beam.State.boxSelectEnd = { ...Beam.State.boxSelectStart };
+                        canvas.style.cursor = 'crosshair';
+                        e.preventDefault();
+                        return;
                     }
                 });
 
                 canvas.addEventListener('mouseup', (e) => {
-                    // Clear box zoom timer if quick click
-                    if (boxZoomTimer) {
-                        clearTimeout(boxZoomTimer);
-                        boxZoomTimer = null;
-                    }
-
-                    // Finish box zoom
-                    if (boxZoomActive) {
-                        boxZoomActive = false;
+                    // Finish Box Selection
+                    if (Beam.State.boxSelectActive) {
+                        Beam.State.boxSelectActive = false;
                         canvas.style.cursor = 'default';
 
-                        // Calculate box dimensions
-                        const x1 = Math.min(boxZoomStartX, boxZoomEndX);
-                        const y1 = Math.min(boxZoomStartY, boxZoomEndY);
-                        const x2 = Math.max(boxZoomStartX, boxZoomEndX);
-                        const y2 = Math.max(boxZoomStartY, boxZoomEndY);
-                        const boxW = x2 - x1;
-                        const boxH = y2 - y1;
+                        const { boxSelectStart, boxSelectEnd } = Beam.State;
+                        const isLeftToRight = boxSelectEnd.x >= boxSelectStart.x;
+                        const left = Math.min(boxSelectStart.x, boxSelectEnd.x);
+                        const right = Math.max(boxSelectStart.x, boxSelectEnd.x);
+                        const top = Math.min(boxSelectStart.y, boxSelectEnd.y);
+                        const bottom = Math.max(boxSelectStart.y, boxSelectEnd.y);
 
-                        // Only zoom if box is reasonable size (min 20px)
-                        if (boxW > 20 && boxH > 20) {
-                            // Convert screen coords to world coords (before zoom)
-                            const worldX1 = (x1 - canvasPanX) / canvasZoom;
-                            const worldY1 = (y1 - canvasPanY) / canvasZoom;
-                            const worldX2 = (x2 - canvasPanX) / canvasZoom;
-                            const worldY2 = (y2 - canvasPanY) / canvasZoom;
-                            const worldW = worldX2 - worldX1;
-                            const worldH = worldY2 - worldY1;
+                        // Chỉ xử lý nếu vùng chọn đủ lớn (> 5px)
+                        if (right - left > 5 && bottom - top > 5) {
+                            // Nếu không giữ Ctrl, clear selection trước
+                            if (!e.ctrlKey) {
+                                Beam.State.clearHandleSelection();
+                            }
+                            performBoxSelection(left, right, top, bottom, isLeftToRight);
+                        } else {
+                            // Click đơn (không kéo) - xử lý như click thông thường
+                            const rect = canvas.getBoundingClientRect();
+                            const mx = e.clientX - rect.left;
+                            const my = e.clientY - rect.top;
+                            const beam = findBeamAtPoint(mx, my);
 
-                            // Calculate new zoom to fit box
-                            const canvasW = canvas.width;
-                            const canvasH = canvas.height;
-                            const zoomX = canvasW / worldW;
-                            const zoomY = canvasH / worldH;
-                            const newZoom = Math.min(zoomX, zoomY, 5) * 0.9; // Max 5x, 90% margin
-
-                            // Center the box
-                            const worldCenterX = (worldX1 + worldX2) / 2;
-                            const worldCenterY = (worldY1 + worldY2) / 2;
-
-                            canvasZoom = Math.max(0.5, newZoom);
-                            canvasPanX = canvasW / 2 - worldCenterX * canvasZoom;
-                            canvasPanY = canvasH / 2 - worldCenterY * canvasZoom;
-
-                            render();
+                            if (beam && beam.Handle) {
+                                if (e.ctrlKey) {
+                                    // Ctrl+Click: Toggle span đơn lẻ
+                                    Beam.State.toggleHandleSelection(beam.Handle, true);
+                                } else if (e.shiftKey) {
+                                    // Shift+Click: Toggle cả group
+                                    const groupIdx = findGroupByBeamHandle(beam.Handle);
+                                    if (groupIdx >= 0) {
+                                        const handles = data.groups[groupIdx].EntityHandles || [];
+                                        const allSelected = handles.every(h => Beam.State.isHandleSelected(h));
+                                        if (allSelected) {
+                                            Beam.State.removeHandlesFromSelection(handles);
+                                        } else {
+                                            Beam.State.addHandlesToSelection(handles);
+                                        }
+                                    }
+                                } else {
+                                    // Click thường: Chọn duy nhất
+                                    Beam.State.clearHandleSelection();
+                                    Beam.State.selectedHandles.add(beam.Handle);
+                                }
+                            } else if (!e.ctrlKey && !e.shiftKey) {
+                                // Click vào vùng trống: Clear selection
+                                Beam.State.clearHandleSelection();
+                            }
                         }
+                        render();
                         return;
                     }
 
                     canvasDragging = false;
                     canvas.style.cursor = 'default';
-                    // NOTE: Beam selection is handled ONLY in 'click' event with strict button checks
                 });
 
                 canvas.addEventListener('mouseleave', () => {
-                    if (boxZoomTimer) { clearTimeout(boxZoomTimer); boxZoomTimer = null; }
                     canvasDragging = false;
-                    boxZoomActive = false;
+                    Beam.State.boxSelectActive = false;
                     canvas.style.cursor = 'default';
-                    // REMOVED: highlightedSpanIndex = -1 - mouse leaving should NOT reset highlight
                     // Highlight state is persistent, only changed by click/tab
                 });
 
@@ -2623,6 +2736,25 @@
                 loadGroup(0);
             }
             // NOTE: initDetailPanelResize() is now called at the beginning of init()
+
+            // === LISTEN FOR MESSAGES FROM C# ===
+            if (window.chrome?.webview) {
+                window.chrome.webview.addEventListener('message', (event) => {
+                    const msg = event.data;
+                    if (typeof msg !== 'string') return;
+
+                    if (msg.startsWith('NAMING_DONE|')) {
+                        const count = parseInt(msg.split('|')[1]) || 0;
+                        showToast(`✅ Đã đặt tên ${count} dầm`);
+                        pullDataFromCad(); // Refresh data
+                    }
+
+                    if (msg.startsWith('NAMING_ERROR|')) {
+                        const errorMsg = msg.split('|')[1] || 'Lỗi không xác định';
+                        showToast(`❌ Lỗi: ${errorMsg}`, 3000);
+                    }
+                });
+            }
         }
 
         function populateGroupSelect() {
@@ -2877,8 +3009,8 @@
                 }
             }
 
-            // Check deficit with safety factor
-            const safetyFactor = data.settings?.General?.SteelTolerance || 0.98;
+            // Check deficit with safety factor (Single Source: data.settings.SafetyFactor)
+            const safetyFactor = data.settings?.SafetyFactor || 1.0;
             const isDeficit = asReq > 0 && asProv < asReq * safetyFactor;
 
             // Format display
@@ -3551,10 +3683,13 @@
                             ${renderLayerRebarInputs(spanIdx, span, 'Bot', layer)}
                             ${renderStirrupInputs(spanIdx, span, maxLayers)}
                             <td class="p-1" rowspan="${maxLayers}">
-                                <input type="text" value="${span.SideBar || ''}" 
-                                    onchange="updateSideBar(${spanIdx}, this.value)"
-                                    placeholder="2D12"
-                                    class="w-12 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px]">
+                                <div class="flex flex-col items-center">
+                                    <input type="text" value="${span.SideBar || ''}" 
+                                        onchange="updateSideBar(${spanIdx}, this.value)"
+                                        placeholder="2D12"
+                                        class="w-12 border border-slate-200 rounded px-0.5 py-0.5 text-center text-[10px] mb-0.5">
+                                    <span class="text-[8px] text-slate-400 text-center truncate w-12" title="Max Required Web Area">${formatRebarValue(Math.max(...(span.WebReq || [0])))}</span>
+                                </div>
                             </td>
                         `;
                     } else {
@@ -3902,29 +4037,16 @@
             const z = Beam.State.currentStoryZ;
             const Z_TOL = 500;
             const beamsOnStory = data.allBeams.filter(b => Math.abs((b.LevelZ || 0) - z) < Z_TOL);
+            if (beamsOnStory.length === 0) return null;
 
-            // Get transform parameters from renderPlanView logic
-            const canvas = document.getElementById('beamCanvas');
-            const allX = beamsOnStory.flatMap(b => [b.StartX, b.EndX]);
-            const allY = beamsOnStory.flatMap(b => [b.StartY, b.EndY]);
-            if (allX.length === 0) return null;
-
-            const minX = Math.min(...allX) - 2000;
-            const maxX = Math.max(...allX) + 2000;
-            const minY = Math.min(...allY) - 2000;
-            const maxY = Math.max(...allY) + 2000;
-
-            const scaleX = (canvas.width - 40) / (maxX - minX);
-            const scaleY = (canvas.height - 40) / (maxY - minY);
-            const baseScale = Math.min(scaleX, scaleY) * 0.85;
-            const baseOffsetX = 20 - minX * baseScale;
-            const baseOffsetY = 20 - minY * baseScale;
+            // Use SHARED transform state
+            const { baseScale, baseOffsetX, baseOffsetY, lh } = planTransform;
 
             const tx = x => (x * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
-            const ty = y => (canvas.height - (y * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
+            const ty = y => (lh - (y * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
 
             // Hit test
-            const HIT_TOLERANCE = 8; // pixels
+            const HIT_TOLERANCE = 10; // pixels
             for (const beam of beamsOnStory) {
                 const x1 = tx(beam.StartX), y1 = ty(beam.StartY);
                 const x2 = tx(beam.EndX), y2 = ty(beam.EndY);
@@ -3946,6 +4068,43 @@
             return Math.hypot(px - xx, py - yy);
         }
 
+        // === BOX SELECTION (Window/Crossing) ===
+        function performBoxSelection(left, right, top, bottom, isWindow) {
+            const z = Beam.State.currentStoryZ;
+            const Z_TOL = 500;
+            const beamsOnStory = (data.allBeams || []).filter(b =>
+                Math.abs((b.LevelZ || 0) - z) < Z_TOL);
+
+            if (beamsOnStory.length === 0) return;
+
+            const { baseScale, baseOffsetX, baseOffsetY, lh } = planTransform;
+            const tx = x => (x * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
+            const ty = y => (lh - (y * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
+
+            beamsOnStory.forEach(b => {
+                if (!b.Handle) return;
+
+                const x1 = tx(b.StartX), y1 = ty(b.StartY);
+                const x2 = tx(b.EndX), y2 = ty(b.EndY);
+                const bLeft = Math.min(x1, x2), bRight = Math.max(x1, x2);
+                const bTop = Math.min(y1, y2), bBottom = Math.max(y1, y2);
+
+                let selected = false;
+                if (isWindow) {
+                    // Window: Nằm trọn trong vùng
+                    selected = bLeft >= left && bRight <= right && bTop >= top && bBottom <= bottom;
+                } else {
+                    // Crossing: Giao nhau với vùng
+                    selected = !(bRight < left || bLeft > right || bBottom < top || bTop > bottom);
+                }
+
+                if (selected) {
+                    Beam.State.selectedHandles.add(b.Handle);
+                }
+            });
+        }
+
+
         // FIX 3: Find group containing beam by handle
         function findGroupByBeamHandle(handle) {
             if (!data.groups || !handle) return -1;
@@ -3962,30 +4121,8 @@
             // For single-beam groups, just return 0
             if (currentGroup.Spans.length === 1) return 0;
 
-            // Get canvas and transforms
-            const canvas = document.getElementById('beamCanvas');
-            if (!canvas) return -1;
-
-            // Calculate story-based bounds
-            const z = Beam.State.currentStoryZ;
-            const Z_TOL = 500;
-            const beamsOnStory = data.allBeams.filter(b => Math.abs((b.LevelZ || 0) - z) < Z_TOL);
-            if (beamsOnStory.length === 0) return -1;
-
-            const allX = beamsOnStory.flatMap(b => [b.StartX, b.EndX]);
-            const allY = beamsOnStory.flatMap(b => [b.StartY, b.EndY]);
-            if (allX.length === 0) return -1;
-
-            const minX = Math.min(...allX) - 2000;
-            const maxX = Math.max(...allX) + 2000;
-            const minY = Math.min(...allY) - 2000;
-            const maxY = Math.max(...allY) + 2000;
-
-            const scaleX = (canvas.width - 40) / (maxX - minX);
-            const scaleY = (canvas.height - 40) / (maxY - minY);
-            const baseScale = Math.min(scaleX, scaleY) * 0.85;
-            const baseOffsetX = 20 - minX * baseScale;
-            const baseOffsetY = 20 - minY * baseScale;
+            // Use SHARED transform state
+            const { baseScale, baseOffsetX, baseOffsetY, lh } = planTransform;
 
             // Find which span entity was clicked
             const groupHandles = currentGroup.EntityHandles || [];
@@ -3995,13 +4132,13 @@
 
                 // Transform beam coords to screen
                 const x1 = (beam.StartX * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
-                const y1 = (canvas.height - (beam.StartY * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
+                const y1 = (lh - (beam.StartY * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
                 const x2 = (beam.EndX * baseScale + baseOffsetX) * canvasZoom + canvasPanX;
-                const y2 = (canvas.height - (beam.EndY * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
+                const y2 = (lh - (beam.EndY * baseScale + baseOffsetY)) * canvasZoom + canvasPanY;
 
                 // Check if click is near this beam segment
                 const dist = pointToLineDistance(screenX, screenY, x1, y1, x2, y2);
-                if (dist < 10) {
+                if (dist < 15) { // Use slightly larger tolerance for span selection
                     return spanIdx;
                 }
             }
@@ -4034,9 +4171,25 @@
 
         function runAutoName() {
             closeConfirmModal();
+
+            const handles = Array.from(Beam.State.selectedHandles);
+
+            if (handles.length === 0) {
+                // Không có dầm được chọn -> Hỏi xác nhận
+                showCanvasConfirm('Đặt tên toàn bộ dầm trên mặt bằng hiện tại?',
+                    () => sendAutoNameCommand([]),
+                    () => { }
+                );
+            } else {
+                // Có dầm được chọn -> Thực hiện ngay
+                sendAutoNameCommand(handles);
+            }
+        }
+
+        function sendAutoNameCommand(handles) {
             if (window.chrome?.webview) {
-                window.chrome.webview.postMessage('CMD|DTS_REBAR_BEAM_NAME');
-                showToast('⏳ Đang gửi lệnh đặt tên...');
+                window.chrome.webview.postMessage('AUTO_NAME|' + JSON.stringify(handles));
+                showToast('⏳ Đang đặt tên...');
             } else {
                 console.warn('WebView2 not found');
             }
@@ -4080,18 +4233,36 @@
             showToast('View reset');
         }
 
-        // Update overlay positions based on table panel state
+        // Update overlay positions based on panels state
         function updateOverlayPositions() {
-            const tablePanel = document.getElementById('tablePanel');
+            const detailPanel = document.getElementById('detailPanel');
+            const detailVisibleHeight = (detailPanel && !detailPanelCollapsed) ? detailPanel.offsetHeight : 0;
+
+            const bottomOffset = detailVisibleHeight + 10;
+            const rightOffset = rightSidebarCollapsed ? 10 : 330; // 320px sidebar + 10px margin
+
             const zoomIndicator = document.getElementById('zoomIndicator');
             const helpOverlay = document.getElementById('helpOverlay');
+            const zoomFitBtn = document.querySelector('button[onclick="resetPlanCanvasView()"]');
 
-            // Get actual table panel height
-            const tablePanelHeight = tablePanelCollapsed ? 40 : 300;
-            const bottomOffset = tablePanelHeight + 10;  // Extra margin
+            if (zoomIndicator) {
+                zoomIndicator.style.bottom = `${bottomOffset}px`;
+                zoomIndicator.style.right = `${rightOffset}px`;
+                // FIX: Cập nhật luôn chỉ số % zoom
+                zoomIndicator.textContent = `${Math.round(canvasZoom * 100)}%`;
+            }
+            if (helpOverlay) {
+                helpOverlay.style.bottom = `${bottomOffset}px`;
+            }
+            if (zoomFitBtn) {
+                zoomFitBtn.style.right = `${rightOffset}px`;
+            }
 
-            if (zoomIndicator) zoomIndicator.style.bottom = `${bottomOffset}px`;
-            if (helpOverlay) helpOverlay.style.bottom = `${bottomOffset}px`;
+            // Sync float button icon
+            const sidebarIcon = document.getElementById('rightSidebarIcon');
+            if (sidebarIcon) {
+                sidebarIcon.className = rightSidebarCollapsed ? 'fa-solid fa-chevron-left text-xs' : 'fa-solid fa-chevron-right text-xs';
+            }
         }
 
         // FIX 3: Tab key to cycle through SPANS in current group (synced with mouse)
@@ -4284,11 +4455,39 @@
             window.chrome.webview.postMessage('PULL_DATA|' + currentGroupIndex);
         }
 
-        // ============ TOAST ============
-        // DISABLED per user request - no popup notifications to avoid disruption
-        function showToast(msg) {
-            // Intentionally do nothing - all popups disabled
-            console.log('[Toast disabled]', msg);
+        // ============ TOAST & CANVAS CONFIRM ============
+        function showToast(msg, duration = 2000) {
+            let overlay = document.getElementById('canvas-toast');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'canvas-toast';
+                overlay.className = 'fixed top-4 right-4 bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium z-50 shadow-lg';
+                overlay.style.transition = 'opacity 0.3s ease';
+                document.body.appendChild(overlay);
+            }
+            overlay.innerText = msg;
+            overlay.style.opacity = '1';
+            setTimeout(() => { overlay.style.opacity = '0'; }, duration);
+        }
+
+        function showCanvasConfirm(msg, onYes, onNo) {
+            const existing = document.getElementById('canvas-confirm');
+            if (existing) existing.remove();
+
+            const popup = document.createElement('div');
+            popup.id = 'canvas-confirm';
+            popup.className = 'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white shadow-xl rounded-lg p-4 z-50 border border-slate-200';
+            popup.innerHTML = `
+                <p class="text-sm text-slate-700 mb-3">${msg}</p>
+                <div class="flex gap-2 justify-end">
+                    <button class="px-3 py-1 bg-slate-200 hover:bg-slate-300 rounded text-xs font-medium" data-action="no">Không</button>
+                    <button class="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs font-medium" data-action="yes">Có</button>
+                </div>
+            `;
+            document.getElementById('beamCanvas').parentElement.appendChild(popup);
+
+            popup.querySelector('[data-action="no"]').onclick = () => { popup.remove(); if (onNo) onNo(); };
+            popup.querySelector('[data-action="yes"]').onclick = () => { popup.remove(); if (onYes) onYes(); };
         }
 
         // Init

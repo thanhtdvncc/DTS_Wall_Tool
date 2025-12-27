@@ -607,5 +607,7 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
         // 0=Left, 1=Mid, 2=Right
         public double[] ReqTop { get; set; } = new double[3];
         public double[] ReqBot { get; set; } = new double[3];
+        public double[] ReqStirrup { get; set; } = new double[3];
+        public double[] ReqWeb { get; set; } = new double[3];
     }
 }

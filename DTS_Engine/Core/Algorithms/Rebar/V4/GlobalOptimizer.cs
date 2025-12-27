@@ -784,6 +784,8 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
 
             result.ReqTop = new double[] { secLeft?.ReqTop ?? 0, secMid?.ReqTop ?? 0, secRight?.ReqTop ?? 0 };
             result.ReqBot = new double[] { secLeft?.ReqBot ?? 0, secMid?.ReqBot ?? 0, secRight?.ReqBot ?? 0 };
+            result.ReqStirrup = new double[] { secLeft?.ReqStirrup ?? 0, secMid?.ReqStirrup ?? 0, secRight?.ReqStirrup ?? 0 };
+            result.ReqWeb = new double[] { secLeft?.ReqWeb ?? 0, secMid?.ReqWeb ?? 0, secRight?.ReqWeb ?? 0 };
 
             // DEBUG: Log SpanResult creation
             Utils.RebarLogger.Log($"[BuildSpanResult] SpanId='{spanId}' Index={spanIndex} | " +
@@ -816,13 +818,15 @@ namespace DTS_Engine.Core.Algorithms.Rebar.V4
                     else if (zoneName == "Left" || zoneName == "Right") customSpacings = _settings.Beam?.StirrupSpacings_Support;
                     else if (zoneName == "Mid") customSpacings = _settings.Beam?.StirrupSpacings_Span;
 
-                    var sRes = RebarCalculator.CalculateStirrupDetails(section.ReqStirrup, 0, section.Width, _settings, customSpacings);
+                    double sf = _settings?.Rules?.SafetyFactor ?? 1.0;
+                    var sRes = RebarCalculator.CalculateStirrupDetails(section.ReqStirrup * sf, 0, section.Width, _settings, customSpacings);
                     if (sRes != null) stirrupResults[zoneName] = sRes;
                 }
 
                 if (section.ReqWeb > 0.01 || section.Height >= (_settings.Beam?.WebBarMinHeight ?? 700))
                 {
-                    result.WebBars[zoneName] = RebarCalculator.CalculateWebBars(section.ReqWeb, 1.0, section.Height, _settings);
+                    double sf = _settings?.Rules?.SafetyFactor ?? 1.0;
+                    result.WebBars[zoneName] = RebarCalculator.CalculateWebBars(section.ReqWeb * sf, 1.0, section.Height, _settings);
                 }
             }
 

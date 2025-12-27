@@ -1290,6 +1290,13 @@
             function showTab(idx) {
                 document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', i === idx));
                 document.querySelectorAll('.tab-panel').forEach((p, i) => p.classList.toggle('active', i === idx));
+
+                // Re-render complex tables when switching tabs to ensure visibility/correct data
+                if (idx === 6) { // Stirrup Rules
+                    if (typeof renderStirrupTables === 'function') renderStirrupTables();
+                } else if (idx === 2) { // Column
+                    if (typeof renderColStirrupTables === 'function') renderColStirrupTables();
+                }
             }
 
             function buildInventoryGrid() {
@@ -2072,10 +2079,10 @@
                 setId('MainBarRange', data.Beam?.MainBarRange);
                 setId('StirrupBarRange', data.Beam?.StirrupBarRange);
                 setId('SideBarRange', data.Beam?.SideBarRange);
-                setId('StirrupSpacings', data.Beam?.StirrupSpacings?.join(',') ?? '100,150,200,250');
-                setId('StirrupSpacings_Support', data.Beam?.StirrupSpacings_Support?.join(',') ?? '100,150');
-                setId('StirrupSpacings_Span', data.Beam?.StirrupSpacings_Span?.join(',') ?? '150,200');
-                setId('StirrupSpacings_Cantilever', data.Beam?.StirrupSpacings_Cantilever?.join(',') ?? '100,150');
+                setId('StirrupSpacings', data.Beam?.StirrupSpacings?.join(','));
+                setId('StirrupSpacings_Support', data.Beam?.StirrupSpacings_Support?.join(','));
+                setId('StirrupSpacings_Span', data.Beam?.StirrupSpacings_Span?.join(','));
+                setId('StirrupSpacings_Cantilever', data.Beam?.StirrupSpacings_Cantilever?.join(','));
                 setChk('SymmetricStirrupSupports', data.Beam?.SymmetricStirrupSupports ?? true);
                 setId('CoverTop', data.Beam?.CoverTop);
                 setId('CoverBot', data.Beam?.CoverBot);
@@ -2583,7 +2590,7 @@
                 const tbodyAddon = document.getElementById('tbodyStirrupAddon');
                 if (tbodyAddon) {
                     tbodyAddon.innerHTML = '';
-                    const rules = stirrup.RulesWithAddon || generateDefaultAddonRules();
+                    const rules = stirrup.RulesWithAddon || [];
                     rules.forEach(r => {
                         const tr = document.createElement('tr');
                         tr.innerHTML = `
@@ -2601,7 +2608,7 @@
                 const tbodyBackbone = document.getElementById('tbodyStirrupBackbone');
                 if (tbodyBackbone) {
                     tbodyBackbone.innerHTML = '';
-                    const rules = stirrup.RulesBackboneOnly || generateDefaultBackboneRules();
+                    const rules = stirrup.RulesBackboneOnly || [];
                     rules.forEach(r => {
                         const tr = document.createElement('tr');
                         tr.innerHTML = `

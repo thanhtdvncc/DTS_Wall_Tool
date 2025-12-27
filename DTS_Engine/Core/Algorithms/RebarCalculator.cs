@@ -352,25 +352,25 @@ namespace DTS_Engine.Core.Algorithms
 
             int minSpacingAcceptable = 100;
 
-            // Thứ tự ưu tiên: 
-            // 1. Duyệt qua từng Đường kính (Diameter)
-            // 2. Với mỗi đường kính, duyệt qua từng số Nhánh đai (Legs)
-            // 3. Với mỗi nhánh đai, duyệt qua từng Bước đai (Spacing) từ Lớn đến Nhỏ
-            foreach (int d in diameters.OrderBy(x => x))
+            int startLegs = GetAutoLegs(beamWidthMm, settings);
+            var legOptions = new List<int>();
+            for (int l = Math.Max(2, startLegs); l <= 12; l++)
             {
-                int startLegs = GetAutoLegs(beamWidthMm, settings);
-                var legOptions = new List<int>();
-                for (int l = Math.Max(2, startLegs); l <= 12; l++)
-                {
-                    if (beamCfg?.AllowOddLegs == true || l % 2 == 0) legOptions.Add(l);
-                }
+                if (beamCfg?.AllowOddLegs == true || l % 2 == 0) legOptions.Add(l);
+            }
+
+            // Thứ tự ưu tiên (V4.3): 
+            // 1. Duyệt qua từng Bước đai (Spacing) từ Lớn đến Nhỏ (Ưu tiên tiết kiệm)
+            // 2. Với mỗi bước đai, duyệt qua từng số Nhánh đai (Legs) từ Thấp nhất đến Cao nhất
+            // 3. Với mỗi nhánh đai, duyệt qua từng Đường kính (Diameter) từ Nhỏ đến Lớn
+            foreach (int s in spacings.OrderByDescending(x => x))
+            {
+                if (s < minSpacingAcceptable) continue;
 
                 foreach (int legs in legOptions.OrderBy(x => x))
                 {
-                    foreach (int s in spacings)
+                    foreach (int d in diameters.OrderBy(x => x))
                     {
-                        if (s < minSpacingAcceptable) continue;
-
                         double as1Layer = (Math.PI * d * d / 400.0) * legs;
                         double cap = (as1Layer / s) * 1000.0; // mm2/m
 
@@ -382,9 +382,9 @@ namespace DTS_Engine.Core.Algorithms
                 }
             }
 
-            // Fallback
+            // Fallback (Nếu các vòng lặp trên không tìm được phương án tối ưu, lấy phương án an toàn nhất)
             int dMax = diameters.Max();
-            int lMax = (beamCfg?.AllowOddLegs == true) ? 12 : 12;
+            int lMax = legOptions.Max();
             int sMin = spacings.Min();
             return new StirrupResult { Diameter = dMax, Legs = lMax, Spacing = sMin, IsDeficit = true };
         }
