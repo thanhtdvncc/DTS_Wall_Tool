@@ -15,8 +15,8 @@ namespace DTS_Engine.Commands
 {
     public class SectionDrawingCommands
     {
-        [CommandMethod("DTS_SECTION_DRAWING")]
-        public void DrawSectionSchedule()
+        [CommandMethod("DTS_REBAR_DRAWING")]
+        public void DrawRebarSchedule()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
             Editor ed = doc.Editor;

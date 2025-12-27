@@ -703,6 +703,13 @@
         function selectGroup(index) {
             currentGroupIndex = index;
             const group = reportData[index] || {};
+
+            // [MASTER TAB] Tạo nhịp tổng hợp (Envelope) nếu chưa có
+            if (group.Spans && group.Spans.length > 0 && !group.Spans[0].isMaster) {
+                const master = createMasterSpan(group.Spans);
+                if (master) group.Spans.unshift(master);
+            }
+
             document.getElementById('lblGroupName').textContent = group.GroupName || '---';
             document.getElementById('lblProjectName').textContent = group.ProjectName || '';
 
@@ -711,7 +718,59 @@
             });
 
             renderSpanTabs();
-            selectSpan(0);
+            selectSpan(0); // Luôn chọn Tab Tổng hợp đầu tiên khi đổi nhóm
+        }
+
+        function createMasterSpan(spans) {
+            if (!spans || spans.length === 0) return null;
+
+            // Clone nhịp đầu tiên làm template
+            const master = JSON.parse(JSON.stringify(spans[0]));
+            master.SpanId = "TỔNG HỢP(MAX)";
+            master.isMaster = true;
+            master.Section = "---";
+            master.Length = "---";
+
+            const stations = ['Left', 'Mid', 'Right'];
+            const results = ['TopResult', 'BotResult', 'StirrupResult', 'WebResult', 'AlResult', 'StirrupOnlyResult', 'ShearResult'];
+
+            stations.forEach(st => {
+                results.forEach(res => {
+                    let maxAsCalc = -1;
+                    let criticalSpan = spans[0];
+
+                    spans.forEach(s => {
+                        const val = s[st] && s[st][res] ? parseFloat(s[st][res].AsCalc) || 0 : 0;
+                        if (val > maxAsCalc) {
+                            maxAsCalc = val;
+                            criticalSpan = s;
+                        }
+                    });
+
+                    if (master[st] && master[st][res]) {
+                        const critRes = criticalSpan[st] ? criticalSpan[st][res] : null;
+                        if (critRes) {
+                            master[st][res] = JSON.parse(JSON.stringify(critRes));
+                        }
+                    }
+                });
+
+                // Legs lấy theo StirrupResult
+                let maxStirAs = -1;
+                let critStirSpan = spans[0];
+                spans.forEach(s => {
+                    const val = s[st] && s[st].StirrupResult ? parseFloat(s[st].StirrupResult.AsCalc) || 0 : 0;
+                    if (val > maxStirAs) {
+                        maxStirAs = val;
+                        critStirSpan = s;
+                    }
+                });
+                master[st].Legs = critStirSpan[st].Legs;
+                master[st].LoadCase = critStirSpan[st].LoadCase;
+                master[st].ElementId = "VARIES";
+            });
+
+            return master;
         }
 
         function renderSpanTabs() {
@@ -722,7 +781,7 @@
 
             spans.forEach((span, index) => {
                 const btn = document.createElement('button');
-                btn.className = 'tab-btn';
+                btn.className = 'tab-btn' + (span.isMaster ? ' master' : '');
                 btn.textContent = span.SpanId || `S${index + 1}`;
                 btn.onclick = () => selectSpan(index);
                 tabsContainer.appendChild(btn);
@@ -787,12 +846,19 @@
                     return v;
                 };
 
-                // Envelope for simple mode
+                // Envelope logic for Simple Mode
+                // sideMax: 0=Left, 1=Right (Determined by AsCalc of current Design Item)
                 let vE = '-';
-                if (typeof vL === 'number' && typeof vR === 'number') vE = Math.max(vL, vR);
-                else if (typeof vL === 'number') vE = vL;
-                else if (typeof vR === 'number') vE = vR;
-                else vE = (vL && vL !== '-') ? vL : vR;
+                if (opts.sideMax === 1) vE = vR;
+                else vE = vL;
+
+                // For AsCalc row itself, we can show Max specifically if we want, 
+                // but usually engineering rule is to show data of the critical section.
+                if (opts.isAsCalc) {
+                    const nL = parseFloat(vL) || 0;
+                    const nR = parseFloat(vR) || 0;
+                    vE = Math.max(nL, nR);
+                }
 
                 return `
                     <tr data-row-cat="${cat ? cat.text : ''}" data-row-sub="${sub}">
@@ -816,24 +882,27 @@
             };
 
             // --- BY SAP2000 BLOCK --- (10 rows)
+            const sMaxTop = (parseFloat(safe(l, 'TopResult.AsCalc')) || 0) >= (parseFloat(safe(r, 'TopResult.AsCalc')) || 0) ? 0 : 1;
             tbody.innerHTML += rRow({ text: 'By SAP2000', rowspan: 10 }, { text: 'As, top (mm²)', rowspan: 3 }, 'Demand req.',
-                safe(l, 'TopResult.AsCalc'), safe(m, 'TopResult.AsCalc'), safe(r, 'TopResult.AsCalc'));
+                safe(l, 'TopResult.AsCalc'), safe(m, 'TopResult.AsCalc'), safe(r, 'TopResult.AsCalc'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
-                safe(l, 'TopResult.ElementId'), safe(m, 'TopResult.ElementId'), safe(r, 'TopResult.ElementId'), { type: 'combo' });
+                safe(l, 'TopResult.ElementId'), safe(m, 'TopResult.ElementId'), safe(r, 'TopResult.ElementId'), { type: 'combo', sideMax: sMaxTop });
             tbody.innerHTML += rRow(null, null, 'Location (mm)',
-                safe(l, 'TopResult.LocationMm'), safe(m, 'TopResult.LocationMm'), safe(r, 'TopResult.LocationMm'), { type: 'loc' });
+                safe(l, 'TopResult.LocationMm'), safe(m, 'TopResult.LocationMm'), safe(r, 'TopResult.LocationMm'), { type: 'loc', sideMax: sMaxTop });
 
+            const sMaxBot = (parseFloat(safe(l, 'BotResult.AsCalc')) || 0) >= (parseFloat(safe(r, 'BotResult.AsCalc')) || 0) ? 0 : 1;
             tbody.innerHTML += rRow(null, { text: 'As, bot (mm²)', rowspan: 3 }, 'Demand req.',
-                safe(l, 'BotResult.AsCalc'), safe(m, 'BotResult.AsCalc'), safe(r, 'BotResult.AsCalc'));
+                safe(l, 'BotResult.AsCalc'), safe(m, 'BotResult.AsCalc'), safe(r, 'BotResult.AsCalc'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
-                safe(l, 'BotResult.ElementId'), safe(m, 'BotResult.ElementId'), safe(r, 'BotResult.ElementId'), { type: 'combo' });
+                safe(l, 'BotResult.ElementId'), safe(m, 'BotResult.ElementId'), safe(r, 'BotResult.ElementId'), { type: 'combo', sideMax: sMaxBot });
             tbody.innerHTML += rRow(null, null, 'Location (mm)',
-                safe(l, 'BotResult.LocationMm'), safe(m, 'BotResult.LocationMm'), safe(r, 'BotResult.LocationMm'), { type: 'loc' });
+                safe(l, 'BotResult.LocationMm'), safe(m, 'BotResult.LocationMm'), safe(r, 'BotResult.LocationMm'), { type: 'loc', sideMax: sMaxBot });
 
+            const sMaxStir = (parseFloat(safe(l, 'StirrupResult.AsCalc')) || 0) >= (parseFloat(safe(r, 'StirrupResult.AsCalc')) || 0) ? 0 : 1;
             tbody.innerHTML += rRow(null, { text: '2At/st + Av/sv', rowspan: 2 }, 'mm²/mm',
-                safe(l, 'StirrupResult.AsCalc'), safe(m, 'StirrupResult.AsCalc'), safe(r, 'StirrupResult.AsCalc'));
+                safe(l, 'StirrupResult.AsCalc'), safe(m, 'StirrupResult.AsCalc'), safe(r, 'StirrupResult.AsCalc'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
-                safe(l, 'StirrupResult.LoadCase'), safe(m, 'StirrupResult.LoadCase'), safe(r, 'StirrupResult.LoadCase'), { type: 'combo' });
+                safe(l, 'StirrupResult.LoadCase'), safe(m, 'StirrupResult.LoadCase'), safe(r, 'StirrupResult.LoadCase'), { type: 'combo', sideMax: sMaxStir });
 
             // Hide redundant torsion/shear check rows as requested
             /*
@@ -848,34 +917,35 @@
                 safe(l, 'ShearResult.LoadCase'), safe(m, 'ShearResult.LoadCase'), safe(r, 'ShearResult.LoadCase'), { type: 'combo' });
             */
 
+            const sMaxAl = (parseFloat(safe(l, 'AlResult.AsCalc')) || 0) >= (parseFloat(safe(r, 'AlResult.AsCalc')) || 0) ? 0 : 1;
             tbody.innerHTML += rRow(null, { text: 'Al (mm²)', rowspan: 2 }, 'Torsion Long.',
-                safe(l, 'AlResult.AsCalc'), safe(m, 'AlResult.AsCalc'), safe(r, 'AlResult.AsCalc'));
+                safe(l, 'AlResult.AsCalc'), safe(m, 'AlResult.AsCalc'), safe(r, 'AlResult.AsCalc'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Element (LC)',
-                safe(l, 'AlResult.LoadCase'), safe(m, 'AlResult.LoadCase'), safe(r, 'AlResult.LoadCase'), { type: 'combo' });
+                safe(l, 'AlResult.LoadCase'), safe(m, 'AlResult.LoadCase'), safe(r, 'AlResult.LoadCase'), { type: 'combo', sideMax: sMaxAl });
 
             tbody.innerHTML += '<tr class="row-separator"><td colspan="7"></td></tr>';
 
             // --- FINAL USE BLOCK --- (12 rows)
             tbody.innerHTML += rRow({ text: 'Final Use', rowspan: 12 }, { text: 'Top bar', rowspan: 3 }, 'Rebar config',
-                safe(l, 'TopResult.RebarStr'), safe(m, 'TopResult.RebarStr'), safe(r, 'TopResult.RebarStr'), { type: 'rebar' });
+                safe(l, 'TopResult.RebarStr'), safe(m, 'TopResult.RebarStr'), safe(r, 'TopResult.RebarStr'), { type: 'rebar', sideMax: sMaxTop });
             tbody.innerHTML += rRow(null, null, 'Provide (mm²)',
-                safe(l, 'TopResult.AsProv'), safe(m, 'TopResult.AsProv'), safe(r, 'TopResult.AsProv'));
+                safe(l, 'TopResult.AsProv'), safe(m, 'TopResult.AsProv'), safe(r, 'TopResult.AsProv'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Ratio / Check',
-                safe(l, 'TopResult.Ratio'), safe(m, 'TopResult.Ratio'), safe(r, 'TopResult.Ratio'), { type: 'res' });
+                safe(l, 'TopResult.Ratio'), safe(m, 'TopResult.Ratio'), safe(r, 'TopResult.Ratio'), { type: 'res', sideMax: sMaxTop });
 
             tbody.innerHTML += rRow(null, { text: 'Bottom bar', rowspan: 3 }, 'Rebar config',
-                safe(l, 'BotResult.RebarStr'), safe(m, 'BotResult.RebarStr'), safe(r, 'BotResult.RebarStr'), { type: 'rebar' });
+                safe(l, 'BotResult.RebarStr'), safe(m, 'BotResult.RebarStr'), safe(r, 'BotResult.RebarStr'), { type: 'rebar', sideMax: sMaxBot });
             tbody.innerHTML += rRow(null, null, 'Provide (mm²)',
-                safe(l, 'BotResult.AsProv'), safe(m, 'BotResult.AsProv'), safe(r, 'BotResult.AsProv'));
+                safe(l, 'BotResult.AsProv'), safe(m, 'BotResult.AsProv'), safe(r, 'BotResult.AsProv'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Ratio / Check',
-                safe(l, 'BotResult.Ratio'), safe(m, 'BotResult.Ratio'), safe(r, 'BotResult.Ratio'), { type: 'res' });
+                safe(l, 'BotResult.Ratio'), safe(m, 'BotResult.Ratio'), safe(r, 'BotResult.Ratio'), { type: 'res', sideMax: sMaxBot });
 
             tbody.innerHTML += rRow(null, { text: 'Stirrup', rowspan: 3 }, 'a) No. Leg',
-                safe(l, 'Legs'), safe(m, 'Legs'), safe(r, 'Legs'), { type: 'rebar' });
+                safe(l, 'Legs'), safe(m, 'Legs'), safe(r, 'Legs'), { type: 'rebar', sideMax: sMaxStir });
             tbody.innerHTML += rRow(null, null, 'b) Rebar',
-                cleanStirrupStr(safe(l, 'StirrupResult.RebarStr')), cleanStirrupStr(safe(m, 'StirrupResult.RebarStr')), cleanStirrupStr(safe(r, 'StirrupResult.RebarStr')), { type: 'rebar' });
+                cleanStirrupStr(safe(l, 'StirrupResult.RebarStr')), cleanStirrupStr(safe(m, 'StirrupResult.RebarStr')), cleanStirrupStr(safe(r, 'StirrupResult.RebarStr')), { type: 'rebar', sideMax: sMaxStir });
             tbody.innerHTML += rRow(null, null, 'c) Check 2At/st + Av/sv',
-                safe(l, 'StirrupResult.AsProv'), safe(m, 'StirrupResult.AsProv'), safe(r, 'StirrupResult.AsProv'), { precision: 3, type: 'res' });
+                safe(l, 'StirrupResult.AsProv'), safe(m, 'StirrupResult.AsProv'), safe(r, 'StirrupResult.AsProv'), { precision: 3, type: 'res', sideMax: sMaxStir });
 
             // Hide redundant stirrup check rows as requested
             /*
@@ -888,11 +958,11 @@
             */
 
             tbody.innerHTML += rRow(null, { text: 'Web bar', rowspan: 3 }, 'Rebar config',
-                safe(l, 'WebResult.RebarStr'), safe(m, 'WebResult.RebarStr'), safe(r, 'WebResult.RebarStr'), { type: 'rebar' });
+                safe(l, 'WebResult.RebarStr'), safe(m, 'WebResult.RebarStr'), safe(r, 'WebResult.RebarStr'), { type: 'rebar', sideMax: sMaxAl });
             tbody.innerHTML += rRow(null, null, 'Provide (mm²)',
-                safe(l, 'WebResult.AsProv'), safe(m, 'WebResult.AsProv'), safe(r, 'WebResult.AsProv'));
+                safe(l, 'WebResult.AsProv'), safe(m, 'WebResult.AsProv'), safe(r, 'WebResult.AsProv'), { isAsCalc: true });
             tbody.innerHTML += rRow(null, null, 'Ratio / Check',
-                safe(l, 'AlResult.Ratio'), safe(m, 'AlResult.Ratio'), safe(r, 'AlResult.Ratio'), { type: 'res' });
+                safe(l, 'AlResult.Ratio'), safe(m, 'AlResult.Ratio'), safe(r, 'AlResult.Ratio'), { type: 'res', sideMax: sMaxAl });
         }
 
         // --- UTILITIES ---

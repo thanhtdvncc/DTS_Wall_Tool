@@ -24,6 +24,9 @@ namespace DTS_Engine.Drawing
 
         public void OrchestrateDrawing(BlockTableRecord btr, List<BeamScheduleRowData> beams, Point3d startPoint, DrawingSettings settings)
         {
+            // 0. Đảm bảo toàn bộ Layer tồn tại (Khử lỗi eKeyNotFound)
+            EnsureLayers(btr.Database, settings);
+
             double accumulatedHeight = 0;
             double maxAllowedHeight = settings.MaxTableHeight;
             int colIndex = 0;
@@ -133,6 +136,19 @@ namespace DTS_Engine.Drawing
         {
             return _config.ColWidth_Mark + _config.ColWidth_Loc + _config.ColWidth_Section +
                    (_config.ColWidth_Rebar * 2) + _config.ColWidth_Stirrup + _config.ColWidth_Web;
+        }
+
+        private void EnsureLayers(Database db, DrawingSettings settings)
+        {
+            DTS_Engine.Core.Utils.AcadUtils.UsingTransaction(tr =>
+            {
+                DTS_Engine.Core.Utils.AcadUtils.EnsureLayerExists(settings.LayerConcrete, tr, (short)settings.ColorConcrete);
+                DTS_Engine.Core.Utils.AcadUtils.EnsureLayerExists(settings.LayerMainRebar, tr, (short)settings.ColorMainRebar);
+                DTS_Engine.Core.Utils.AcadUtils.EnsureLayerExists(settings.LayerStirrup, tr, (short)settings.ColorStirrup);
+                DTS_Engine.Core.Utils.AcadUtils.EnsureLayerExists(settings.LayerSideBar, tr, (short)settings.ColorSideBar);
+                DTS_Engine.Core.Utils.AcadUtils.EnsureLayerExists(settings.LayerDim, tr, (short)settings.ColorDim);
+                DTS_Engine.Core.Utils.AcadUtils.EnsureLayerExists(settings.LayerText, tr, (short)settings.ColorText);
+            });
         }
     }
 }

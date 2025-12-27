@@ -286,7 +286,9 @@
     <Compile Include="Drawing\SectionDataExtractor.cs" />
     <Compile Include="Drawing\BeamScheduleOrchestrator.cs" />
     <Compile Include="Commands\SectionDrawingCommands.cs" />
-    <Compile Include="UI\Controls\DrawingSettingsControl.cs" />
+    <Compile Include="UI\Controls\DrawingSettingsControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
